@@ -1,0 +1,84 @@
+name: 🖼️ Migrate REF Images from EDT Notion
+
+# EDT Notion 허브에서 캐릭터 REF 이미지를 자동 다운로드하여
+# assets/characters/ 에 이식하고 SHA256을 characters.yaml에 등록.
+# GitHub Actions 서버에서는 Notion S3 도메인 제한 없음.
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: '기존 이미지 덮어쓰기 (true/false)'
+        required: false
+        default: 'false'
+      dry_run:
+        description: 'URL 확인만 (다운로드 없음)'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    name: Migrate EDT REF Images
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      TZ: Asia/Seoul
+      NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install requests pyyaml
+
+      - name: Run migration
+        run: |
+          python -m scripts.migrate_ref_images \
+            ${{ github.event.inputs.dry_run == 'true' && '--dry-run' || '' }}
+
+      - name: Show results
+        run: |
+          echo "=== 이식된 이미지 ==="
+          ls -lh assets/characters/*.png 2>/dev/null || echo "PNG 없음"
+          echo ""
+          echo "=== characters.yaml SHA256 현황 ==="
+          python3 -c "
+          import yaml
+          c = yaml.safe_load(open('config/characters.yaml'))
+          heroes = c.get('heroes', {})
+          villains = c.get('villains', {})
+          for cid, ch in heroes.items():
+              sha = ch.get('forms', {}).get(ch.get('default_form','form1'), {}).get('sha256','?')[:16]
+              status = '✅' if sha not in ('__TBD__', '__PENDING__', '?') else '❌'
+              print(f'  {status} {cid}: {sha}...')
+          for cid, ch in villains.items():
+              sha = ch.get('sha256','?')[:16]
+              status = '✅' if sha not in ('__TBD__', '?') else '❌'
+              print(f'  {status} {cid}: {sha}...')
+          "
+
+      - name: Commit migrated images
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        run: |
+          git config user.name "ICG Bot"
+          git config user.email "icg-bot@investment-comic-gemini"
+          git add assets/characters/*.png config/characters.yaml 2>/dev/null || true
+          git diff --staged --quiet && echo "변경 없음 — 커밋 생략" || \
+            git commit -m "🖼️ [Auto] Migrate EDT REF images from Notion Canon Hub"
+
+      - name: Push
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        uses: ad-m/github-push-action@master
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          branch: main

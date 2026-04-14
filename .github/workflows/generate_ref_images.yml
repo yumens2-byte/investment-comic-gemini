@@ -1,0 +1,77 @@
+name: 🎨 Generate Character REF Images
+
+# 수동 실행 전용 — 처음 한 번 또는 캐릭터 업데이트 시 실행
+on:
+  workflow_dispatch:
+    inputs:
+      characters:
+        description: '생성할 캐릭터 (all 또는 콤마구분: CHAR_HERO_001,CHAR_VILLAIN_002)'
+        required: false
+        default: 'all'
+      force:
+        description: '기존 이미지 덮어쓰기 (true/false)'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: write   # 이미지 + characters.yaml 자동 커밋
+
+jobs:
+  generate:
+    name: Generate REF Images (Gemini)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      TZ: Asia/Seoul
+      GEMINI_API_SUB_PAY_KEY: ${{ secrets.GEMINI_API_SUB_PAY_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install google-genai Pillow pyyaml
+
+      - name: Generate character REF images
+        run: |
+          python -m scripts.generate_ref_images \
+            --chars "${{ github.event.inputs.characters }}" \
+            ${{ github.event.inputs.force == 'true' && '--force' || '' }}
+
+      - name: List generated images
+        run: |
+          echo "=== 생성된 이미지 ==="
+          ls -lh assets/characters/*.png 2>/dev/null || echo "이미지 없음"
+          echo "=== characters.yaml SHA256 현황 ==="
+          python3 -c "
+          import yaml
+          c = yaml.safe_load(open('config/characters.yaml'))
+          for cid, ch in c['heroes'].items():
+              for fn, fd in ch.get('forms',{}).items():
+                  sha = fd.get('sha256','?')[:16]
+                  print(f'  {cid}/{fn}: {sha}...')
+          for cid, ch in c['villains'].items():
+              sha = ch.get('sha256','?')[:16]
+              print(f'  {cid}: {sha}...')
+          "
+
+      - name: Commit generated images
+        run: |
+          git config user.name "ICG Bot"
+          git config user.email "icg-bot@investment-comic-gemini"
+          git add assets/characters/*.png config/characters.yaml
+          git diff --staged --quiet && echo "변경 없음 — 커밋 생략" || \
+            git commit -m "🎨 [Auto] Generate character REF images (${{ github.event.inputs.characters }})"
+
+      - name: Push changes
+        uses: ad-m/github-push-action@master
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          branch: main
