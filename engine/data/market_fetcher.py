@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import logging
 
+import pandas as pd
+
 from engine.common.retry import api_retry
 
 logger = logging.getLogger(__name__)
@@ -41,8 +43,15 @@ def _fetch_ticker(ticker: str, period: str = "5d") -> dict:
         logger.warning("[yfinance] %s: 데이터 부족 (rows=%d)", ticker, len(data))
         return {"close": None, "prev_close": None, "pct_change": None}
 
-    close_col = "Close"
-    closes = data[close_col].dropna()
+    # yfinance 0.2.x 이상: 단일 티커도 MultiIndex 반환 가능
+    # ("Close", "SPY") 또는 단순 "Close" 양쪽 대응
+    if isinstance(data.columns, pd.MultiIndex):
+        close_cols = [c for c in data.columns if c[0] == "Close"]
+        if not close_cols:
+            return {"close": None, "prev_close": None, "pct_change": None}
+        closes = data[close_cols[0]].dropna()
+    else:
+        closes = data["Close"].dropna()
 
     if len(closes) < 2:
         return {"close": None, "prev_close": None, "pct_change": None}
