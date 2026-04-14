@@ -64,11 +64,12 @@ def classify(delta: dict, arc: dict) -> EpisodeType:
     6. days_since_last >= 2 (조용한 시장) → INTEL
     7. 기타 → NORMAL
     """
-    wti_pct = delta.get("WTI", {}).get("pct", 0.0)
-    vix_curr = delta.get("VIX", {}).get("curr", 0.0)
-    vix_pct = delta.get("VIX", {}).get("pct", 0.0)
-    dgs10_curr = delta.get("DGS10", {}).get("curr", 0.0)
-    spy_pct = delta.get("SPY", {}).get("pct", 0.0)
+    # pct/curr가 None인 경우 (첫 실행, 전일 데이터 없음) 0.0으로 처리
+    wti_pct   = delta.get("WTI",   {}).get("pct")  or 0.0
+    vix_curr  = delta.get("VIX",   {}).get("curr") or 0.0
+    vix_pct   = delta.get("VIX",   {}).get("pct")  or 0.0
+    dgs10_curr= delta.get("DGS10", {}).get("curr") or 0.0
+    spy_pct   = delta.get("SPY",   {}).get("pct")  or 0.0
 
     yesterday_type = arc.get("yesterday_type", "")
     tension = arc.get("tension", 0)
@@ -112,16 +113,16 @@ def get_market_context_for_battle(delta: dict, snapshot: dict) -> dict:
     Returns:
         market_context dict (battle_calc.battle() 입력용).
     """
-    wti_pct = delta.get("WTI", {}).get("pct", 0.0)
+    wti_pct = delta.get("WTI", {}).get("pct") or 0.0
 
     return {
         "oil_shock": wti_pct >= 5.0,
-        "vix": snapshot.get("vix", 0.0),
+        "vix": snapshot.get("vix") or 0.0,
         "wti_pct_3d": wti_pct,
-        "dgs10": snapshot.get("us10y", 0.0),
-        "hy_spread": snapshot.get("hy_spread", 0.0),
+        "dgs10": snapshot.get("us10y") or 0.0,
+        "hy_spread": snapshot.get("hy_spread") or 0.0,
         "system_stress": (
-            snapshot.get("vix", 0) > 35
-            and snapshot.get("hy_spread", 0) > 700
+            (snapshot.get("vix") or 0) > 35
+            and (snapshot.get("hy_spread") or 0) > 700
         ),
     }
