@@ -1,0 +1,75 @@
+name: 🔄 Resume Episode
+
+on:
+  workflow_dispatch:
+    inputs:
+      episode_id:
+        description: '에피소드 ID (예: ICG-2026-04-14-001)'
+        required: true
+      force:
+        description: '기존 assembled 상태 덮어쓰기 (true/false)'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: read
+
+jobs:
+  resume:
+    name: Resume — PIL Assembly
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      TZ: Asia/Seoul
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GEMINI_API_SUB_PAY_KEY: ${{ secrets.GEMINI_API_SUB_PAY_KEY }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      SUPABASE_SCHEMA: icg
+      NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+      NOTION_TRACKER_DS: '485ba577-0512-45fd-9445-b9e86c53d88b'
+      DRY_RUN: 'false'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download Episode Artifact
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: episode-*
+          path: output/episodes/
+          merge-multiple: true
+
+      # ── STEP 7: PIL Assembly (dialog_edits_json 적용) ────────────────────
+      - name: STEP 7 — Assembly
+        run: |
+          python -m scripts.run_resume \
+            --episode ${{ github.event.inputs.episode_id }} \
+            ${{ github.event.inputs.force == 'true' && '--force' || '' }}
+
+      - name: Upload Assembled Slides
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: slides-${{ github.event.inputs.episode_id }}
+          path: output/episodes/
+          retention-days: 14
+
+      - name: Notify Failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
+        run: python -m scripts.notify_failure

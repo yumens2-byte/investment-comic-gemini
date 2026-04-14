@@ -1,0 +1,128 @@
+name: 📊 Run Market
+
+on:
+  schedule:
+    # KST 13:00 = UTC 04:00
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+    inputs:
+      target_date:
+        description: '실행 대상 날짜 (YYYY-MM-DD, 미입력 시 오늘)'
+        required: false
+        default: ''
+      force:
+        description: '공휴일/주말 강제 실행 여부 (true/false)'
+        required: false
+        default: 'false'
+      stage:
+        description: '실행 단계 (all/data/analysis/narrative/persist/image)'
+        required: false
+        default: 'all'
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: icg-${{ github.event.inputs.target_date || 'today' }}
+  cancel-in-progress: false
+
+jobs:
+  pipeline:
+    name: ICG Pipeline
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    env:
+      TZ: Asia/Seoul
+      # ── API Keys ──────────────────────────────────────────────────────────
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      # ⚠️ GEMINI_API_SUB_PAY_KEY = Gemini API key. GEMINI_API_KEY 이름 절대 사용 금지 (doc 19)
+      GEMINI_API_SUB_PAY_KEY: ${{ secrets.GEMINI_API_SUB_PAY_KEY }}
+      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+      LUNAR_CRUSH_API_KEY: ${{ secrets.LUNAR_CRUSH_API_KEY }}
+      # ── Supabase ──────────────────────────────────────────────────────────
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      SUPABASE_SCHEMA: icg
+      # ── Notion ────────────────────────────────────────────────────────────
+      NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+      NOTION_TRACKER_DS: '485ba577-0512-45fd-9445-b9e86c53d88b'
+      # ── 운영 제어 ─────────────────────────────────────────────────────────
+      DRY_RUN: 'false'
+      FORCE_RUN: ${{ github.event.inputs.force || 'false' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install CJK fonts (PIL 한국어 렌더링)
+        run: sudo apt-get install -y fonts-noto-cjk --no-install-recommends -q
+
+      # ── STEP 2: 시장 데이터 수집 → icg.daily_snapshots ──────────────────
+      - name: STEP 2 — Data Ingest
+        run: |
+          python -m scripts.run_market \
+            --stage data \
+            ${{ github.event.inputs.target_date && format('--date {0}', github.event.inputs.target_date) || '' }}
+
+      # ── STEP 3: 분석 + Battle 계산 → icg.daily_analysis ─────────────────
+      - name: STEP 3 — Analysis
+        run: |
+          python -m scripts.run_market \
+            --stage analysis \
+            ${{ github.event.inputs.target_date && format('--date {0}', github.event.inputs.target_date) || '' }}
+
+      # ── STEP 4: Claude 스토리 생성 (EpisodeScript JSON) ──────────────────
+      - name: STEP 4 — Narrative (Claude)
+        run: |
+          python -m scripts.run_market \
+            --stage narrative \
+            ${{ github.event.inputs.target_date && format('--date {0}', github.event.inputs.target_date) || '' }}
+
+      # ── STEP 5: Supabase + Notion Tracker 적재 ───────────────────────────
+      - name: STEP 5 — Persist
+        run: |
+          python -m scripts.run_market \
+            --stage persist \
+            ${{ github.event.inputs.target_date && format('--date {0}', github.event.inputs.target_date) || '' }}
+
+      # ── STEP 6: Gemini 이미지 생성 (GEMINI_API_SUB_PAY_KEY 사용) ─────────────────────────
+      - name: STEP 6 — Image Generation (Gemini)
+        run: |
+          python -m scripts.run_market \
+            --stage image \
+            ${{ github.event.inputs.target_date && format('--date {0}', github.event.inputs.target_date) || '' }}
+
+      # ── STEP 7 이후: Dialog Gate — 수동 승인 필요 ─────────────────────────
+      - name: PAUSE — Dialog Gate
+        run: |
+          echo "✅ STEP 2~6 완료."
+          echo "📝 STEP 7 (대사 주입): Claude 대화창에서 'dialog inject ICG-{DATE}-001' 명령 실행."
+          echo "🚀 STEP 8 (발행): resume_episode.yml + publish_sns.yml 수동 실행 필요."
+
+      # ── Artifact 업로드 ───────────────────────────────────────────────────
+      - name: Upload Episode Artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: episode-${{ github.run_id }}
+          path: output/episodes/
+          retention-days: 14
+
+      # ── 실패 시 Telegram 알림 ─────────────────────────────────────────────
+      - name: Notify Failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
+        run: python -m scripts.notify_failure

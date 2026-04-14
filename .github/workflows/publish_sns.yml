@@ -1,0 +1,96 @@
+name: 🚀 Publish SNS
+
+# ⚠️ 자동 발행 절대 금지 (doc 00 RULE 10, doc 17 5.1)
+# 반드시 수동 workflow_dispatch + confirm=YES + production environment 승인 필요.
+on:
+  workflow_dispatch:
+    inputs:
+      episode_id:
+        description: '에피소드 ID (예: ICG-2026-04-14-001)'
+        required: true
+      channels:
+        description: '발행 채널 (telegram / x / all)'
+        required: true
+        default: 'telegram'
+      confirm:
+        description: '발행 확인 (YES 입력 필수)'
+        required: true
+        default: 'NO'
+
+permissions:
+  contents: read
+
+jobs:
+  # ── 사전 검증 ────────────────────────────────────────────────────────────────
+  pre-check:
+    name: Pre-flight Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm Gate
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "YES" ]; then
+            echo "❌ confirm 입력값이 'YES'가 아닙니다. 발행 차단."
+            exit 1
+          fi
+          echo "✅ confirm=YES 확인. production 환경 승인 대기."
+
+  # ── 실제 발행 — production environment 승인 필요 ─────────────────────────────
+  publish:
+    name: Publish Episode
+    needs: pre-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # GitHub Environment 'production' 에 reviewer 등록 필수 (doc 17 5.1)
+    environment: production
+
+    env:
+      TZ: Asia/Seoul
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      SUPABASE_SCHEMA: icg
+      NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+      NOTION_TRACKER_DS: '485ba577-0512-45fd-9445-b9e86c53d88b'
+      # ── SNS 발행 자격증명 — production env 에서만 사용 가능 ──────────────
+      X_API_KEY: ${{ secrets.X_API_KEY }}
+      X_API_SECRET: ${{ secrets.X_API_SECRET }}
+      X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+      X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
+      TELEGRAM_PAID_CHANNEL_ID: ${{ secrets.TELEGRAM_PAID_CHANNEL_ID }}
+      DRY_RUN: 'false'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download Assembled Slides
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: slides-${{ github.event.inputs.episode_id }}
+          path: output/episodes/
+          merge-multiple: true
+
+      # ── STEP 8: SNS 발행 ────────────────────────────────────────────────
+      - name: STEP 8 — Publish
+        run: |
+          python -m scripts.run_publish \
+            --episode ${{ github.event.inputs.episode_id }} \
+            --channels ${{ github.event.inputs.channels }}
+
+      - name: Notify Failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
+        run: python -m scripts.notify_failure
