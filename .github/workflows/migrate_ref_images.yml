@@ -80,5 +80,5 @@ jobs:
         if: ${{ github.event.inputs.dry_run != 'true' }}
         uses: ad-m/github-push-action@master
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN2 }}
+          github_token: ${{ secrets.AGITHUB_TOKEN }}
           branch: main
