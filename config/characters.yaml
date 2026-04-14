@@ -1,0 +1,173 @@
+version: '1.0'
+updated_at: '2026-04-14'
+source: ICG Placeholder v1.0 (Gemini 생성 전 임시)
+style_lock:
+  line_weight: bold
+  shading: cel
+  palette: high_contrast_neon
+  influence: korean_manhwa
+  gaze_law: hero_right, villain_left
+  position_law: hero_left, villain_right
+heroes:
+  CHAR_HERO_001:
+    name_ko: EDT
+    name_en: Endurance D Tiger
+    notion_label: EDT
+    crisis_role: Systemic Collapse
+    base_power: 85
+    forms:
+      form0:
+        ref: assets/characters/hero_edt_form0.png
+        sha256: __TBD__
+        description: 기본형. 체인소, 브론즈 아머.
+      form1:
+        ref: assets/characters/hero_edt_form1.png
+        sha256: 0107b96cd4e4315a3b9df0d2ca12151d0b1c49789043a8ccbc5d0d039744be43
+        description: ETF형. 현재 기본 전투폼.
+      form2:
+        ref: assets/characters/hero_edt_form2.png
+        sha256: __TBD__
+        description: 1차 각성. 4-AND 트리거 필요.
+      form3:
+        ref: assets/characters/hero_edt_form3.png
+        sha256: __PENDING__
+        description: 2차 각성. 첫 발동 시 생성.
+      form4:
+        ref: assets/characters/hero_edt_form4.png
+        sha256: __TBD__
+        description: OMEGA. 전원 합체.
+    default_form: form1
+    canon_lock: true
+  CHAR_HERO_002:
+    name_ko: 아이언 식큐리티 누나
+    name_en: Iron Securities Nuna
+    notion_label: Iron Nuna
+    crisis_role: Financial Crisis
+    base_power: 78
+    forms:
+      form1:
+        ref: assets/characters/hero_iron_securities_nuna.png
+        sha256: a7da84a29cd8738361d4340a4c43c6c43cabd4a76b570348054b6779d9ad7a46
+        description: 기본전투폼. 철갑 방어 + 데이터 분석.
+    default_form: form1
+    canon_lock: true
+  CHAR_HERO_003:
+    name_ko: 레버리지 머슬맨
+    name_en: Leverage Muscle Man
+    notion_label: Leverage
+    crisis_role: Oil Shock
+    base_power: 75
+    special_synergy:
+      oil_shock: 8
+    forms:
+      form1:
+        ref: assets/characters/hero_leverage_muscle_man.png
+        sha256: 22835cc5b1777fd0b96318ca858d3de91edad14c584ba0638a49feb796ac31b7
+        description: 기본전투폼. 역기 + 레버리지 에너지.
+    default_form: form1
+    canon_lock: true
+  CHAR_HERO_004:
+    name_ko: 익스포저 퓨처스 걸
+    name_en: Exposure Futures Girl
+    notion_label: Futures Girl
+    crisis_role: Futures Volatility
+    base_power: 72
+    forms:
+      form1:
+        ref: assets/characters/hero_futures_girl.png
+        sha256: 294673faf6453fcbc26ad8cdb178fd98d5e000a1f0d2586460b4b21c5dfba868
+        description: 기본전투폼. 선물 시장 감지 레이더.
+    default_form: form1
+    canon_lock: true
+  CHAR_HERO_005:
+    name_ko: 골드 본드 머슬
+    name_en: Gold Bond Muscle
+    notion_label: Gold Bond
+    crisis_role: Defensive Shield
+    base_power: 70
+    special_synergy:
+      high_vix_defense: 12
+    forms:
+      form1:
+        ref: assets/characters/hero_gold_bond_muscle.png
+        sha256: 33ffca78e5c65519bc114ca137ad69c61e789598315d624696579e32dc4bb230
+        description: 기본전투폼. 금/채권 방어 방패.
+    default_form: form1
+    canon_lock: true
+villains:
+  CHAR_VILLAIN_001:
+    name_ko: 듰트 타이탄
+    name_en: Debt Titan
+    notion_label: Debt Titan
+    event: Debt Stress
+    base_power: 72
+    ref: assets/characters/villain_debt_titan.png
+    sha256: 43f48206e3ec96d82a6752b358e12751185340947c3411bd7995113c3db15cef
+    trigger_metrics:
+    - metric: DGS10
+      threshold: '>4.8'
+    - metric: BAMLH0A0HYM2
+      threshold: '>500'
+    canon_lock: true
+  CHAR_VILLAIN_002:
+    name_ko: 오일 쇼크 타이탄
+    name_en: Oil Shock Titan
+    notion_label: Oil Shock Titan
+    event: Oil Shock
+    base_power: 80
+    ref: assets/characters/villain_oil_shock_titan.png
+    sha256: f65454315cbc283773d4712461ce6340688031022a459ff21101a1ca5a0b84be
+    power_formula: wti_pct_3d * 1.5, max 25
+    trigger_metrics:
+    - metric: DCOILWTICO
+      threshold: pct_change_3d > 8
+    canon_lock: true
+  CHAR_VILLAIN_003:
+    name_ko: 리퀴디티 레비아탄
+    name_en: Liquidity Leviathan
+    notion_label: Liquidity Leviathan
+    event: Liquidity Crisis
+    base_power: 75
+    ref: assets/characters/villain_liquidity_leviathan.png
+    sha256: 434644ed6f982814971ab1c338c63f5b330a4c482b4c5e774021f17ebca5a759
+    trigger_metrics:
+    - metric: BAMLH0A0HYM2
+      threshold: '>700'
+    canon_lock: true
+  CHAR_VILLAIN_004:
+    name_ko: 볼래틸리티 하이드라
+    name_en: Volatility Hydra
+    notion_label: Volatility Hydra
+    event: VIX Spike
+    base_power: 78
+    ref: assets/characters/villain_volatility_hydra.png
+    sha256: 52fd6f3f3e8b478051de7a2da02b1b4a0982c8bd298b4938f381884e5a75bad1
+    power_formula: (vix - 20) * 1.2
+    trigger_metrics:
+    - metric: VIXCLS
+      threshold: '>28'
+    canon_lock: true
+  CHAR_VILLAIN_005:
+    name_ko: 알고리즘 리퍼
+    name_en: Algorithm Reaper
+    notion_label: Algorithm Reaper
+    event: Algo Cascade
+    base_power: 74
+    ref: assets/characters/villain_algorithm_reaper.png
+    sha256: 28567a68708974b26ddea7f44a4c645b4a470709045eed1ae4f343f2688b883e
+    trigger_metrics:
+    - metric: SPY_CHANGE
+      threshold: <-3
+    canon_lock: true
+  CHAR_VILLAIN_006:
+    name_ko: 워 도미니온
+    name_en: War Dominion
+    notion_label: War Dominion
+    event: Geopolitical Risk
+    base_power: 76
+    ref: assets/characters/villain_war_dominion.png
+    sha256: bcdccbde3bf2a7813e5acbe313cf74ec829a46cf44d8bcd7fcaa4314283eeaf1
+    trigger_metrics:
+    - metric: DCOILWTICO
+      threshold: '>90'
+    canon_lock: true
