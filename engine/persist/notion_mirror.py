@@ -5,7 +5,7 @@ Notion ICG Episode Tracker에 에피소드 메타데이터 미러링.
 원칙 (doc 16b):
   - 전체 JSON은 Supabase에만.
   - Notion에는 title, status, cost, count 메타만.
-  - Data Source ID: 485ba577-0512-45fd-9445-b9e86c53d88b
+  - Data Source ID: 환경변수 NOTION_TRACKER_DS 참조
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import os
 
 logger = logging.getLogger(__name__)
 
-_TRACKER_DS_ID = "485ba577-0512-45fd-9445-b9e86c53d88b"
+_TRACKER_DS_ID = os.environ.get("NOTION_TRACKER_DS", "")
 
 # Notion Tracker의 Villain 표기 ↔ char_id 매핑
 _VILLAIN_LABELS: dict[str, str] = {

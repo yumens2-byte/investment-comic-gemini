@@ -42,7 +42,7 @@ class ICGConfig:
 
     # ── Notion ───────────────────────────────────────────────
     notion_token: str = ""
-    notion_tracker_ds: str = "485ba577-0512-45fd-9445-b9e86c53d88b"
+    notion_tracker_ds: str = ""  # 환경변수 NOTION_TRACKER_DS로 주입
 
     # ── 시장 데이터 ───────────────────────────────────────────
     fred_api_key: str = ""
@@ -97,9 +97,7 @@ def load_config() -> ICGConfig:
         supabase_service_role_key=os.environ["SUPABASE_KEY"],
         supabase_schema=os.environ.get("SUPABASE_SCHEMA", "icg"),
         notion_token=os.environ.get("NOTION_API_KEY", ""),
-        notion_tracker_ds=os.environ.get(
-            "NOTION_TRACKER_DS", "485ba577-0512-45fd-9445-b9e86c53d88b"
-        ),
+        notion_tracker_ds=os.environ.get("NOTION_TRACKER_DS", ""),
         fred_api_key=os.environ.get("FRED_API_KEY", ""),
         lunar_crush_api_key=os.environ.get("LUNAR_CRUSH_API_KEY", ""),
         x_api_key=os.environ.get("X_API_KEY", ""),

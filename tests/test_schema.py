@@ -199,3 +199,42 @@ class TestDisclaimerGuard:
         result = publish_episode_x(script, slides, dry_run=True)
         assert len(result) > 0
         assert all("DRY_RUN" in tid for tid in result)
+
+
+class TestAutoTrim:
+    """claude_client._auto_trim_raw_json() 자동 트리밍 테스트."""
+
+    def test_narration_over_limit_trimmed(self):
+        """120자 초과 narration은 자동 트리밍되어야 한다."""
+        from engine.narrative.claude_client import _auto_trim_raw_json
+
+        long_narration = "가" * 200  # 200자
+        raw = {"panels": [{"idx": 1, "narration": long_narration, "key_text": "짧은 텍스트"}]}
+        result = _auto_trim_raw_json(raw)
+        assert len(result["panels"][0]["narration"]) <= 120
+
+    def test_caption_x_final_over_limit_trimmed(self):
+        """240자 초과 caption_x_final은 트리밍 + 면책 고지 보존되어야 한다."""
+        from engine.narrative.claude_client import _auto_trim_raw_json
+
+        long_caption = "나" * 300 + " 투자 참고 정보이며, 투자 권유가 아닙니다."
+        raw = {"panels": [], "caption_x_final": long_caption}
+        result = _auto_trim_raw_json(raw)
+        assert len(result["caption_x_final"]) <= 240
+
+    def test_disclaimer_added_when_missing(self):
+        """면책 고지 없는 caption_x_final에는 면책 고지가 추가되어야 한다."""
+        from engine.narrative.claude_client import _ensure_disclaimer
+
+        text = "오늘 시장 분석입니다."
+        result = _ensure_disclaimer(text, 240)
+        assert any(p in result for p in ["투자 참고", "투자 권유가 아닙니다"])
+
+    def test_within_limit_not_trimmed(self):
+        """제한 내 텍스트는 변경되지 않아야 한다."""
+        from engine.narrative.claude_client import _auto_trim_raw_json
+
+        normal = "정상적인 짧은 텍스트입니다."
+        raw = {"panels": [{"idx": 1, "narration": normal, "key_text": "짧음"}]}
+        result = _auto_trim_raw_json(raw)
+        assert result["panels"][0]["narration"] == normal

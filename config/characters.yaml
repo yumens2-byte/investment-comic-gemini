@@ -14,7 +14,7 @@ heroes:
     name_en: Endurance D Tiger
     notion_label: EDT
     crisis_role: Systemic Collapse
-    base_power: 85
+    base_power: 0  # Notion NOTION_BATTLE_CONSTANTS_ID에서 로드
     forms:
       form0:
         ref: assets/characters/hero_edt_form0.png
@@ -43,7 +43,7 @@ heroes:
     name_en: Iron Securities Nuna
     notion_label: Iron Nuna
     crisis_role: Financial Crisis
-    base_power: 78
+    base_power: 0  # Notion NOTION_BATTLE_CONSTANTS_ID에서 로드
     forms:
       form1:
         ref: assets/characters/hero_iron_securities_nuna.png
@@ -56,7 +56,7 @@ heroes:
     name_en: Leverage Muscle Man
     notion_label: Leverage
     crisis_role: Oil Shock
-    base_power: 75
+    base_power: 0  # Notion NOTION_BATTLE_CONSTANTS_ID에서 로드
     special_synergy:
       oil_shock: 8
     forms:
@@ -71,7 +71,7 @@ heroes:
     name_en: Exposure Futures Girl
     notion_label: Futures Girl
     crisis_role: Futures Volatility
-    base_power: 72
+    base_power: 0  # Notion NOTION_BATTLE_CONSTANTS_ID에서 로드
     forms:
       form1:
         ref: assets/characters/hero_futures_girl.png
@@ -84,7 +84,7 @@ heroes:
     name_en: Gold Bond Muscle
     notion_label: Gold Bond
     crisis_role: Defensive Shield
-    base_power: 70
+    base_power: 0  # Notion NOTION_BATTLE_CONSTANTS_ID에서 로드
     special_synergy:
       high_vix_defense: 12
     forms:
@@ -100,7 +100,7 @@ villains:
     name_en: Debt Titan
     notion_label: Debt Titan
     event: Debt Stress
-    base_power: 72
+    base_power: 0  # Notion NOTION_BATTLE_CONSTANTS_ID에서 로드
     ref: assets/characters/villain_debt_titan.png
     sha256: 43f48206e3ec96d82a6752b358e12751185340947c3411bd7995113c3db15cef
     trigger_metrics:
@@ -114,7 +114,7 @@ villains:
     name_en: Oil Shock Titan
     notion_label: Oil Shock Titan
     event: Oil Shock
-    base_power: 80
+    base_power: 0  # Notion NOTION_BATTLE_CONSTANTS_ID에서 로드
     ref: assets/characters/villain_oil_shock_titan.png
     sha256: f65454315cbc283773d4712461ce6340688031022a459ff21101a1ca5a0b84be
     power_formula: wti_pct_3d * 1.5, max 25
@@ -127,7 +127,7 @@ villains:
     name_en: Liquidity Leviathan
     notion_label: Liquidity Leviathan
     event: Liquidity Crisis
-    base_power: 75
+    base_power: 0  # Notion NOTION_BATTLE_CONSTANTS_ID에서 로드
     ref: assets/characters/villain_liquidity_leviathan.png
     sha256: 434644ed6f982814971ab1c338c63f5b330a4c482b4c5e774021f17ebca5a759
     trigger_metrics:
@@ -139,7 +139,7 @@ villains:
     name_en: Volatility Hydra
     notion_label: Volatility Hydra
     event: VIX Spike
-    base_power: 78
+    base_power: 0  # Notion NOTION_BATTLE_CONSTANTS_ID에서 로드
     ref: assets/characters/villain_volatility_hydra.png
     sha256: 52fd6f3f3e8b478051de7a2da02b1b4a0982c8bd298b4938f381884e5a75bad1
     power_formula: (vix - 20) * 1.2
@@ -152,7 +152,7 @@ villains:
     name_en: Algorithm Reaper
     notion_label: Algorithm Reaper
     event: Algo Cascade
-    base_power: 74
+    base_power: 0  # Notion NOTION_BATTLE_CONSTANTS_ID에서 로드
     ref: assets/characters/villain_algorithm_reaper.png
     sha256: 28567a68708974b26ddea7f44a4c645b4a470709045eed1ae4f343f2688b883e
     trigger_metrics:
@@ -164,7 +164,7 @@ villains:
     name_en: War Dominion
     notion_label: War Dominion
     event: Geopolitical Risk
-    base_power: 76
+    base_power: 0  # Notion NOTION_BATTLE_CONSTANTS_ID에서 로드
     ref: assets/characters/villain_war_dominion.png
     sha256: bcdccbde3bf2a7813e5acbe313cf74ec829a46cf44d8bcd7fcaa4314283eeaf1
     trigger_metrics:

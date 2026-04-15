@@ -75,28 +75,45 @@ def classify(delta: dict, arc: dict) -> EpisodeType:
     tension = arc.get("tension", 0)
     days_since_last = arc.get("days_since_last", 0)
 
+    # 이벤트 분류 임계값 — Notion battle_constants에서 로드
+    try:
+        from engine.common.notion_loader import load_battle_constants
+
+        _bc = load_battle_constants()
+        _thr = _bc.get("EVENT_CLASSIFIER_THRESHOLDS", {})
+        _wti_shock = _thr.get("wti_shock_pct", 5.0)
+        _vix_level = _thr.get("vix_shock_level", 28)
+        _vix_pct = _thr.get("vix_shock_pct", 20)
+        _dgs10 = _thr.get("dgs10_battle", 4.8)
+        _spy_col = _thr.get("spy_collapse_pct", -3.0)
+        _aft_ten = _thr.get("aftermath_tension", 40)
+        _intel_d = _thr.get("intel_days_since", 2)
+    except Exception:
+        _wti_shock, _vix_level, _vix_pct = 5.0, 28, 20
+        _dgs10, _spy_col, _aft_ten, _intel_d = 4.8, -3.0, 40, 2
+
     # 1. 유가 쇼크 — Oil Shock Titan 소환
-    if wti_pct >= 5.0:
+    if wti_pct >= _wti_shock:
         return "BATTLE"
 
     # 2. VIX 급등 — Volatility Hydra 소환
-    if vix_curr > 28 and vix_pct > 20:
+    if vix_curr > _vix_level and vix_pct > _vix_pct:
         return "SHOCK"
 
     # 3. 금리 급등 — Debt Titan 소환
-    if dgs10_curr > 4.8:
+    if dgs10_curr > _dgs10:
         return "BATTLE"
 
     # 4. 지수 급락 — Algorithm Reaper 연계
-    if spy_pct <= -3.0:
+    if spy_pct <= _spy_col:
         return "BATTLE"
 
     # 5. 전일 전투 여파
-    if yesterday_type == "BATTLE" and tension > 40:
+    if yesterday_type == "BATTLE" and tension > _aft_ten:
         return "AFTERMATH"
 
     # 6. 조용한 시장 — 정보 수집 국면
-    if days_since_last >= 2:
+    if days_since_last >= _intel_d:
         return "INTEL"
 
     return "NORMAL"

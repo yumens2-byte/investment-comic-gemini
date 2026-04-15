@@ -5,8 +5,8 @@ Claude API 호출 — EpisodeScript 생성.
 모델: claude-sonnet-4-6 (fallback: claude-haiku-4-5-20251001)
 max_tokens: 8000
 temperature: 0.7
-검증 실패 시 최대 2회 재전송 (doc 16a).
-Canon 검증: char_id 존재 확인, villain 이름 6종 확인.
+검증 실패 시 최대 3회 재전송.
+자동 트리밍: Pydantic 검증 전 글자수 초과 필드 자동 처리.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ _MODEL_PRIMARY = "claude-sonnet-4-6"
 _MODEL_FALLBACK = "claude-haiku-4-5-20251001"
 _MAX_TOKENS = 8000
 _TEMPERATURE = 0.7
-_MAX_RETRIES = 2
+_MAX_RETRIES = 3  # 2 → 3 으로 증가
 
 # Canon 빌런 영문 이름 집합 (RULE 06)
 _CANON_VILLAIN_NAMES: set[str] = {
@@ -42,21 +42,103 @@ _CANON_VILLAIN_NAMES: set[str] = {
     "War Dominion",
 }
 
+# 각 필드별 max_length (schema.py와 동기화)
+_FIELD_LIMITS: dict[str, int] = {
+    "narration": 120,
+    "key_text": 40,
+    "logline": 100,
+    "caption_x_cover": 240,
+    "caption_x_final": 240,
+}
+
+# 면책 고지 필수 문구
+_DISCLAIMER_PHRASES = ["투자 참고", "투자 권유가 아닙니다", "투자 권유 아닙니다"]
+_DISCLAIMER_FALLBACK = " ⚠️ 투자 참고 정보이며, 투자 권유가 아닙니다."
+
+
+def _trim_str(text: str, max_len: int) -> str:
+    """
+    글자 수 초과 시 안전하게 트리밍.
+    마지막 완성된 문장 경계에서 자름.
+    """
+    if len(text) <= max_len:
+        return text
+    truncated = text[: max_len - 1]
+    # 마지막 문장 부호 기준으로 자름
+    for sep in (".", "。", "!", "?", "다", "요"):
+        idx = truncated.rfind(sep)
+        if idx > max_len // 2:
+            return truncated[: idx + 1]
+    return truncated + "…"
+
+
+def _ensure_disclaimer(text: str, max_len: int) -> str:
+    """
+    caption_x_final에 면책 고지 문구가 없으면 추가.
+    max_len 제한 내에서 처리.
+    """
+    if any(p in text for p in _DISCLAIMER_PHRASES):
+        return _trim_str(text, max_len)
+    # 면책 고지 없으면 공간 확보 후 추가
+    available = max_len - len(_DISCLAIMER_FALLBACK)
+    trimmed = _trim_str(text, max(available, 0))
+    result = trimmed + _DISCLAIMER_FALLBACK
+    return result[:max_len]
+
+
+def _auto_trim_raw_json(raw_json: dict) -> dict:
+    """
+    Pydantic 검증 전 글자 수 초과 필드 자동 트리밍.
+    Claude가 제한을 넘긴 경우 검증 실패 없이 처리.
+    """
+    trimmed_fields: list[str] = []
+
+    # 패널별 narration / key_text 트리밍
+    for panel in raw_json.get("panels", []):
+        for field, limit in [("narration", 120), ("key_text", 40)]:
+            val = panel.get(field, "")
+            if isinstance(val, str) and len(val) > limit:
+                panel[field] = _trim_str(val, limit)
+                trimmed_fields.append(f"panels[{panel.get('idx', '?')}].{field}")
+
+    # 에피소드 레벨 필드 트리밍
+    for field, limit in [
+        ("logline", 100),
+        ("caption_x_cover", 240),
+    ]:
+        val = raw_json.get(field, "")
+        if isinstance(val, str) and len(val) > limit:
+            raw_json[field] = _trim_str(val, limit)
+            trimmed_fields.append(field)
+
+    # caption_x_final — 면책 고지 보존하며 트리밍
+    caption_final = raw_json.get("caption_x_final", "")
+    if isinstance(caption_final, str) and len(caption_final) > 240:
+        raw_json["caption_x_final"] = _ensure_disclaimer(caption_final, 240)
+        trimmed_fields.append("caption_x_final")
+
+    # caption_x_parts 각 항목 트리밍 (X Premium 기준 480자)
+    parts = raw_json.get("caption_x_parts", [])
+    if isinstance(parts, list):
+        for i, part in enumerate(parts):
+            if isinstance(part, str) and len(part) > 480:
+                parts[i] = _trim_str(part, 480)
+                trimmed_fields.append(f"caption_x_parts[{i}]")
+
+    if trimmed_fields:
+        logger.info("[claude] 자동 트리밍 적용: %s", ", ".join(trimmed_fields))
+
+    return raw_json
+
 
 def _extract_json(text: str) -> str:
-    """
-    Claude 응답에서 JSON 블록 추출.
-    마크다운 코드 펜스 또는 순수 JSON 모두 처리.
-    """
-    # ```json ... ``` 또는 ``` ... ``` 블록 추출
+    """Claude 응답에서 JSON 블록 추출."""
     fence_match = re.search(r"```(?:json)?\s*([\s\S]+?)\s*```", text)
     if fence_match:
         return fence_match.group(1).strip()
-    # 순수 JSON (중괄호로 시작)
     text = text.strip()
     if text.startswith("{"):
         return text
-    # 첫 번째 { ... } 블록 추출
     start = text.find("{")
     end = text.rfind("}")
     if start != -1 and end != -1:
@@ -69,7 +151,6 @@ def _validate_canon(script: EpisodeScript) -> None:
     Canon 검증:
     1. char_id가 characters.yaml에 존재하는지 확인.
     2. villain role 캐릭터의 영문 이름이 6 Canon 리스트 내인지 확인.
-    3. battle_result outcome이 스크립트와 일치하는지 확인.
     """
     from pathlib import Path
 
@@ -85,24 +166,10 @@ def _validate_canon(script: EpisodeScript) -> None:
         for char in panel.characters:
             if char.char_id not in all_char_ids:
                 raise ValueError(f"Canon 외 char_id 사용: {char.char_id}")
-            # villain role 이름 검증
             if char.role == "villain":
                 en_name = villain_map.get(char.char_id, "")
                 if en_name and en_name not in _CANON_VILLAIN_NAMES:
                     raise InvalidVillainNameError(en_name)
-
-
-def _check_battle_override(
-    script: EpisodeScript,
-    expected_outcome: str,
-) -> None:
-    """
-    BattleOverride 검증: Claude가 battle_calc 결과를 임의로 바꿨는지 확인.
-    DISCLAIMER 패널의 market_ref 또는 narration에 다른 outcome이 언급되면 경고.
-    """
-    # 간접 검증: 스크립트 전체에 모순되는 승패 표현이 없는지 점검
-    # (직접적인 outcome 필드가 없으므로 과도한 제약 없이 최소 검증)
-    pass  # Phase 1: 경고 수준으로 유지, Phase 2에서 강화
 
 
 def generate_episode(
@@ -118,21 +185,11 @@ def generate_episode(
     """
     Claude API를 호출하여 EpisodeScript를 생성.
 
-    Args:
-        date: 에피소드 날짜 (YYYY-MM-DD)
-        episode_id: 에피소드 ID (ICG-YYYY-MM-DD-001)
-        event_type: 에피소드 타입
-        delta: delta_engine 출력
-        battle_result: BattleResult.to_dict()
-        hero_id: CHAR_HERO_00N
-        villain_id: CHAR_VILLAIN_00N
-        arc_context: 연속성 정보
-
     Returns:
         검증된 EpisodeScript 인스턴스.
 
     Raises:
-        NarrativeValidationError: 2회 재시도 후에도 검증 실패 시.
+        NarrativeValidationError: 3회 재시도 후에도 검증 실패 시.
     """
     client = Anthropic()
     system_prompt = load_system_prompt()
@@ -153,28 +210,28 @@ def generate_episode(
         try:
             logger.info("[claude] 에피소드 생성 시도 %d/%d", attempt, _MAX_RETRIES)
 
-            messages: list[dict] = [{"role": "user", "content": user_prompt}]
-
-            # 2회차: 에러 메시지 추가로 재전송
+            # 재시도 시 에러 정보 + 글자수 가이드 추가
             if attempt > 1 and last_error:
-                messages.append(
-                    {
-                        "role": "assistant",
-                        "content": "[이전 응답]",
-                    }
+                error_msg = str(last_error)
+                retry_prompt = (
+                    user_prompt
+                    + f"\n\n## ⚠️ 이전 시도 오류 ({attempt - 1}회차) — 반드시 수정 후 재출력\n"
+                    f"{error_msg}\n\n"
+                    "## 글자 수 HARD LIMIT (초과 시 자동 실패)\n"
+                    "- panels[].narration: 최대 **120자** (한국어)\n"
+                    "- panels[].key_text: 최대 **40자** (한국어)\n"
+                    "- caption_x_final: 최대 **240자** (면책 고지 포함)\n"
+                    "- caption_x_cover: 최대 **240자**\n"
+                    "- logline: 최대 **100자**\n\n"
+                    "위 제한을 반드시 지키고 JSON만 반환하세요."
                 )
-                messages = [
-                    {
-                        "role": "user",
-                        "content": (
-                            user_prompt
-                            + f"\n\n## 이전 시도 오류 ({attempt-1}회차)\n{last_error}\n\n"
-                            "위 오류를 수정하여 유효한 JSON만 반환하세요."
-                        ),
-                    }
-                ]
+                messages = [{"role": "user", "content": retry_prompt}]
+            else:
+                messages = [{"role": "user", "content": user_prompt}]
 
-            model = _MODEL_PRIMARY if attempt == 1 else _MODEL_FALLBACK
+            # 3회차는 haiku로 fallback
+            model = _MODEL_PRIMARY if attempt <= 2 else _MODEL_FALLBACK
+
             resp = client.messages.create(
                 model=model,
                 max_tokens=_MAX_TOKENS,
@@ -187,15 +244,17 @@ def generate_episode(
             json_str = _extract_json(raw_text)
             raw_json = json.loads(json_str)
 
-            # episode_id 오버라이드 (Claude가 바꿀 수 없음)
+            # 불변 필드 오버라이드
             raw_json["episode_id"] = episode_id
             raw_json["date"] = date
             raw_json["event_type"] = event_type
 
+            # ── 자동 트리밍 (검증 전) ────────────────────────────────────
+            raw_json = _auto_trim_raw_json(raw_json)
+
             script = EpisodeScript.model_validate(raw_json)
             _validate_canon(script)
 
-            # 비용 로깅
             usage = resp.usage
             logger.info(
                 "[claude] 에피소드 생성 완료 (model=%s, input=%d, output=%d)",
@@ -214,9 +273,8 @@ def generate_episode(
 
 def estimate_cost(input_tokens: int, output_tokens: int, model: str = _MODEL_PRIMARY) -> float:
     """Claude API 비용 추정 (USD)."""
-    # claude-sonnet-4-6 기준 (2026-04 단가)
     rates = {
-        "claude-sonnet-4-6": (3.0, 15.0),  # input, output per 1M tokens
+        "claude-sonnet-4-6": (3.0, 15.0),
         "claude-haiku-4-5-20251001": (0.25, 1.25),
     }
     in_rate, out_rate = rates.get(model, (3.0, 15.0))

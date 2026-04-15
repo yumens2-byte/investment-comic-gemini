@@ -110,8 +110,18 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
 
         # characters.yaml에서 base_power 로드
         canon = yaml.safe_load(Path("config/characters.yaml").read_text(encoding="utf-8"))
-        hero_base = canon["heroes"][hero_id].get("base_power", 75)
-        villain_base = canon["villains"][villain_id].get("base_power", 72)
+        # base_power — Notion battle_constants에서 로드 (yaml 값은 마스킹됨)
+        try:
+            from engine.common.notion_loader import load_battle_constants
+
+            _bp_tbl = load_battle_constants().get("CHARACTER_BASE_POWER", {})
+            hero_base = _bp_tbl.get(hero_id, canon["heroes"][hero_id].get("base_power", 75))
+            villain_base = _bp_tbl.get(
+                villain_id, canon["villains"][villain_id].get("base_power", 72)
+            )
+        except Exception:
+            hero_base = canon["heroes"][hero_id].get("base_power", 75)
+            villain_base = canon["villains"][villain_id].get("base_power", 72)
 
         market_ctx = get_market_context_for_battle(delta, curr_row)
         battle_result = battle(
@@ -156,8 +166,22 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
             villain_id=ctx["villain_id"],
             arc_context=ctx["arc_context"],
         )
-        logger_inst.step_done("STEP_4", ts, f"패널 {len(script.panels)}개 생성")
-        return script.model_dump()
+        script_dict = script.model_dump()
+
+        # 에피소드 JSON 파일 저장 (로그 아카이브)
+        ep_dir = Path("output") / "episodes" / episode_date
+        ep_dir.mkdir(parents=True, exist_ok=True)
+        ep_json_path = ep_dir / f"{episode_id}_script.json"
+        ep_json_path.write_text(
+            __import__("json").dumps(script_dict, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        logger_inst.step_done(
+            "STEP_4",
+            ts,
+            f"패널 {len(script.panels)}개 생성 | JSON 저장: {ep_json_path}",
+        )
+        return script_dict
     except Exception as exc:
         logger_inst.step_fail("STEP_4", ts, exc)
         raise
@@ -246,8 +270,33 @@ def step_image(
             },
         )
 
+        # 이미지 경로 로그 출력
+        success_paths = [str(p) for p in panel_paths if p]
+        fallback_count = sum(1 for p in panel_paths if not p)
+        for i, p in enumerate(panel_paths, 1):
+            if p:
+                logger_inst.info("STEP_6", f"  P{i}: {p}")
+            else:
+                logger_inst.info("STEP_6", f"  P{i}: [text_card fallback]")
+
+        # 이미지 경로 목록 파일 저장
+        ep_dir = Path("output") / "episodes" / episode_date
+        ep_dir.mkdir(parents=True, exist_ok=True)
+        img_log_path = ep_dir / f"{episode_id}_images.json"
+        img_log_path.write_text(
+            __import__("json").dumps(
+                {"episode_id": episode_id, "panels": panels_json, "cost_usd": total_cost},
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
         logger_inst.step_done(
-            "STEP_6", ts, f"{sum(1 for p in panel_paths if p)}개 패널 생성 (cost=${total_cost:.4f})"
+            "STEP_6",
+            ts,
+            f"{len(success_paths)}개 이미지 생성 / {fallback_count}개 fallback"
+            f" (cost=${total_cost:.4f}) | 로그: {img_log_path}",
         )
         return panel_paths
     except Exception as exc:

@@ -82,13 +82,17 @@ def _load_page_cached(page_id: str) -> str:
 
 def load_narrative_system() -> str:
     """Claude 시스템 프롬프트 로드."""
-    page_id = os.environ.get("NOTION_NARRATIVE_SYSTEM_ID", "3439208cbdc3810d9e7ceb5f48f8f093")
+    page_id = os.environ.get("NOTION_NARRATIVE_SYSTEM_ID")
+    if not page_id:
+        raise RuntimeError("NOTION_NARRATIVE_SYSTEM_ID 환경변수 필수")
     return _load_page_cached(page_id)
 
 
 def load_narrative_user_template() -> str:
     """Claude 유저 프롬프트 Jinja2 템플릿 로드."""
-    page_id = os.environ.get("NOTION_NARRATIVE_USER_ID", "3439208cbdc3816bb578d7355b3a1966")
+    page_id = os.environ.get("NOTION_NARRATIVE_USER_ID")
+    if not page_id:
+        raise RuntimeError("NOTION_NARRATIVE_USER_ID 환경변수 필수")
     return _load_page_cached(page_id)
 
 
@@ -102,7 +106,9 @@ def load_image_prompt_blocks() -> dict[str, str]:
             "SECURITY_NEGATIVE_BLOCK_V1_1": "...",
         }
     """
-    page_id = os.environ.get("NOTION_IMAGE_PROMPTS_ID", "3439208cbdc3817191e1c2cccd3865cc")
+    page_id = os.environ.get("NOTION_IMAGE_PROMPTS_ID")
+    if not page_id:
+        raise RuntimeError("NOTION_IMAGE_PROMPTS_ID 환경변수 필수")
     text = _load_page_cached(page_id)
 
     result: dict[str, str] = {}
@@ -132,7 +138,9 @@ def load_battle_constants() -> dict:
             "FORM_BONUS_TABLE": {...},
         }
     """
-    page_id = os.environ.get("NOTION_BATTLE_CONSTANTS_ID", "3439208cbdc3817bbdf9dbdb272508b8")
+    page_id = os.environ.get("NOTION_BATTLE_CONSTANTS_ID")
+    if not page_id:
+        raise RuntimeError("NOTION_BATTLE_CONSTANTS_ID 환경변수 필수")
     text = _load_page_cached(page_id)
 
     result: dict = {}
@@ -166,7 +174,9 @@ def load_ref_prompts() -> dict[str, str]:
     Returns:
         {char_id: prompt_text, ...}
     """
-    page_id = os.environ.get("NOTION_REF_PROMPTS_ID", "3439208cbdc381ccb85cf8e177a1a3d2")
+    page_id = os.environ.get("NOTION_REF_PROMPTS_ID")
+    if not page_id:
+        raise RuntimeError("NOTION_REF_PROMPTS_ID 환경변수 필수")
     text = _load_page_cached(page_id)
 
     result: dict[str, str] = {}

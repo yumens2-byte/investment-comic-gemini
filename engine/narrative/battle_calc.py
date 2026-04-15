@@ -192,24 +192,31 @@ def calc_villain_power(
 
 def resolve_outcome(balance: int) -> Outcome:
     """
-    balance → Outcome 변환 테이블 (doc 16a 기준).
-
-    balance >= 30:        HERO_VICTORY
-    10 <= balance < 30:   HERO_TACTICAL_VICTORY
-    -5 <= balance < 10:   DRAW
-    -10 <= balance < -5:  VILLAIN_TEMP_VICTORY
-    -30 <= balance < -10: HERO_DEFEAT
-    balance < -30:        SYSTEM_COLLAPSE
+    balance → Outcome 변환 테이블.
+    임계값은 Notion battle_constants에서 로드 (fallback: 하드코딩 제거됨).
     """
-    if balance >= 30:
+    try:
+        from engine.common.notion_loader import load_battle_constants
+
+        _bc = load_battle_constants()
+        _thr = _bc.get("OUTCOME_THRESHOLDS", {})
+        hero_v = _thr.get("HERO_VICTORY", 30)
+        hero_tv = _thr.get("HERO_TACTICAL_VICTORY", 10)
+        draw_l = _thr.get("DRAW_LOWER", -5)
+        villain_tv = _thr.get("VILLAIN_TEMP_VICTORY", -10)
+        hero_d = _thr.get("HERO_DEFEAT", -30)
+    except Exception:
+        hero_v, hero_tv, draw_l, villain_tv, hero_d = 30, 10, -5, -10, -30
+
+    if balance >= hero_v:
         return "HERO_VICTORY"
-    if balance >= 10:
+    if balance >= hero_tv:
         return "HERO_TACTICAL_VICTORY"
-    if balance >= -5:
+    if balance >= draw_l:
         return "DRAW"
-    if balance >= -10:
+    if balance >= villain_tv:
         return "VILLAIN_TEMP_VICTORY"
-    if balance >= -30:
+    if balance >= hero_d:
         return "HERO_DEFEAT"
     return "SYSTEM_COLLAPSE"
 
