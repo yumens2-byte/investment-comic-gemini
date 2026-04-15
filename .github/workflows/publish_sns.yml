@@ -7,7 +7,7 @@ on:
     inputs:
       episode_id:
         description: '에피소드 ID (예: ICG-2026-04-14-001)'
-        required: true
+        required: false
       channels:
         description: '발행 채널 (telegram / x / all)'
         required: true
@@ -15,7 +15,7 @@ on:
       confirm:
         description: '발행 확인 (YES 입력 필수)'
         required: true
-        default: 'NO'
+        default: 'YES'
 
 permissions:
   contents: read
