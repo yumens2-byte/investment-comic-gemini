@@ -43,12 +43,13 @@ def main() -> None:
 
     episode_date = args.date or _parse_date(args.episode)
 
+    import os
+
     from engine.common.logger import StepLogger, get_run_id
     from engine.common.supabase_client import icg_table
-    from engine.publish.x_publisher import publish_episode_x
-    from engine.publish.telegram_publisher import publish_episode_telegram
     from engine.publish.history_writer import record_publish
-    import os
+    from engine.publish.telegram_publisher import publish_episode_telegram
+    from engine.publish.x_publisher import publish_episode_x
 
     dry_run = os.environ.get("DRY_RUN", "true").lower() != "false"
 

@@ -10,15 +10,12 @@ Acceptance Criteria (Track A):
 """
 
 import json
-import os
-import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from engine.common.logger import StepLogger, get_run_id, mask_secret
-
 
 # ── mask_secret 단위 테스트 ───────────────────────────────────────────────────
 
@@ -174,7 +171,7 @@ class TestStepLogger:
         # 파일 기록은 유지되어야 함
         log_file = tmp_path / "run.log"
         assert log_file.exists()
-        records = [json.loads(l) for l in log_file.read_text().strip().split("\n")]
+        records = [json.loads(line) for line in log_file.read_text().strip().split("\n")]
         assert any(r["message"] == "test degraded" for r in records)
 
     def test_meta_dict_masked(self, tmp_logger: StepLogger, tmp_path: Path):

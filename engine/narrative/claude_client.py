@@ -18,12 +18,11 @@ import re
 from anthropic import Anthropic
 
 from engine.common.exceptions import (
-    BattleOverride,
-    NarrativeValidationError,
     InvalidVillainNameError,
+    NarrativeValidationError,
 )
-from engine.narrative.schema import EpisodeScript
 from engine.narrative.prompt_tpl import load_system_prompt, render_user_prompt
+from engine.narrative.schema import EpisodeScript
 
 logger = logging.getLogger(__name__)
 
@@ -72,8 +71,9 @@ def _validate_canon(script: EpisodeScript) -> None:
     2. villain role 캐릭터의 영문 이름이 6 Canon 리스트 내인지 확인.
     3. battle_result outcome이 스크립트와 일치하는지 확인.
     """
-    import yaml
     from pathlib import Path
+
+    import yaml
 
     canon = yaml.safe_load(Path("config/characters.yaml").read_text(encoding="utf-8"))
     all_char_ids = set(canon.get("heroes", {}).keys()) | set(canon.get("villains", {}).keys())

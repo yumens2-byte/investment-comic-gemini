@@ -39,10 +39,11 @@ def main() -> None:
     episode_id = args.episode
     episode_date = _parse_date(episode_id)
 
+    from engine.assembly.pil_composer import compose_episode
     from engine.common.logger import StepLogger, get_run_id
     from engine.common.supabase_client import icg_table
-    from engine.persist.asset_writer import get_episode, upsert as asset_upsert
-    from engine.assembly.pil_composer import compose_episode
+    from engine.persist.asset_writer import get_episode
+    from engine.persist.asset_writer import upsert as asset_upsert
 
     run_id = get_run_id(episode_date)
     output_dir = Path("output") / "episodes" / episode_date

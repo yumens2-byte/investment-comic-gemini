@@ -4,7 +4,8 @@ EpisodeScript Pydantic 스키마 검증.
 """
 import pytest
 from pydantic import ValidationError
-from engine.narrative.schema import EpisodeScript, Panel, PanelCharacter
+
+from engine.narrative.schema import EpisodeScript
 
 
 def _make_valid_script(**overrides) -> dict:
@@ -102,10 +103,14 @@ class TestEpisodeScript:
 
 # ── x_publisher 청킹 테스트 ───────────────────────────────────────────────────
 
-from pathlib import Path
-from unittest.mock import MagicMock, patch
-from engine.publish.x_publisher import _chunk_slides, _guard_disclaimer, SLEEP_BETWEEN_TWEETS
-from engine.common.exceptions import DisclaimerMissing
+from pathlib import Path  # noqa: E402
+
+from engine.common.exceptions import DisclaimerMissing  # noqa: E402
+from engine.publish.x_publisher import (  # noqa: E402
+    SLEEP_BETWEEN_TWEETS,
+    _chunk_slides,
+    _guard_disclaimer,
+)
 
 
 class TestXPublisherChunking:

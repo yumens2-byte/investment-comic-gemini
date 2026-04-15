@@ -126,8 +126,8 @@ def build_for_episode(episode_script: dict) -> list[PanelPrompt]:
     Returns:
         PanelPrompt 리스트 (panels 순서 동일).
     """
-    from engine.image.ref_loader import get_refs_for_panel, get_canon_name
     from engine.common.exceptions import CanonLockViolation
+    from engine.image.ref_loader import get_canon_name, get_refs_for_panel
 
     panel_prompts: list[PanelPrompt] = []
 

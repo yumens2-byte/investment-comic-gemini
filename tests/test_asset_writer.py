@@ -72,8 +72,9 @@ class TestValidateTransition:
 
 # ── notion_mirror 테스트 ──────────────────────────────────────────────────────
 
-from unittest.mock import MagicMock, patch
-from engine.persist.notion_mirror import create_or_update, update_status, _STATUS_MAP
+from unittest.mock import MagicMock, patch  # noqa: E402
+
+from engine.persist.notion_mirror import _STATUS_MAP, create_or_update  # noqa: E402
 
 
 class TestNotionMirror:

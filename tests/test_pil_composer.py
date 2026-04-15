@@ -2,16 +2,13 @@
 tests/test_pil_composer.py
 PIL 슬라이드 조립 단위 테스트.
 """
-import tempfile
-from pathlib import Path
 
-import pytest
 
 from engine.assembly.pil_composer import (
-    compose_slide,
-    compose_episode,
-    SLIDE_W,
     SLIDE_H,
+    SLIDE_W,
+    compose_episode,
+    compose_slide,
 )
 
 

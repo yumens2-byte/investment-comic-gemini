@@ -194,7 +194,7 @@ def _compose_disclaimer_slide(output_path: Path, narration: str) -> Path:
 
     # 배경 그라디언트 효과 (단색 블록 조합)
     for i in range(5):
-        alpha = 20 + i * 8
+        20 + i * 8
         draw.rectangle([(0, i * 200), (SLIDE_W, (i + 1) * 200)], fill=(8 + i, 5 + i * 2, 15 + i * 3))
 
     # 경고 아이콘 영역

@@ -15,10 +15,8 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
 import sys
-import time
-from datetime import date, timezone, datetime
+from datetime import date
 from pathlib import Path
 
 logging.basicConfig(
@@ -59,8 +57,13 @@ def step_data(episode_date: str, logger_inst) -> None:
     """STEP 2: 시장 데이터 수집 → icg.daily_snapshots."""
     ts = logger_inst.step_start("STEP_2", "데이터 수집")
     try:
-        from engine.data import fred_fetcher, market_fetcher
-        from engine.data import feargreed_fetcher, crypto_fetcher, sentiment_fetcher
+        from engine.data import (
+            crypto_fetcher,
+            feargreed_fetcher,
+            fred_fetcher,
+            market_fetcher,
+            sentiment_fetcher,
+        )
         from engine.data.snapshot_writer import upsert
 
         fred = fred_fetcher.fetch_all(episode_date)
@@ -80,14 +83,16 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
     """STEP 3: 분석 + Battle → icg.daily_analysis. context dict 반환."""
     ts = logger_inst.step_start("STEP_3", "분석/Battle 계산")
     try:
-        from engine.analysis.reader import get_latest
+        import yaml
+
+        from engine.analysis.analysis_writer import upsert as analysis_upsert
         from engine.analysis.delta_engine import compute
         from engine.analysis.event_classifier import classify, get_market_context_for_battle
+        from engine.analysis.reader import get_latest
         from engine.narrative.battle_calc import (
-            battle, select_characters_for_event,
+            battle,
+            select_characters_for_event,
         )
-        from engine.analysis.analysis_writer import upsert as analysis_upsert
-        import yaml
 
         rows = get_latest(2)
         if not rows:
@@ -203,8 +208,8 @@ def step_image(
     """STEP 6: Gemini 이미지 생성."""
     ts = logger_inst.step_start("STEP_6", "Gemini 이미지 생성")
     try:
-        from engine.image.prompt_builder import build_for_episode, PanelPrompt
         from engine.image.gemini_client import generate_episode as gemini_generate
+        from engine.image.prompt_builder import build_for_episode
         from engine.persist.asset_writer import upsert as asset_upsert
 
         output_dir = Path("output") / "episodes" / episode_date / "panels"

@@ -10,7 +10,6 @@ Acceptance Criteria (Track F):
 """
 
 import hashlib
-import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -113,11 +112,10 @@ class TestGetRefPath:
 
 # ── prompt_builder 테스트 ────────────────────────────────────────────────────
 
-from engine.image.prompt_builder import (
+from engine.image.prompt_builder import (  # noqa: E402
+    SECURITY_NEGATIVE_BLOCK_V1_1,
     build_panel_prompt,
     verify_negative_block_present,
-    SECURITY_NEGATIVE_BLOCK_V1_1,
-    GLOBAL_STYLE_BLOCK,
 )
 
 

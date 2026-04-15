@@ -144,7 +144,7 @@ def get_refs_for_panel(char_ids: list[str]) -> list[Path]:
                 refs.append(path)
             else:
                 logger.warning("[ref_loader] REF 이미지 파일 없음: %s → %s", char_id, path)
-        except (UnknownCharacterError, CanonLockViolation) as exc:
+        except (UnknownCharacterError, CanonLockViolation):
             raise  # 치명적 에러 — 상위로 전파
         except Exception as exc:
             logger.warning("[ref_loader] %s REF 로드 실패 (스킵): %s", char_id, exc)

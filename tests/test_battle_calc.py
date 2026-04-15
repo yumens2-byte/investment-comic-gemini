@@ -11,15 +11,14 @@ Acceptance Criteria (Track C):
 
 import pytest
 
+from engine.common.exceptions import UnknownCharacterError
 from engine.narrative.battle_calc import (
-    BattleResult,
+    CANON_HERO_IDS,
+    CANON_VILLAIN_IDS,
     battle,
     resolve_outcome,
     select_characters_for_event,
-    CANON_HERO_IDS,
-    CANON_VILLAIN_IDS,
 )
-from engine.common.exceptions import UnknownCharacterError
 
 
 class TestResolveOutcome:
@@ -70,7 +69,7 @@ class TestBattle:
 
     def test_hero_victory_with_synergy(self):
         """CHAR_HERO_003 + oil_shock + form_bonus=10 → HERO_VICTORY (balance >= 30).
-        
+
         계산:
           hero: base=80 + oil_synergy=8 + high_tension=5 + form_bonus=10 = 103
           villain: base=60 + oil_intensity=min(int(6.0*1.5),25)=9 = 69
@@ -223,7 +222,7 @@ class TestSelectCharacters:
 
 # ── Event Classifier 테스트 ───────────────────────────────────────────────────
 
-from engine.analysis.event_classifier import classify, EpisodeType
+from engine.analysis.event_classifier import classify  # noqa: E402
 
 
 class TestEventClassifier:

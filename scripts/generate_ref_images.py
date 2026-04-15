@@ -22,7 +22,6 @@ import argparse
 import hashlib
 import logging
 import os
-import sys
 import time
 from pathlib import Path
 
@@ -74,7 +73,7 @@ STYLE: Korean manhwa / webtoon. Bold ink lines. Cel shading. High contrast.
 """,
     "CHAR_HERO_005": """
 Full-body character reference sheet for Korean manhwa hero Gold Bond Muscle.
-CHARACTER: Stocky powerful man wearing gold-and-white armored shield suit. Holds a massive circular shield 
+CHARACTER: Stocky powerful man wearing gold-and-white armored shield suit. Holds a massive circular shield
 with gold and bond symbols. Grey-streaked hair, mature look. Defensive champion stance.
 Expression: Steadfast, protective. Golden eyes.
 POSE: Shield raised in defense, facing RIGHT.
@@ -92,7 +91,7 @@ STYLE: Korean manhwa / webtoon. Bold ink lines. Cel shading. High contrast. Vill
 """,
     "CHAR_VILLAIN_002": """
 Full-body character reference sheet for Korean manhwa villain Oil Shock Titan.
-CHARACTER: Massive oil-black armored titan. Body dripping with crude oil energy. Flames erupting from 
+CHARACTER: Massive oil-black armored titan. Body dripping with crude oil energy. Flames erupting from
 shoulders. Oil derrick-like horns on helmet. Eyes like burning oil wells.
 Expression: Destructive, overwhelming.
 POSE: Charging forward menacingly, facing LEFT.
@@ -119,7 +118,7 @@ STYLE: Korean manhwa / webtoon. Bold ink lines. Cel shading. High contrast. Vill
 """,
     "CHAR_VILLAIN_005": """
 Full-body character reference sheet for Korean manhwa villain Algorithm Reaper.
-CHARACTER: Skeletal cyber-villain in black and neon green. Half flesh, half circuit board. 
+CHARACTER: Skeletal cyber-villain in black and neon green. Half flesh, half circuit board.
 Holds a scythe made of trading algorithms and dark data streams. Hollow glowing green eyes.
 Expression: Merciless, algorithmic. Cold precision.
 POSE: Scythe raised, facing LEFT. Menacing reaper stance.
@@ -128,7 +127,7 @@ STYLE: Korean manhwa / webtoon. Bold ink lines. Cel shading. High contrast. Vill
 """,
     "CHAR_VILLAIN_006": """
 Full-body character reference sheet for Korean manhwa villain War Dominion.
-CHARACTER: Massive armored warlord in blood-red and black. War-themed battle armor with geopolitical 
+CHARACTER: Massive armored warlord in blood-red and black. War-themed battle armor with geopolitical
 conflict symbols. Wielding two massive swords crossed. Battle-scarred, imposing.
 Expression: Wrathful, dominant. Blood-red glowing eyes.
 POSE: Swords crossed, battle stance, facing LEFT.
@@ -161,7 +160,6 @@ No watermarks. Comic/manhwa art style ONLY.
 def _generate_one(char_id: str, output_path: Path) -> bytes:
     """Gemini API로 단일 캐릭터 이미지 생성."""
     from google import genai
-    from google.genai import types
 
     pay_key = os.environ.get("GEMINI_API_SUB_PAY_KEY", "")
     if not pay_key:
