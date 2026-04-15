@@ -68,9 +68,12 @@ jobs:
       # ── STEP 7: PIL Assembly (dialog_edits_json 적용) ────────────────────
       - name: STEP 7 — Assembly
         run: |
-          python -m scripts.run_resume \
-            --episode ${{ github.event.inputs.episode_id }} \
-            ${{ github.event.inputs.force == 'true' && '--force' || '' }}
+          # 수정 후 (shell if-else)
+          if [ -n "${{ github.event.inputs.episode_id }}" ]; then
+            python -m scripts.run_resume --episode "${{ github.event.inputs.episode_id }}"
+          else
+            python -m scripts.run_resume  # 자동 선택
+          fi
 
       - name: Upload Assembled Slides
         uses: actions/upload-artifact@v4
