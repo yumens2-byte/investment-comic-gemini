@@ -11,6 +11,7 @@ class ICGBaseError(Exception):
 
 # ── Canon 관련 ────────────────────────────────────────────────────────────────
 
+
 class CanonLockViolation(ICGBaseError):
     """
     캐릭터 REF 이미지의 SHA256 해시가 characters.yaml 기록값과 불일치할 때 발생.
@@ -36,6 +37,7 @@ class UnknownCharacterError(ICGBaseError):
 
 
 # ── Battle / Narrative 관련 ───────────────────────────────────────────────────
+
 
 class BattleOverride(ICGBaseError):
     """
@@ -82,6 +84,7 @@ class InvalidVillainNameError(ICGBaseError):
 
 # ── Publish / Disclaimer 관련 ─────────────────────────────────────────────────
 
+
 class DisclaimerMissing(ICGBaseError):
     """
     SNS 발행 콘텐츠에 투자 고지 문구가 누락된 경우 발생.
@@ -98,6 +101,7 @@ class DisclaimerMissing(ICGBaseError):
 
 
 # ── Status State Machine 관련 ─────────────────────────────────────────────────
+
 
 class InvalidStatusTransition(ICGBaseError):
     """
@@ -123,13 +127,11 @@ class InvalidStatusTransition(ICGBaseError):
         self.current = current
         self.target = target
         allowed = self.ALLOWED_TRANSITIONS.get(current, [])
-        super().__init__(
-            f"Status 전환 불가: {current} → {target}. "
-            f"허용 전환: {allowed}"
-        )
+        super().__init__(f"Status 전환 불가: {current} → {target}. " f"허용 전환: {allowed}")
 
 
 # ── Data / API 관련 ───────────────────────────────────────────────────────────
+
 
 class DataFetchError(ICGBaseError):
     """외부 API(FRED, yfinance, LunarCrush, Crypto.com) 수집 실패 시 발생."""

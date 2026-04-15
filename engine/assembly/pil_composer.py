@@ -24,11 +24,11 @@ logger = logging.getLogger(__name__)
 # 슬라이드 크기
 SLIDE_W = 1080
 SLIDE_H = 1350
-PANEL_H = 1080   # 이미지 영역 높이
-TEXT_H = SLIDE_H - PANEL_H   # 텍스트 바 높이 (270px)
+PANEL_H = 1080  # 이미지 영역 높이
+TEXT_H = SLIDE_H - PANEL_H  # 텍스트 바 높이 (270px)
 
 # 텍스트 바 색상
-BG_DARK = (10, 15, 25)       # 거의 검정
+BG_DARK = (10, 15, 25)  # 거의 검정
 TEXT_WHITE = (220, 235, 255)
 TEXT_CYAN = (6, 182, 212)
 TEXT_AMBER = (245, 158, 11)
@@ -38,7 +38,7 @@ _FONT_PATHS = [
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
     "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
     "/System/Library/Fonts/AppleSDGothicNeo.ttc",  # macOS
-    "/assets/fonts/NotoSansCJK-Bold.ttc",           # 로컬 복사본
+    "/assets/fonts/NotoSansCJK-Bold.ttc",  # 로컬 복사본
 ]
 
 
@@ -195,7 +195,9 @@ def _compose_disclaimer_slide(output_path: Path, narration: str) -> Path:
     # 배경 그라디언트 효과 (단색 블록 조합)
     for i in range(5):
         20 + i * 8
-        draw.rectangle([(0, i * 200), (SLIDE_W, (i + 1) * 200)], fill=(8 + i, 5 + i * 2, 15 + i * 3))
+        draw.rectangle(
+            [(0, i * 200), (SLIDE_W, (i + 1) * 200)], fill=(8 + i, 5 + i * 2, 15 + i * 3)
+        )
 
     # 경고 아이콘 영역
     warn_font = _get_font(80)
@@ -208,8 +210,12 @@ def _compose_disclaimer_slide(output_path: Path, narration: str) -> Path:
 
     # 하단 로고 텍스트
     logo_font = _get_font(28)
-    draw.text((SLIDE_W // 2 - 180, SLIDE_H - 80), "🍌 Investment Comic Gemini",
-              font=logo_font, fill=TEXT_CYAN)
+    draw.text(
+        (SLIDE_W // 2 - 180, SLIDE_H - 80),
+        "🍌 Investment Comic Gemini",
+        font=logo_font,
+        fill=TEXT_CYAN,
+    )
 
     slide.save(str(output_path), "PNG", optimize=True)
     return output_path

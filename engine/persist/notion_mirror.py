@@ -169,7 +169,9 @@ def update_status(
             props.update(extra_props)
 
         client.pages.update(page_id=page_id, properties=props)
-        logger.info("[notion_mirror] 페이지 업데이트 page_id=%s status=%s", page_id[:8], notion_status)
+        logger.info(
+            "[notion_mirror] 페이지 업데이트 page_id=%s status=%s", page_id[:8], notion_status
+        )
 
     except Exception as exc:
         logger.warning("[notion_mirror] 페이지 업데이트 실패 (영향 없음): %s", exc)

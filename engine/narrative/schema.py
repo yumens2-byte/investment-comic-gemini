@@ -28,12 +28,12 @@ class Panel(BaseModel):
 
     idx: int = Field(ge=1, description="패널 번호 (1-based)")
     panel_type: Literal[
-        "COVER",       # 표지
-        "TENSION",     # 긴장 고조
-        "BATTLE",      # 전투
-        "CLIMAX",      # 클라이맥스
-        "AFTERMATH",   # 여파
-        "TEXT_CARD",   # 텍스트 카드
+        "COVER",  # 표지
+        "TENSION",  # 긴장 고조
+        "BATTLE",  # 전투
+        "CLIMAX",  # 클라이맥스
+        "AFTERMATH",  # 여파
+        "TEXT_CARD",  # 텍스트 카드
         "DISCLAIMER",  # 면책 고지 (마지막 패널 필수)
     ]
     characters: list[PanelCharacter] = Field(default_factory=list)

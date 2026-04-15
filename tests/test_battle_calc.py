@@ -53,12 +53,12 @@ class TestResolveOutcome:
 
     def test_boundary_values(self):
         """경계값 정밀 검증."""
-        assert resolve_outcome(9) == "DRAW"       # 10 미만
+        assert resolve_outcome(9) == "DRAW"  # 10 미만
         assert resolve_outcome(10) == "HERO_TACTICAL_VICTORY"  # 10 이상
-        assert resolve_outcome(-5) == "DRAW"       # -5 이상
-        assert resolve_outcome(-6) == "VILLAIN_TEMP_VICTORY"   # -6
-        assert resolve_outcome(-30) == "HERO_DEFEAT"           # -30
-        assert resolve_outcome(-31) == "SYSTEM_COLLAPSE"       # -31 미만
+        assert resolve_outcome(-5) == "DRAW"  # -5 이상
+        assert resolve_outcome(-6) == "VILLAIN_TEMP_VICTORY"  # -6
+        assert resolve_outcome(-30) == "HERO_DEFEAT"  # -30
+        assert resolve_outcome(-31) == "SYSTEM_COLLAPSE"  # -31 미만
 
 
 class TestBattle:
@@ -76,8 +76,10 @@ class TestBattle:
           balance = 103 - 69 = 34 → HERO_VICTORY
         """
         result = battle(
-            "CHAR_HERO_003", 80,
-            "CHAR_VILLAIN_002", 60,
+            "CHAR_HERO_003",
+            80,
+            "CHAR_VILLAIN_002",
+            60,
             {"oil_shock": True, "wti_pct_3d": 6.0, "vix": 20.0},
             {"tension": 80},
             form_bonus=10,
@@ -90,8 +92,10 @@ class TestBattle:
     def test_system_collapse(self):
         """doc 07 예시: high VIX + low base hero → SYSTEM_COLLAPSE."""
         result = battle(
-            "CHAR_HERO_001", 60,
-            "CHAR_VILLAIN_004", 100,
+            "CHAR_HERO_001",
+            60,
+            "CHAR_VILLAIN_004",
+            100,
             {"vix": 45, "wti_pct_3d": 0},
             {"tension": 95},
         )
@@ -102,8 +106,10 @@ class TestBattle:
     def test_draw_scenario(self):
         """균형 잡힌 전투 → DRAW."""
         result = battle(
-            "CHAR_HERO_001", 75,
-            "CHAR_VILLAIN_005", 70,
+            "CHAR_HERO_001",
+            75,
+            "CHAR_VILLAIN_005",
+            70,
             self._MARKET_NORMAL,
             self._ARC_NORMAL,
         )
@@ -113,8 +119,10 @@ class TestBattle:
     def test_pure_function(self):
         """동일 입력 → 동일 출력 (순수 함수 보장)."""
         args = (
-            "CHAR_HERO_002", 78,
-            "CHAR_VILLAIN_001", 72,
+            "CHAR_HERO_002",
+            78,
+            "CHAR_VILLAIN_001",
+            72,
             self._MARKET_NORMAL,
             self._ARC_NORMAL,
         )
@@ -126,8 +134,10 @@ class TestBattle:
     def test_battle_result_frozen(self):
         """BattleResult는 불변이어야 한다 — Claude가 outcome 수정 불가."""
         result = battle(
-            "CHAR_HERO_001", 85,
-            "CHAR_VILLAIN_002", 80,
+            "CHAR_HERO_001",
+            85,
+            "CHAR_VILLAIN_002",
+            80,
             self._MARKET_NORMAL,
             self._ARC_NORMAL,
         )
@@ -138,8 +148,10 @@ class TestBattle:
         """Canon 외 hero_id → UnknownCharacterError."""
         with pytest.raises(UnknownCharacterError):
             battle(
-                "CHAR_HERO_999", 80,
-                "CHAR_VILLAIN_001", 72,
+                "CHAR_HERO_999",
+                80,
+                "CHAR_VILLAIN_001",
+                72,
                 self._MARKET_NORMAL,
                 self._ARC_NORMAL,
             )
@@ -148,8 +160,10 @@ class TestBattle:
         """Canon 외 villain_id → UnknownCharacterError."""
         with pytest.raises(UnknownCharacterError):
             battle(
-                "CHAR_HERO_001", 85,
-                "CHAR_VILLAIN_999", 72,
+                "CHAR_HERO_001",
+                85,
+                "CHAR_VILLAIN_999",
+                72,
                 self._MARKET_NORMAL,
                 self._ARC_NORMAL,
             )
@@ -157,14 +171,18 @@ class TestBattle:
     def test_high_tension_bonus(self):
         """arc tension >= 75 → hero +5 보너스 적용."""
         result_low = battle(
-            "CHAR_HERO_001", 70,
-            "CHAR_VILLAIN_004", 70,
+            "CHAR_HERO_001",
+            70,
+            "CHAR_VILLAIN_004",
+            70,
             {"vix": 20.0, "wti_pct_3d": 0},
             {"tension": 10},
         )
         result_high = battle(
-            "CHAR_HERO_001", 70,
-            "CHAR_VILLAIN_004", 70,
+            "CHAR_HERO_001",
+            70,
+            "CHAR_VILLAIN_004",
+            70,
             {"vix": 20.0, "wti_pct_3d": 0},
             {"tension": 80},
         )
@@ -174,8 +192,10 @@ class TestBattle:
     def test_to_dict_has_required_keys(self):
         """BattleResult.to_dict()에 Claude 입력 필수 키가 모두 있어야 한다."""
         result = battle(
-            "CHAR_HERO_001", 85,
-            "CHAR_VILLAIN_002", 80,
+            "CHAR_HERO_001",
+            85,
+            "CHAR_VILLAIN_002",
+            80,
             self._MARKET_NORMAL,
             self._ARC_NORMAL,
         )
@@ -186,8 +206,10 @@ class TestBattle:
     def test_gold_bond_vix_defensive(self):
         """CHAR_HERO_005 (Gold Bond) + VIX > 30 → defensive_mode +12."""
         result = battle(
-            "CHAR_HERO_005", 70,
-            "CHAR_VILLAIN_004", 75,
+            "CHAR_HERO_005",
+            70,
+            "CHAR_VILLAIN_004",
+            75,
             {"vix": 35.0, "wti_pct_3d": 0},
             {"tension": 40},
         )

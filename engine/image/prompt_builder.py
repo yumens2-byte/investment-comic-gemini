@@ -50,8 +50,8 @@ class PanelPrompt:
     """단일 패널 프롬프트 데이터."""
 
     panel_idx: int
-    panel_type: str       # COVER / TENSION / BATTLE / CLIMAX / AFTERMATH / TEXT_CARD / DISCLAIMER
-    prompt_text: str      # 전체 조립된 프롬프트
+    panel_type: str  # COVER / TENSION / BATTLE / CLIMAX / AFTERMATH / TEXT_CARD / DISCLAIMER
+    prompt_text: str  # 전체 조립된 프롬프트
     ref_image_paths: list[Path] = field(default_factory=list)
     retry_fallback: str = "text_card"
 
@@ -151,12 +151,14 @@ def build_for_episode(episode_script: dict) -> list[PanelPrompt]:
                 name_en = get_canon_name(char_id)
             except Exception:
                 name_en = char_id
-            char_details.append({
-                "char_id": char_id,
-                "role": c.get("role", "character"),
-                "position": c.get("position", "CENTER"),
-                "name_en": name_en,
-            })
+            char_details.append(
+                {
+                    "char_id": char_id,
+                    "role": c.get("role", "character"),
+                    "position": c.get("position", "CENTER"),
+                    "name_en": name_en,
+                }
+            )
 
         # REF 이미지 경로 (CanonLockViolation은 상위로 전파)
         try:

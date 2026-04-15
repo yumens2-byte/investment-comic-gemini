@@ -210,8 +210,11 @@ def main() -> None:
 
     ASSETS_DIR.mkdir(parents=True, exist_ok=True)
 
-    char_ids = list(_CHAR_TO_FILE.keys()) if args.chars == "all" \
+    char_ids = (
+        list(_CHAR_TO_FILE.keys())
+        if args.chars == "all"
         else [c.strip() for c in args.chars.split(",")]
+    )
 
     logger.info("생성 대상: %d종 %s", len(char_ids), char_ids)
 

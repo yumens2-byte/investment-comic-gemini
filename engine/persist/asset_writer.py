@@ -25,7 +25,7 @@ _ALLOWED_TRANSITIONS: dict[str, list[str]] = {
     "dialog_confirmed": ["assembled", "failed", "aborted"],
     "assembled": ["published", "failed", "aborted"],
     "published": [],
-    "failed": ["draft"],   # 재시도 허용
+    "failed": ["draft"],  # 재시도 허용
     "aborted": [],
 }
 
@@ -76,7 +76,9 @@ def upsert(
 
     logger.info(
         "[asset_writer] upsert date=%s type=%s status=%s",
-        episode_date, event_type, new_status or "unchanged"
+        episode_date,
+        event_type,
+        new_status or "unchanged",
     )
 
 
@@ -143,5 +145,7 @@ def set_failed(episode_date: str, event_type: str, error_message: str) -> None:
 
     logger.error(
         "[asset_writer] status=failed date=%s type=%s error=%s",
-        episode_date, event_type, error_message[:200]
+        episode_date,
+        event_type,
+        error_message[:200],
     )

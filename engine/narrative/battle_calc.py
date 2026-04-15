@@ -15,12 +15,12 @@ from dataclasses import dataclass
 from typing import Literal
 
 Outcome = Literal[
-    "HERO_VICTORY",           # balance >= 30
+    "HERO_VICTORY",  # balance >= 30
     "HERO_TACTICAL_VICTORY",  # balance >= 10
-    "DRAW",                   # -5 ~ +9
-    "VILLAIN_TEMP_VICTORY",   # -10 ~ -6
-    "HERO_DEFEAT",            # -30 ~ -11
-    "SYSTEM_COLLAPSE",        # <= -31
+    "DRAW",  # -5 ~ +9
+    "VILLAIN_TEMP_VICTORY",  # -10 ~ -6
+    "HERO_DEFEAT",  # -30 ~ -11
+    "SYSTEM_COLLAPSE",  # <= -31
 ]
 
 # 빌런 Canon 이름 목록 (RULE 06)
@@ -245,9 +245,7 @@ def battle(
     hero_power, hero_breakdown = calc_hero_power(
         hero_id, hero_base, market_context, arc_context, form_bonus
     )
-    villain_power, villain_breakdown = calc_villain_power(
-        villain_id, villain_base, market_context
-    )
+    villain_power, villain_breakdown = calc_villain_power(villain_id, villain_base, market_context)
 
     balance = hero_power - villain_power
     outcome = resolve_outcome(balance)

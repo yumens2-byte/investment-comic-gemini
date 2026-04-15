@@ -115,8 +115,10 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
 
         market_ctx = get_market_context_for_battle(delta, curr_row)
         battle_result = battle(
-            hero_id=hero_id, hero_base=hero_base,
-            villain_id=villain_id, villain_base=villain_base,
+            hero_id=hero_id,
+            hero_base=hero_base,
+            villain_id=villain_id,
+            villain_base=villain_base,
             market_context=market_ctx,
             arc_context=arc_context,
         )
@@ -229,15 +231,16 @@ def step_image(
 
         # episode_assets 업데이트
         panels_json = [
-            {"panel_idx": i + 1, "path": str(p) if p else None}
-            for i, p in enumerate(panel_paths)
+            {"panel_idx": i + 1, "path": str(p) if p else None} for i, p in enumerate(panel_paths)
         ]
         asset_upsert(
             episode_date,
             ctx["event_type"],
             {
                 "panels_json": panels_json,
-                "image_prompts_json": [{"idx": pp.panel_idx, "prompt": pp.prompt_text[:500]} for pp in panel_prompts],
+                "image_prompts_json": [
+                    {"idx": pp.panel_idx, "prompt": pp.prompt_text[:500]} for pp in panel_prompts
+                ],
                 "gemini_cost_usd": total_cost,
                 "status": "image_generated",
             },
@@ -254,8 +257,11 @@ def step_image(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="ICG 파이프라인 실행")
-    parser.add_argument("--stage", default="all",
-                        choices=["all", "data", "analysis", "narrative", "persist", "image"])
+    parser.add_argument(
+        "--stage",
+        default="all",
+        choices=["all", "data", "analysis", "narrative", "persist", "image"],
+    )
     parser.add_argument("--date", default=None, help="대상 날짜 (YYYY-MM-DD, 기본: 오늘)")
     args = parser.parse_args()
 
@@ -263,11 +269,14 @@ def main() -> None:
 
     # StepLogger 초기화
     from engine.common.logger import StepLogger, get_run_id
+
     run_id = get_run_id(episode_date)
     output_dir = Path("output") / "episodes" / episode_date
     sl = StepLogger(run_id=run_id, episode_date=episode_date, output_dir=output_dir)
 
-    sl.info("PIPELINE", f"ICG 파이프라인 시작 run_id={run_id} date={episode_date} stage={args.stage}")
+    sl.info(
+        "PIPELINE", f"ICG 파이프라인 시작 run_id={run_id} date={episode_date} stage={args.stage}"
+    )
 
     try:
         ctx: dict = {}

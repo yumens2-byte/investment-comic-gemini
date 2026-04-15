@@ -25,7 +25,7 @@ from engine.common.retry import image_retry
 logger = logging.getLogger(__name__)
 
 _MODEL = "gemini-2.5-flash-image"
-_COST_INPUT_PER_1M = 0.30   # USD per 1M input tokens
+_COST_INPUT_PER_1M = 0.30  # USD per 1M input tokens
 _COST_OUTPUT_PER_1M = 30.0  # USD per 1M output tokens
 
 
@@ -158,29 +158,30 @@ def generate_panel(
 
         output_path.write_bytes(image_bytes)
 
-        log_record.update({
-            "status": "success",
-            "prompt_tokens": prompt_tokens,
-            "output_tokens": output_tokens,
-            "latency_sec": latency,
-            "cost_usd": cost_usd,
-            "output": str(output_path),
-        })
+        log_record.update(
+            {
+                "status": "success",
+                "prompt_tokens": prompt_tokens,
+                "output_tokens": output_tokens,
+                "latency_sec": latency,
+                "cost_usd": cost_usd,
+                "output": str(output_path),
+            }
+        )
         _write_jsonl_log(log_path, log_record)
 
-        logger.info(
-            "[gemini] 패널 P%d 생성 완료 (%.2fs, $%.4f)",
-            panel_idx, latency, cost_usd
-        )
+        logger.info("[gemini] 패널 P%d 생성 완료 (%.2fs, $%.4f)", panel_idx, latency, cost_usd)
         return output_path
 
     except Exception as exc:
         latency = round(time.monotonic() - start_ts, 2)
-        log_record.update({
-            "status": "failed",
-            "latency_sec": latency,
-            "error": str(exc),
-        })
+        log_record.update(
+            {
+                "status": "failed",
+                "latency_sec": latency,
+                "error": str(exc),
+            }
+        )
         _write_jsonl_log(log_path, log_record)
 
         logger.error("[gemini] 패널 P%d 생성 실패 → text_card fallback: %s", panel_idx, exc)
@@ -223,6 +224,8 @@ def generate_episode(
     success_count = sum(1 for p in results if p is not None)
     logger.info(
         "[gemini] 에피소드 생성 완료: %d/%d 패널 성공 (cost=$%.4f)",
-        success_count, len(results), total_cost
+        success_count,
+        len(results),
+        total_cost,
     )
     return results, total_cost

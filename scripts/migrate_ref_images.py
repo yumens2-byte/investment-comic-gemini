@@ -196,7 +196,7 @@ def _download_image(url: str, dest_path: Path) -> bool:
         resp = requests.get(url, timeout=30, stream=True)
         resp.raise_for_status()
         data = resp.content
-        if data[:4] == b'\x89PNG' or data[:3] == b'\xff\xd8\xff':
+        if data[:4] == b"\x89PNG" or data[:3] == b"\xff\xd8\xff":
             dest_path.write_bytes(data)
             return True
         logger.warning("PNG/JPEG가 아닌 응답: %s", url[:60])

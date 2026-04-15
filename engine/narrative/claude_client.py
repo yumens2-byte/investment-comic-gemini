@@ -78,8 +78,7 @@ def _validate_canon(script: EpisodeScript) -> None:
     canon = yaml.safe_load(Path("config/characters.yaml").read_text(encoding="utf-8"))
     all_char_ids = set(canon.get("heroes", {}).keys()) | set(canon.get("villains", {}).keys())
     villain_map = {
-        cid: entry.get("name_en", "")
-        for cid, entry in canon.get("villains", {}).items()
+        cid: entry.get("name_en", "") for cid, entry in canon.get("villains", {}).items()
     }
 
     for panel in script.panels:
@@ -217,7 +216,7 @@ def estimate_cost(input_tokens: int, output_tokens: int, model: str = _MODEL_PRI
     """Claude API 비용 추정 (USD)."""
     # claude-sonnet-4-6 기준 (2026-04 단가)
     rates = {
-        "claude-sonnet-4-6": (3.0, 15.0),          # input, output per 1M tokens
+        "claude-sonnet-4-6": (3.0, 15.0),  # input, output per 1M tokens
         "claude-haiku-4-5-20251001": (0.25, 1.25),
     }
     in_rate, out_rate = rates.get(model, (3.0, 15.0))

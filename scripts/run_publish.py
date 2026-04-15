@@ -77,10 +77,7 @@ def main() -> None:
 
     # 슬라이드 경로 복원
     slides_json = row.get("slides_json", [])
-    slides = [
-        Path(s["path"]) for s in slides_json
-        if isinstance(s, dict) and s.get("path")
-    ]
+    slides = [Path(s["path"]) for s in slides_json if isinstance(s, dict) and s.get("path")]
 
     if not slides:
         sl.error("STEP_8", "슬라이드 없음 — run_resume 먼저 실행")
@@ -105,6 +102,7 @@ def main() -> None:
     # Telegram 발행
     if "telegram" in channels or "all" in channels:
         import os
+
         tg_channels = []
         free_id = os.environ.get("TELEGRAM_FREE_CHANNEL_ID", "")
         if free_id:

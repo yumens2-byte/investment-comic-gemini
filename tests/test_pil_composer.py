@@ -3,7 +3,6 @@ tests/test_pil_composer.py
 PIL 슬라이드 조립 단위 테스트.
 """
 
-
 from engine.assembly.pil_composer import (
     SLIDE_H,
     SLIDE_W,

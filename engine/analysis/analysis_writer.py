@@ -49,7 +49,9 @@ def upsert(
     upsert_analysis(analysis_date, payload)
     logger.info(
         "[analysis_writer] upsert date=%s regime=%s outcome=%s",
-        analysis_date, event_type, battle_result.get("outcome")
+        analysis_date,
+        event_type,
+        battle_result.get("outcome"),
     )
 
 

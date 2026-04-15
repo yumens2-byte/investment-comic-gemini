@@ -38,11 +38,11 @@ class TestValidateTransition:
     def test_forbidden_transitions(self):
         """허용되지 않은 전환은 InvalidStatusTransition."""
         forbidden_pairs = [
-            ("draft", "image_generated"),     # 단계 건너뜀
-            ("draft", "published"),           # 단계 건너뜀
-            ("assembled", "draft"),            # 역방향
-            ("published", "draft"),            # 발행 완료 후 재시작 불가
-            ("aborted", "draft"),              # aborted 재시작 불가
+            ("draft", "image_generated"),  # 단계 건너뜀
+            ("draft", "published"),  # 단계 건너뜀
+            ("assembled", "draft"),  # 역방향
+            ("published", "draft"),  # 발행 완료 후 재시작 불가
+            ("aborted", "draft"),  # aborted 재시작 불가
             ("narrative_done", "dialog_confirmed"),  # 단계 건너뜀
         ]
         for current, target in forbidden_pairs:
@@ -83,9 +83,15 @@ class TestNotionMirror:
     def test_status_map_covers_all_states(self):
         """_STATUS_MAP이 모든 Supabase status를 커버해야 한다."""
         required_statuses = [
-            "draft", "narrative_done", "image_generated",
-            "dialog_pending", "dialog_confirmed", "assembled",
-            "published", "failed", "aborted",
+            "draft",
+            "narrative_done",
+            "image_generated",
+            "dialog_pending",
+            "dialog_confirmed",
+            "assembled",
+            "published",
+            "failed",
+            "aborted",
         ]
         for status in required_statuses:
             assert status in _STATUS_MAP, f"'{status}' _STATUS_MAP에 없음"

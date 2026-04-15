@@ -83,8 +83,7 @@ def load_config() -> ICGConfig:
     missing = [v for v in _REQUIRED_VARS if not os.environ.get(v)]
     if missing:
         raise RuntimeError(
-            f"필수 환경변수 누락: {missing}. "
-            "GitHub Secrets 또는 .env 파일을 확인하라."
+            f"필수 환경변수 누락: {missing}. " "GitHub Secrets 또는 .env 파일을 확인하라."
         )
 
     def _bool(key: str, default: bool = False) -> bool:

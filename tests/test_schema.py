@@ -2,6 +2,7 @@
 tests/test_schema.py
 EpisodeScript Pydantic 스키마 검증.
 """
+
 import pytest
 from pydantic import ValidationError
 
@@ -16,10 +17,16 @@ def _make_valid_script(**overrides) -> dict:
         "title": "오일 쇼크의 습격",
         "logline": "유가 급등으로 오일 쇼크 타이탄이 소환되었다.",
         "panels": [
-            {"idx": i, "panel_type": "BATTLE" if i < 8 else "DISCLAIMER",
-             "characters": [], "camera": "WIDE",
-             "setting": "Seoul", "action": "fight",
-             "key_text": f"대사{i}", "narration": f"내레이션{i}"}
+            {
+                "idx": i,
+                "panel_type": "BATTLE" if i < 8 else "DISCLAIMER",
+                "characters": [],
+                "camera": "WIDE",
+                "setting": "Seoul",
+                "action": "fight",
+                "key_text": f"대사{i}",
+                "narration": f"내레이션{i}",
+            }
             for i in range(1, 9)
         ],
         "caption_x_cover": "오늘 유가 폭등!",
@@ -64,9 +71,16 @@ class TestEpisodeScript:
 
     def test_panel_count_max_10(self):
         data = _make_valid_script()
-        extra = {"idx": 11, "panel_type": "BATTLE", "characters": [],
-                 "camera": "WIDE", "setting": "S", "action": "A",
-                 "key_text": "X", "narration": "Y"}
+        extra = {
+            "idx": 11,
+            "panel_type": "BATTLE",
+            "characters": [],
+            "camera": "WIDE",
+            "setting": "S",
+            "action": "A",
+            "key_text": "X",
+            "narration": "Y",
+        }
         data["panels"] = data["panels"] + [extra] * 3  # 11개 → 실패
         with pytest.raises(ValidationError):
             EpisodeScript.model_validate(data)
@@ -123,10 +137,10 @@ class TestXPublisherChunking:
         slides = self._make_slides(8)
         chunks = _chunk_slides(slides)
         assert len(chunks) == 4
-        assert len(chunks[0]) == 1   # T1: 커버
-        assert len(chunks[1]) == 3   # T2: S2-S4
-        assert len(chunks[2]) == 3   # T3: S5-S7
-        assert len(chunks[3]) == 1   # T4: disclaimer
+        assert len(chunks[0]) == 1  # T1: 커버
+        assert len(chunks[1]) == 3  # T2: S2-S4
+        assert len(chunks[2]) == 3  # T3: S5-S7
+        assert len(chunks[3]) == 1  # T4: disclaimer
 
     def test_cover_is_first_slide(self):
         slides = self._make_slides(8)

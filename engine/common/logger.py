@@ -87,9 +87,7 @@ class StepLogger:
 
         # 파일 경로 설정
         if output_dir is None:
-            output_dir = (
-                Path("output") / "episodes" / episode_date
-            )
+            output_dir = Path("output") / "episodes" / episode_date
         output_dir.mkdir(parents=True, exist_ok=True)
         self._log_path = output_dir / "run.log"
 
@@ -233,9 +231,7 @@ class StepLogger:
         except Exception as exc:
             # Supabase 실패 → degraded mode 전환, 파일 기록 계속
             self._degraded = True
-            self._std_logger.warning(
-                "[StepLogger] Supabase 기록 실패 → degraded mode: %s", exc
-            )
+            self._std_logger.warning("[StepLogger] Supabase 기록 실패 → degraded mode: %s", exc)
 
 
 def _mask_dict(data: dict) -> dict:

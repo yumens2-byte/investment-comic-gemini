@@ -19,6 +19,7 @@ from engine.common.logger import StepLogger, get_run_id, mask_secret
 
 # ── mask_secret 단위 테스트 ───────────────────────────────────────────────────
 
+
 class TestMaskSecret:
     """mask_secret() 함수 — 각 패턴별 마스킹 검증."""
 
@@ -91,6 +92,7 @@ class TestMaskSecret:
 
 
 # ── StepLogger 단위 테스트 ────────────────────────────────────────────────────
+
 
 class TestStepLogger:
     """StepLogger 파일 기록 및 degraded mode 검증."""
@@ -197,6 +199,7 @@ class TestStepLogger:
 
 # ── get_run_id 단위 테스트 ────────────────────────────────────────────────────
 
+
 class TestGetRunId:
     def test_run_id_format(self):
         """run_id는 ICG-{date}-{ts} 형식이어야 한다."""
@@ -209,6 +212,7 @@ class TestGetRunId:
     def test_run_id_unique(self):
         """연속 호출 시 서로 다른 run_id가 생성되어야 한다 (타임스탬프 기반)."""
         import time
+
         id1 = get_run_id("2026-04-14")
         time.sleep(0.01)
         id2 = get_run_id("2026-04-14")

@@ -58,6 +58,7 @@ def _send_media_group(
 
     try:
         import json
+
         resp = requests.post(
             url,
             data={"chat_id": channel_id, "media": json.dumps(media)},
@@ -133,7 +134,8 @@ def publish_episode_telegram(
         if dry_run:
             logger.info(
                 "[telegram] DRY_RUN — 채널 %s에 슬라이드 %d장 발행 시뮬레이션",
-                channel_id, len(slides)
+                channel_id,
+                len(slides),
             )
             results[channel_id] = True
             continue
@@ -149,7 +151,9 @@ def publish_episode_telegram(
                 if resp:
                     logger.info(
                         "[telegram] 채널 %s 슬라이드 %d~%d 발행 완료",
-                        channel_id, batch_start + 1, batch_start + len(batch)
+                        channel_id,
+                        batch_start + 1,
+                        batch_start + len(batch),
                     )
                     results[channel_id] = True
                 else:

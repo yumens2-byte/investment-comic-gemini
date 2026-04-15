@@ -47,8 +47,7 @@ def main() -> None:
 
     if not token or not channel_id:
         print(
-            "[notify_failure] TELEGRAM_BOT_TOKEN 또는 TELEGRAM_FREE_CHANNEL_ID 없음. "
-            "알림 생략.",
+            "[notify_failure] TELEGRAM_BOT_TOKEN 또는 TELEGRAM_FREE_CHANNEL_ID 없음. " "알림 생략.",
             file=sys.stderr,
         )
         # 알림 실패가 파이프라인 전체 실패를 가중시키지 않도록 exit 0

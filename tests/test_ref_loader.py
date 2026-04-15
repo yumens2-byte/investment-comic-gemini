@@ -138,10 +138,18 @@ class TestPromptBuilder:
             action="Hero raises fist against villain",
             camera="LOW_ANGLE",
             characters=[
-                {"char_id": "CHAR_HERO_003", "role": "hero", "position": "LEFT",
-                 "name_en": "Leverage Muscle Man"},
-                {"char_id": "CHAR_VILLAIN_002", "role": "villain", "position": "RIGHT",
-                 "name_en": "Oil Shock Titan"},
+                {
+                    "char_id": "CHAR_HERO_003",
+                    "role": "hero",
+                    "position": "LEFT",
+                    "name_en": "Leverage Muscle Man",
+                },
+                {
+                    "char_id": "CHAR_VILLAIN_002",
+                    "role": "villain",
+                    "position": "RIGHT",
+                    "name_en": "Oil Shock Titan",
+                },
             ],
         )
         assert verify_negative_block_present(prompt), "SECURITY NEGATIVE BLOCK 누락"
@@ -179,10 +187,13 @@ class TestPromptBuilder:
             action="Test action",
             camera="WIDE",
             characters=[
-                {"char_id": "CHAR_HERO_001", "role": "hero",
-                 "position": "LEFT", "name_en": "EDT"},
-                {"char_id": "CHAR_VILLAIN_004", "role": "villain",
-                 "position": "RIGHT", "name_en": "Volatility Hydra"},
+                {"char_id": "CHAR_HERO_001", "role": "hero", "position": "LEFT", "name_en": "EDT"},
+                {
+                    "char_id": "CHAR_VILLAIN_004",
+                    "role": "villain",
+                    "position": "RIGHT",
+                    "name_en": "Volatility Hydra",
+                },
             ],
         )
         assert "LEFT" in prompt
@@ -225,8 +236,7 @@ class TestPromptBuilder:
             camera="WIDE",
             characters=[],
         )
-        assert "text" in prompt.lower() and "overlay" in prompt.lower() or \
-               "No text" in prompt
+        assert "text" in prompt.lower() and "overlay" in prompt.lower() or "No text" in prompt
 
     def test_security_block_constant_completeness(self):
         """SECURITY_NEGATIVE_BLOCK_V1_1 상수에 필수 조항이 모두 포함되어야 한다."""
@@ -238,5 +248,4 @@ class TestPromptBuilder:
             "watermarks",
         ]
         for clause in required_clauses:
-            assert clause.lower() in SECURITY_NEGATIVE_BLOCK_V1_1.lower(), \
-                f"'{clause}' 조항 누락"
+            assert clause.lower() in SECURITY_NEGATIVE_BLOCK_V1_1.lower(), f"'{clause}' 조항 누락"

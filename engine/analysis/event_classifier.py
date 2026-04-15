@@ -11,12 +11,12 @@ from __future__ import annotations
 from typing import Literal
 
 EpisodeType = Literal[
-    "BATTLE",    # 유가 쇼크 또는 금리 급등 — 주요 빌런 등장
-    "SHOCK",     # VIX 급등 — 볼래틸리티 하이드라 소환
-    "AFTERMATH", # 전일 전투 직후 — 여파 처리
-    "INTEL",     # 주 2일 이상 조용할 때 — 정보 수집
-    "NORMAL",    # 일반 시장 상황
-    "FLASHBACK", # 과거 전투 회상 (수동 트리거)
+    "BATTLE",  # 유가 쇼크 또는 금리 급등 — 주요 빌런 등장
+    "SHOCK",  # VIX 급등 — 볼래틸리티 하이드라 소환
+    "AFTERMATH",  # 전일 전투 직후 — 여파 처리
+    "INTEL",  # 주 2일 이상 조용할 때 — 정보 수집
+    "NORMAL",  # 일반 시장 상황
+    "FLASHBACK",  # 과거 전투 회상 (수동 트리거)
     "TACTICAL",  # 중간 강도 긴장 — 전술 전투
 ]
 
@@ -65,11 +65,11 @@ def classify(delta: dict, arc: dict) -> EpisodeType:
     7. 기타 → NORMAL
     """
     # pct/curr가 None인 경우 (첫 실행, 전일 데이터 없음) 0.0으로 처리
-    wti_pct   = delta.get("WTI",   {}).get("pct")  or 0.0
-    vix_curr  = delta.get("VIX",   {}).get("curr") or 0.0
-    vix_pct   = delta.get("VIX",   {}).get("pct")  or 0.0
-    dgs10_curr= delta.get("DGS10", {}).get("curr") or 0.0
-    spy_pct   = delta.get("SPY",   {}).get("pct")  or 0.0
+    wti_pct = delta.get("WTI", {}).get("pct") or 0.0
+    vix_curr = delta.get("VIX", {}).get("curr") or 0.0
+    vix_pct = delta.get("VIX", {}).get("pct") or 0.0
+    dgs10_curr = delta.get("DGS10", {}).get("curr") or 0.0
+    spy_pct = delta.get("SPY", {}).get("pct") or 0.0
 
     yesterday_type = arc.get("yesterday_type", "")
     tension = arc.get("tension", 0)
@@ -122,7 +122,6 @@ def get_market_context_for_battle(delta: dict, snapshot: dict) -> dict:
         "dgs10": snapshot.get("us10y") or 0.0,
         "hy_spread": snapshot.get("hy_spread") or 0.0,
         "system_stress": (
-            (snapshot.get("vix") or 0) > 35
-            and (snapshot.get("hy_spread") or 0) > 700
+            (snapshot.get("vix") or 0) > 35 and (snapshot.get("hy_spread") or 0) > 700
         ),
     }

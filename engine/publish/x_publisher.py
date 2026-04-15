@@ -71,20 +71,20 @@ def _chunk_slides(slides: list[Path]) -> list[list[Path]]:
 
     if len(slides) <= 8:
         # 8장 기본 구조
-        chunks.append([slides[0]])             # T1: 커버
+        chunks.append([slides[0]])  # T1: 커버
         if len(slides) > 1:
-            chunks.append(slides[1:4])         # T2: S2-S4
+            chunks.append(slides[1:4])  # T2: S2-S4
         if len(slides) > 4:
-            chunks.append(slides[4:7])         # T3: S5-S7
+            chunks.append(slides[4:7])  # T3: S5-S7
         if len(slides) > 7:
-            chunks.append([slides[7]])         # T4: disclaimer
+            chunks.append([slides[7]])  # T4: disclaimer
     else:
         # 9~10장
-        chunks.append([slides[0]])             # T1: 커버
-        chunks.append(slides[1:4])             # T2: S2-S4
-        chunks.append(slides[4:7])             # T3: S5-S7
-        chunks.append(slides[7:-1])            # T4: 중간
-        chunks.append([slides[-1]])            # T5: disclaimer
+        chunks.append([slides[0]])  # T1: 커버
+        chunks.append(slides[1:4])  # T2: S2-S4
+        chunks.append(slides[4:7])  # T3: S5-S7
+        chunks.append(slides[7:-1])  # T4: 중간
+        chunks.append([slides[-1]])  # T5: disclaimer
 
     return [c for c in chunks if c]  # 빈 청크 제거
 
@@ -159,10 +159,7 @@ def publish_episode_x(
         logger.info("[x_publisher] DRY_RUN — 발행 시뮬레이션")
         tweet_ids = []
         for i, (chunk, caption) in enumerate(zip(chunks, captions), start=1):
-            logger.info(
-                "[x_publisher] T%d: 슬라이드 %d장, 캡션=%s...",
-                i, len(chunk), caption[:40]
-            )
+            logger.info("[x_publisher] T%d: 슬라이드 %d장, 캡션=%s...", i, len(chunk), caption[:40])
             tweet_ids.append(f"DRY_RUN_T{i}")
         return tweet_ids
 
