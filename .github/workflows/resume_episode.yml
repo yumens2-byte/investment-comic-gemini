@@ -4,8 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       episode_id:
-        description: '에피소드 ID (예: ICG-2026-04-14-001)'
+        description: '에피소드 ID (예: ICG-2026-04-14-001). 미입력 시 최신 재처리 가능 에피소드 자동 선택.'
         required: false
+        default: ''
       force:
         description: '기존 assembled 상태 덮어쓰기 (true/false)'
         required: false
@@ -13,6 +14,7 @@ on:
 
 permissions:
   contents: read
+  actions: read   # 다른 워크플로우 아티팩트 다운로드 권한
 
 jobs:
   resume:
@@ -21,25 +23,24 @@ jobs:
     timeout-minutes: 20
 
     env:
-        TZ: Asia/Seoul
-        NOTION_NARRATIVE_SYSTEM_ID: '3439208cbdc3810d9e7ceb5f48f8f093'
-        NOTION_NARRATIVE_USER_ID: '3439208cbdc3816bb578d7355b3a1966'
-        NOTION_IMAGE_PROMPTS_ID: '3439208cbdc3817191e1c2cccd3865cc'
-        NOTION_BATTLE_CONSTANTS_ID: '3439208cbdc3817bbdf9dbdb272508b8'
-        NOTION_REF_PROMPTS_ID: '3439208cbdc381ccb85cf8e177a1a3d2'
-        
-        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        GEMINI_API_SUB_PAY_KEY: ${{ secrets.GEMINI_API_SUB_PAY_KEY }}
-        FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
-        LUNAR_CRUSH_API_KEY: ${{ secrets.LUNAR_CRUSH_API_KEY }}
-        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        SUPABASE_SCHEMA: icg
-        NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
-        NOTION_TRACKER_DS: '485ba577-0512-45fd-9445-b9e86c53d88b'
-        DRY_RUN: 'false'
-        FORCE_RUN: ${{ github.event.inputs.force || 'false' }}
-        PYTHONPATH: .
+      TZ: Asia/Seoul
+      # ── Notion 보안 분리 Page ID ─────────────────────────────────────────
+      NOTION_NARRATIVE_SYSTEM_ID: '3439208cbdc3810d9e7ceb5f48f8f093'
+      NOTION_NARRATIVE_USER_ID:   '3439208cbdc3816bb578d7355b3a1966'
+      NOTION_IMAGE_PROMPTS_ID:    '3439208cbdc3817191e1c2cccd3865cc'
+      NOTION_BATTLE_CONSTANTS_ID: '3439208cbdc3817bbdf9dbdb272508b8'
+      NOTION_REF_PROMPTS_ID:      '3439208cbdc381ccb85cf8e177a1a3d2'
+      # ── Secrets ──────────────────────────────────────────────────────────
+      ANTHROPIC_API_KEY:      ${{ secrets.ANTHROPIC_API_KEY }}
+      GEMINI_API_SUB_PAY_KEY: ${{ secrets.GEMINI_API_SUB_PAY_KEY }}
+      SUPABASE_URL:           ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY:           ${{ secrets.SUPABASE_KEY }}
+      SUPABASE_SCHEMA:        icg
+      NOTION_API_KEY:         ${{ secrets.NOTION_API_KEY }}
+      NOTION_TRACKER_DS:      ${{ secrets.NOTION_TRACKER_DS }}
+      # ── 운영 제어 ────────────────────────────────────────────────────────
+      DRY_RUN:    'false'
+      PYTHONPATH: .
 
     steps:
       - name: Checkout
@@ -51,41 +52,89 @@ jobs:
           python-version: '3.11'
           cache: pip
 
-      - name: Install CJK fonts
+      - name: Install CJK fonts (PIL 한국어 렌더링)
         run: sudo apt-get install -y fonts-noto-cjk --no-install-recommends -q
 
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Download Episode Artifact
+      # ── artifact_run_id 조회 (Supabase → GITHUB_OUTPUT) ──────────────────
+      # run_resume.py가 artifact_run_id를 GITHUB_OUTPUT에 쓰기 전에
+      # 아티팩트를 다운로드해야 하므로 Python으로 먼저 조회
+      - name: Fetch artifact_run_id from Supabase
+        id: fetch_run_id
+        env:
+          EPISODE_ID: ${{ github.event.inputs.episode_id }}
+        run: |
+          python - << 'PYEOF'
+          import os, sys
+          sys.path.insert(0, ".")
+          episode_id = os.environ.get("EPISODE_ID", "").strip()
+          run_id = None
+          try:
+              from engine.common.supabase_client import icg_table
+              if episode_id:
+                  import re
+                  m = re.match(r"ICG-(\d{4}-\d{2}-\d{2})-(\d{3})", episode_id)
+                  if m:
+                      ep_date, ep_no = m.group(1), int(m.group(2))
+                      rows = icg_table("episode_assets").select("artifact_run_id").eq("episode_date", ep_date).eq("episode_no", ep_no).limit(1).execute()
+                      if rows.data:
+                          run_id = rows.data[0].get("artifact_run_id")
+              else:
+                  for status in ("image_generated", "assembled", "narrative_done"):
+                      rows = icg_table("episode_assets").select("artifact_run_id").eq("status", status).order("episode_date", desc=True).order("episode_no", desc=True).limit(1).execute()
+                      if rows.data:
+                          run_id = rows.data[0].get("artifact_run_id")
+                          if run_id:
+                              break
+          except Exception as e:
+              print(f"[fetch_run_id] 조회 실패 (무시): {e}", flush=True)
+          gha_output = os.environ.get("GITHUB_OUTPUT", "")
+          if gha_output and run_id:
+              with open(gha_output, "a") as f:
+                  f.write(f"run_id={run_id}\n")
+              print(f"[fetch_run_id] artifact_run_id={run_id}")
+          else:
+              with open(gha_output or "/dev/null", "a") as f:
+                  f.write("run_id=\n")
+              print("[fetch_run_id] artifact_run_id 없음 — 아티팩트 없이 진행")
+          PYEOF
+
+      # ── 아티팩트 다운로드 (artifact_run_id 있을 때만) ────────────────────
+      - name: Download Episode Artifact (from Run Market)
+        if: steps.fetch_run_id.outputs.run_id != ''
         uses: actions/download-artifact@v4
-        continue-on-error: true
         with:
           pattern: episode-*
           path: output/episodes/
           merge-multiple: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ steps.fetch_run_id.outputs.run_id }}
 
-      # ── STEP 7: PIL Assembly (dialog_edits_json 적용) ────────────────────
+      # ── STEP 7: PIL Assembly ─────────────────────────────────────────────
       - name: STEP 7 — Assembly
         run: |
-          # 수정 후 (shell if-else)
           if [ -n "${{ github.event.inputs.episode_id }}" ]; then
-            python -m scripts.run_resume --episode "${{ github.event.inputs.episode_id }}"
+            python -m scripts.run_resume \
+              --episode "${{ github.event.inputs.episode_id }}" \
+              ${{ github.event.inputs.force == 'true' && '--force' || '' }}
           else
-            python -m scripts.run_resume  # 자동 선택
+            python -m scripts.run_resume \
+              ${{ github.event.inputs.force == 'true' && '--force' || '' }}
           fi
 
       - name: Upload Assembled Slides
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: slides-${{ github.event.inputs.episode_id }}
+          name: slides-${{ github.event.inputs.episode_id || 'latest' }}
           path: output/episodes/
           retention-days: 14
 
       - name: Notify Failure
         if: failure()
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_BOT_TOKEN:       ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
         run: python -m scripts.notify_failure
