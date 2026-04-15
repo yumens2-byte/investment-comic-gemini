@@ -13,13 +13,13 @@ jobs:
     timeout-minutes: 10
 
     env:
-      PYTHONPATH: .
-      ANTHROPIC_API_KEY: sk-ant-test
-      GEMINI_API_SUB_PAY_KEY: AIzaTest
-      SUPABASE_URL: https://test.supabase.co
-      SUPABASE_KEY: eyJtest
-      NOTION_API_KEY: ${NOTION_API_KEY}
-      DRY_RUN: "true"
+      PYTHONPATH: 
+      ANTHROPIC_API_KEY: ${{secrets.ANTHROPIC_API_KEY}}
+      GEMINI_API_SUB_PAY_KEY: ${{secrets.GEMINI_API_SUB_PAY_KEY}}
+      SUPABASE_URL: ${{secrets.SUPABASE_URL}}
+      SUPABASE_KEY: ${{secrets.SUPABASE_KEY}}
+      NOTION_API_KEY: ${{secrets.NOTION_API_KEY}}
+      DRY_RUN: ${{secrets.NOTION_API_KEY}}
 
     steps:
       - name: Checkout
