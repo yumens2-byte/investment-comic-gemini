@@ -89,7 +89,9 @@ def fetch_all(target_date: str | None = None) -> dict[str, float | str | None]:
         basis = round((mark - index) / index * 100, 6)
         state = _calc_state(basis)
 
-        logger.info("[Crypto] basis=%.4f%% state=%s (mark=%.1f index=%.1f)", basis, state, mark, index)
+        logger.info(
+            "[Crypto] basis=%.4f%% state=%s (mark=%.1f index=%.1f)", basis, state, mark, index
+        )
         return {"crypto_basis_spread": basis, "crypto_basis_state": state}
 
     except Exception as exc:

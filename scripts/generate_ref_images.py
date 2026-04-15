@@ -33,108 +33,22 @@ logger = logging.getLogger("icg.gen_ref")
 CANON_PATH = Path("config/characters.yaml")
 ASSETS_DIR = Path("assets/characters")
 
-# 캐릭터별 상세 이미지 프롬프트
-_CHAR_PROMPTS: dict[str, str] = {
-    "CHAR_HERO_001": """
-Create a full-body character reference sheet for a Korean manhwa superhero named EDT (Endurance D Tiger).
-CHARACTER: Male warrior in his 30s. Athletic build. Wearing sleek ETF-themed battle armor in deep blue and gold.
-Helmet with tiger-eye visor. Cape made of glowing stock chart lines. Wields a chainsaw radiating ETF energy.
-Expression: Determined, heroic. Eyes glowing blue.
-POSE: Standing hero pose, facing RIGHT. Three-quarter view.
-BACKGROUND: Deep navy blue gradient. Clean reference sheet style.
-STYLE: Korean manhwa / webtoon. Bold ink lines. Cel shading. High contrast. No background clutter.
-""",
-    "CHAR_HERO_002": """
-Full-body character reference sheet for Korean manhwa heroine Iron Securities Nuna.
-CHARACTER: Tall, confident woman in her late 20s. Steel-grey armored bodysuit with data analysis interfaces.
-Holographic screens floating around her wrists. Short dark hair. Professional yet battle-ready look.
-Expression: Analytical, calm. Sharp eyes.
-POSE: Standing with arms crossed, facing RIGHT. Three-quarter view.
-BACKGROUND: Steel blue gradient. Clean reference sheet style.
-STYLE: Korean manhwa / webtoon. Bold ink lines. Cel shading. High contrast.
-""",
-    "CHAR_HERO_003": """
-Full-body character reference sheet for Korean manhwa hero Leverage Muscle Man.
-CHARACTER: Massively muscular man in his 30s. Wearing fire-orange workout gear with leverage symbols.
-Carries an enormous glowing barbell crackling with financial energy. Sleeveless, showing huge arms.
-Expression: Intense, battle-ready. Fiery eyes.
-POSE: Raising barbell overhead, facing RIGHT. Dynamic action pose.
-BACKGROUND: Deep orange-black gradient.
-STYLE: Korean manhwa / webtoon. Bold ink lines. Cel shading. High contrast.
-""",
-    "CHAR_HERO_004": """
-Full-body character reference sheet for Korean manhwa heroine Exposure Futures Girl.
-CHARACTER: Young woman in purple tech suit with futures market radar interface on her chest.
-Glowing purple energy trails from her hands. Short practical hairstyle. Futuristic look.
-Expression: Alert, ready. Purple glowing eyes.
-POSE: Scanning stance, facing RIGHT. One hand raised with glowing energy.
-BACKGROUND: Deep purple gradient.
-STYLE: Korean manhwa / webtoon. Bold ink lines. Cel shading. High contrast.
-""",
-    "CHAR_HERO_005": """
-Full-body character reference sheet for Korean manhwa hero Gold Bond Muscle.
-CHARACTER: Stocky powerful man wearing gold-and-white armored shield suit. Holds a massive circular shield
-with gold and bond symbols. Grey-streaked hair, mature look. Defensive champion stance.
-Expression: Steadfast, protective. Golden eyes.
-POSE: Shield raised in defense, facing RIGHT.
-BACKGROUND: Gold-black gradient.
-STYLE: Korean manhwa / webtoon. Bold ink lines. Cel shading. High contrast.
-""",
-    "CHAR_VILLAIN_001": """
-Full-body character reference sheet for Korean manhwa villain Debt Titan.
-CHARACTER: Enormous dark-red armored giant. Body covered in debt contract chains. Glowing red eyes.
-Imposing, oppressive presence. Wears crown made of crumbling financial bonds.
-Expression: Malevolent, overwhelming. Dark energy radiating.
-POSE: Standing menacingly, facing LEFT. Three-quarter view.
-BACKGROUND: Dark crimson gradient. Menacing atmosphere.
-STYLE: Korean manhwa / webtoon. Bold ink lines. Cel shading. High contrast. Villain aesthetic.
-""",
-    "CHAR_VILLAIN_002": """
-Full-body character reference sheet for Korean manhwa villain Oil Shock Titan.
-CHARACTER: Massive oil-black armored titan. Body dripping with crude oil energy. Flames erupting from
-shoulders. Oil derrick-like horns on helmet. Eyes like burning oil wells.
-Expression: Destructive, overwhelming.
-POSE: Charging forward menacingly, facing LEFT.
-BACKGROUND: Black and fire-orange gradient.
-STYLE: Korean manhwa / webtoon. Bold ink lines. Cel shading. High contrast. Villain aesthetic.
-""",
-    "CHAR_VILLAIN_003": """
-Full-body character reference sheet for Korean manhwa villain Liquidity Leviathan.
-CHARACTER: Massive sea-serpent-like humanoid villain. Teal-black liquid armor flowing like waves.
-Multiple serpentine arms. Eyes glowing teal. Representing market liquidity crisis.
-Expression: Predatory, calculating.
-POSE: Towering intimidating stance, facing LEFT. Multiple arms spread wide.
-BACKGROUND: Deep dark teal gradient. Ocean depths atmosphere.
-STYLE: Korean manhwa / webtoon. Bold ink lines. Cel shading. High contrast. Villain aesthetic.
-""",
-    "CHAR_VILLAIN_004": """
-Full-body character reference sheet for Korean manhwa villain Volatility Hydra.
-CHARACTER: Multi-headed purple dragon/hydra in humanoid form. Each head represents different market fears.
-Purple lightning crackling around body. VIX meter visible on chest armor.
-Expression: Chaotic, unpredictable. Multiple snarling heads.
-POSE: Multiple heads raised, arms spread, facing LEFT. Chaotic energy.
-BACKGROUND: Deep purple-black gradient. Lightning flashes.
-STYLE: Korean manhwa / webtoon. Bold ink lines. Cel shading. High contrast. Villain aesthetic.
-""",
-    "CHAR_VILLAIN_005": """
-Full-body character reference sheet for Korean manhwa villain Algorithm Reaper.
-CHARACTER: Skeletal cyber-villain in black and neon green. Half flesh, half circuit board.
-Holds a scythe made of trading algorithms and dark data streams. Hollow glowing green eyes.
-Expression: Merciless, algorithmic. Cold precision.
-POSE: Scythe raised, facing LEFT. Menacing reaper stance.
-BACKGROUND: Black and neon green gradient. Matrix-like atmosphere.
-STYLE: Korean manhwa / webtoon. Bold ink lines. Cel shading. High contrast. Villain aesthetic.
-""",
-    "CHAR_VILLAIN_006": """
-Full-body character reference sheet for Korean manhwa villain War Dominion.
-CHARACTER: Massive armored warlord in blood-red and black. War-themed battle armor with geopolitical
-conflict symbols. Wielding two massive swords crossed. Battle-scarred, imposing.
-Expression: Wrathful, dominant. Blood-red glowing eyes.
-POSE: Swords crossed, battle stance, facing LEFT.
-BACKGROUND: Blood red and black gradient. War atmosphere.
-STYLE: Korean manhwa / webtoon. Bold ink lines. Cel shading. High contrast. Villain aesthetic.
-""",
-}
+
+# 캐릭터별 이미지 프롬프트 — Notion에서 런타임 로드
+# Public repo 노출 방지를 위해 코드에 직접 기재하지 않음.
+def _load_char_prompts() -> dict[str, str]:
+    """Notion에서 캐릭터 REF 프롬프트 로드."""
+    try:
+        from engine.common.notion_loader import load_ref_prompts
+
+        prompts = load_ref_prompts()
+        if prompts:
+            return prompts
+        raise ValueError("빈 응답")
+    except Exception as exc:
+        logger.warning("[gen_ref] Notion 프롬프트 로드 실패 (%s) — 빈 프롬프트 사용", exc)
+        return {}
+
 
 _CHAR_TO_FILE: dict[str, str] = {
     "CHAR_HERO_001": "hero_edt_form1",
@@ -166,7 +80,10 @@ def _generate_one(char_id: str, output_path: Path) -> bytes:
         raise RuntimeError("GEMINI_API_SUB_PAY_KEY 환경변수 없음")
 
     client = genai.Client(api_key=pay_key)
-    prompt = _CHAR_PROMPTS[char_id].strip() + "\n\n" + _NEGATIVE.strip()
+    char_prompts = _load_char_prompts()
+    if char_id not in char_prompts:
+        raise RuntimeError(f"Notion에서 {char_id} 프롬프트 로드 실패")
+    prompt = char_prompts[char_id].strip() + "\n\n" + _NEGATIVE.strip()
 
     resp = client.models.generate_content(
         model="gemini-2.5-flash-image",
@@ -231,7 +148,8 @@ def main() -> None:
             continue
 
         if args.dry_run:
-            logger.info("[%s] DRY_RUN 프롬프트:\n%s", char_id, _CHAR_PROMPTS[char_id][:200])
+            cp = _load_char_prompts()
+            logger.info("[%s] DRY_RUN 프롬프트:\n%s", char_id, cp.get(char_id, "(없음)")[:200])
             continue
 
         for attempt in range(1, 4):

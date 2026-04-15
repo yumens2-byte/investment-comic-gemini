@@ -36,10 +36,7 @@ def _get_cache() -> dict | None:
         from engine.common.supabase_client import icg_table
 
         rows = (
-            icg_table("api_cache")
-            .select("value,expires_at")
-            .eq("cache_key", _CACHE_KEY)
-            .execute()
+            icg_table("api_cache").select("value,expires_at").eq("cache_key", _CACHE_KEY).execute()
         )
         if not rows.data:
             return None

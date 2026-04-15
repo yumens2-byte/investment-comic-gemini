@@ -1,6 +1,9 @@
 """
 engine/narrative/prompt_tpl.py
 Claude 사용자 프롬프트 Jinja2 렌더링.
+
+프롬프트 원본은 Public repo에 노출되지 않도록
+Notion에 저장하고 런타임에 로드한다.
 """
 
 from __future__ import annotations
@@ -8,26 +11,24 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import yaml
-from jinja2 import Environment, FileSystemLoader, select_autoescape
+from jinja2 import DictLoader, Environment, select_autoescape
 
-_PROMPTS_DIR = Path("config/prompts")
 _CANON_PATH = Path("config/characters.yaml")
 
 
 def _load_canon() -> dict:
-    with open(_CANON_PATH, encoding="utf-8") as f:
-        return yaml.safe_load(f)
+    from engine.common.notion_loader import load_characters_canon
+
+    return load_characters_canon()
 
 
-def _make_jinja_env() -> Environment:
+def _make_jinja_env_from_string(template_str: str) -> Environment:
     env = Environment(
-        loader=FileSystemLoader(str(_PROMPTS_DIR)),
+        loader=DictLoader({"narrative_user.j2": template_str}),
         autoescape=select_autoescape([]),
         trim_blocks=True,
         lstrip_blocks=True,
     )
-    # tojson 필터 추가
     env.filters["tojson"] = lambda val, indent=None: json.dumps(
         val, ensure_ascii=False, indent=indent
     )
@@ -45,21 +46,11 @@ def render_user_prompt(
     arc_context: dict,
 ) -> str:
     """
-    narrative_user.j2 렌더링.
-
-    Args:
-        date: 'YYYY-MM-DD'
-        episode_id: 'ICG-YYYY-MM-DD-001'
-        event_type: 에피소드 타입
-        delta: delta_engine 출력
-        battle_result: BattleResult.to_dict()
-        hero_id: CHAR_HERO_00N
-        villain_id: CHAR_VILLAIN_00N
-        arc_context: {"tension": int, "days_since_last": int, "yesterday_type": str}
-
-    Returns:
-        렌더링된 사용자 프롬프트 문자열.
+    Notion에서 로드한 narrative_user 템플릿 렌더링.
     """
+    from engine.common.notion_loader import load_narrative_user_template
+
+    template_str = load_narrative_user_template()
     canon = _load_canon()
     heroes = canon.get("heroes", {})
     villains = canon.get("villains", {})
@@ -67,7 +58,7 @@ def render_user_prompt(
     hero_entry = heroes.get(hero_id, {})
     villain_entry = villains.get(villain_id, {})
 
-    env = _make_jinja_env()
+    env = _make_jinja_env_from_string(template_str)
     template = env.get_template("narrative_user.j2")
 
     return template.render(
@@ -87,6 +78,7 @@ def render_user_prompt(
 
 
 def load_system_prompt() -> str:
-    """narrative_system.txt 로드."""
-    path = _PROMPTS_DIR / "narrative_system.txt"
-    return path.read_text(encoding="utf-8")
+    """Notion에서 narrative_system_prompt 로드."""
+    from engine.common.notion_loader import load_narrative_system
+
+    return load_narrative_system()

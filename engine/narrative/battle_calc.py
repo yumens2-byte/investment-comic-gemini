@@ -106,24 +106,30 @@ def calc_hero_power(
     """
     breakdown: dict[str, int] = {"base": base}
 
+    # 보너스 상수 — Notion에서 로드 (실패 시 기본값 사용)
+    try:
+        from engine.common.notion_loader import load_battle_constants
+
+        _bc = load_battle_constants()
+        _hero_cfg = _bc.get("HERO_BONUS_TABLE", {}).get(hero_id, {})
+    except Exception:
+        _hero_cfg = {}
+
     # ── 캐릭터별 특수 시너지 ──────────────────────────────────────────────────
-    # CHAR_HERO_003 (Leverage Muscle Man): 유가 쇼크 시 +8
     if hero_id == "CHAR_HERO_003" and market_context.get("oil_shock"):
-        breakdown["oil_synergy"] = +8
+        breakdown["oil_synergy"] = _hero_cfg.get("oil_synergy", 8)
 
-    # CHAR_HERO_005 (Gold Bond Muscle): VIX > 30 방어 모드 +12
     if hero_id == "CHAR_HERO_005" and market_context.get("vix", 0) > 30:
-        breakdown["defensive_mode"] = +12
+        breakdown["defensive_mode"] = _hero_cfg.get("oil_synergy", 12)
 
-    # CHAR_HERO_001 (EDT): 시스템 붕괴 위기 시 +10
     if hero_id == "CHAR_HERO_001" and market_context.get("system_stress", False):
-        breakdown["systemic_resolve"] = +10
+        breakdown["systemic_resolve"] = _hero_cfg.get("oil_synergy", 10)
 
     # ── Arc 긴장도 보너스 ────────────────────────────────────────────────────
     if arc_context.get("tension", 0) >= 75:
-        breakdown["high_tension"] = +5
+        breakdown["high_tension"] = _hero_cfg.get("high_tension_bonus", 5)
     elif arc_context.get("tension", 0) >= 50:
-        breakdown["moderate_tension"] = +2
+        breakdown["moderate_tension"] = 2
 
     # ── 폼 보너스 ────────────────────────────────────────────────────────────
     if form_bonus:
