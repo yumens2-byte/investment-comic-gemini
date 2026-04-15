@@ -42,8 +42,7 @@ def main() -> None:
     from engine.assembly.pil_composer import compose_episode
     from engine.common.logger import StepLogger, get_run_id
     from engine.common.supabase_client import icg_table
-    from engine.persist.asset_writer import get_episode
-    from engine.persist.asset_writer import upsert as asset_upsert
+    from engine.persist.asset_writer import patch as asset_patch
 
     run_id = get_run_id(episode_date)
     output_dir = Path("output") / "episodes" / episode_date
@@ -51,10 +50,20 @@ def main() -> None:
 
     sl.info("STEP_7", f"PIL 조립 시작 episode_id={episode_id}")
 
-    # episode_assets 로드
-    row = get_episode(episode_date, None)  # event_type 없이 date만으로 조회 시도
+    # episode_assets 로드 — episode_id로 직접 조회 (event_type None 회피)
+    episode_no = int(episode_id.split("-")[-1])
+    rows = (
+        icg_table("episode_assets")
+        .select("*")
+        .eq("episode_date", episode_date)
+        .eq("episode_no", episode_no)
+        .limit(1)
+        .execute()
+    )
+    row = rows.data[0] if rows.data else None
+
     if not row:
-        # event_type 없이 조회 (daily_analysis에서 가져옴)
+        # fallback: 날짜 기준 최신 row
         rows = (
             icg_table("episode_assets")
             .select("*")
@@ -64,6 +73,11 @@ def main() -> None:
             .execute()
         )
         row = rows.data[0] if rows.data else None
+        if row:
+            sl.info(
+                "STEP_7",
+                f"episode_no 조회 실패 → 최신 row fallback (event_type={row.get('event_type')})",
+            )
 
     if not row:
         sl.error("STEP_7", f"episode_assets row 없음: date={episode_date}")
@@ -103,7 +117,8 @@ def main() -> None:
 
         # slides_json 업데이트
         slides_json = [{"idx": i + 1, "path": str(s)} for i, s in enumerate(slides)]
-        asset_upsert(
+        # patch 사용 — script_json 등 기존 컬럼 보존
+        asset_patch(
             episode_date,
             event_type,
             {
