@@ -120,10 +120,10 @@ def calc_hero_power(
         breakdown["oil_synergy"] = _hero_cfg.get("oil_synergy", 8)
 
     if hero_id == "CHAR_HERO_005" and market_context.get("vix", 0) > 30:
-        breakdown["defensive_mode"] = _hero_cfg.get("oil_synergy", 12)
+        breakdown["defensive_mode"] = _hero_cfg.get("defensive_mode_bonus", 12)
 
     if hero_id == "CHAR_HERO_001" and market_context.get("system_stress", False):
-        breakdown["systemic_resolve"] = _hero_cfg.get("oil_synergy", 10)
+        breakdown["systemic_resolve"] = _hero_cfg.get("systemic_resolve_bonus", 10)
 
     # ── Arc 긴장도 보너스 ────────────────────────────────────────────────────
     if arc_context.get("tension", 0) >= 75:
