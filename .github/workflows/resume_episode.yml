@@ -21,25 +21,25 @@ jobs:
     timeout-minutes: 20
 
     env:
-       TZ: Asia/Seoul
-      NOTION_NARRATIVE_SYSTEM_ID: '3439208cbdc3810d9e7ceb5f48f8f093'
-      NOTION_NARRATIVE_USER_ID: '3439208cbdc3816bb578d7355b3a1966'
-      NOTION_IMAGE_PROMPTS_ID: '3439208cbdc3817191e1c2cccd3865cc'
-      NOTION_BATTLE_CONSTANTS_ID: '3439208cbdc3817bbdf9dbdb272508b8'
-      NOTION_REF_PROMPTS_ID: '3439208cbdc381ccb85cf8e177a1a3d2'
-      
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      GEMINI_API_SUB_PAY_KEY: ${{ secrets.GEMINI_API_SUB_PAY_KEY }}
-      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
-      LUNAR_CRUSH_API_KEY: ${{ secrets.LUNAR_CRUSH_API_KEY }}
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-      SUPABASE_SCHEMA: icg
-      NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
-      NOTION_TRACKER_DS: '485ba577-0512-45fd-9445-b9e86c53d88b'
-      DRY_RUN: 'false'
-      FORCE_RUN: ${{ github.event.inputs.force || 'false' }}
-      PYTHONPATH: .
+        TZ: Asia/Seoul
+        NOTION_NARRATIVE_SYSTEM_ID: '3439208cbdc3810d9e7ceb5f48f8f093'
+        NOTION_NARRATIVE_USER_ID: '3439208cbdc3816bb578d7355b3a1966'
+        NOTION_IMAGE_PROMPTS_ID: '3439208cbdc3817191e1c2cccd3865cc'
+        NOTION_BATTLE_CONSTANTS_ID: '3439208cbdc3817bbdf9dbdb272508b8'
+        NOTION_REF_PROMPTS_ID: '3439208cbdc381ccb85cf8e177a1a3d2'
+        
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        GEMINI_API_SUB_PAY_KEY: ${{ secrets.GEMINI_API_SUB_PAY_KEY }}
+        FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        LUNAR_CRUSH_API_KEY: ${{ secrets.LUNAR_CRUSH_API_KEY }}
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        SUPABASE_SCHEMA: icg
+        NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+        NOTION_TRACKER_DS: '485ba577-0512-45fd-9445-b9e86c53d88b'
+        DRY_RUN: 'false'
+        FORCE_RUN: ${{ github.event.inputs.force || 'false' }}
+        PYTHONPATH: .
 
     steps:
       - name: Checkout
