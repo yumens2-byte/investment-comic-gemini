@@ -136,13 +136,12 @@ def build_for_episode(episode_script: dict) -> list[PanelPrompt]:
         idx = panel.get("idx", 0)
         char_ids = [ch.get("char_id", "") for ch in panel.get("characters", [])]
 
-        # REF 이미지 로드
+        # REF 이미지 로드 — char_ids 리스트 전체를 한 번에 전달
         ref_paths: list[Path] = []
         try:
-            for char_id in char_ids:
-                if char_id:
-                    paths = get_refs_for_panel(char_id)
-                    ref_paths.extend(paths)
+            valid_char_ids = [c for c in char_ids if c]
+            if valid_char_ids:
+                ref_paths = get_refs_for_panel(valid_char_ids)
         except CanonLockViolation as exc:
             logger.error("[prompt_builder] Canon Lock 위반: %s", exc)
             raise
