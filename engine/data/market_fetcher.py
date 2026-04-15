@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 
 import pandas as pd
 
@@ -94,34 +95,42 @@ def fetch_all(target_date: str | None = None) -> dict[str, float | None]:
         ("usdkrw",        "USDKRW=X","2d",  "close"),
     ]
 
-    # 병렬 수집
+    # 병렬 수집 — TimeoutError 발생 시 None fallback 처리
     with ThreadPoolExecutor(max_workers=4) as executor:
         future_map = {
             executor.submit(_fetch_ticker_safe, ticker, period): (key, ticker, field)
             for key, ticker, period, field in tasks
         }
 
-        for future in as_completed(future_map, timeout=_TOTAL_TIMEOUT_SEC):
-            key, ticker, field = future_map[future]
-            try:
-                data = future.result(timeout=1)
-                value = data.get(field)
-                result[key] = value
-                if value is not None:
-                    if "change" in key:
-                        logger.info("[yfinance] %s change=%.2f%%", ticker, value)
+        try:
+            for future in as_completed(future_map, timeout=_TOTAL_TIMEOUT_SEC):
+                key, ticker, field = future_map[future]
+                try:
+                    data = future.result(timeout=1)
+                    value = data.get(field)
+                    result[key] = value
+                    if value is not None:
+                        if "change" in key:
+                            logger.info("[yfinance] %s change=%.2f%%", ticker, value)
+                        else:
+                            logger.info("[yfinance] %s=%.1f", ticker, value)
                     else:
-                        logger.info("[yfinance] %s=%.1f", ticker, value)
-                else:
-                    logger.warning("[yfinance] %s: None 반환", ticker)
-            except Exception as exc:
-                logger.warning("[yfinance] %s future 실패: %s", ticker, exc)
-                result[key] = None
+                        logger.warning("[yfinance] %s: None 반환", ticker)
+                except Exception as exc:
+                    logger.warning("[yfinance] %s future 실패: %s", ticker, exc)
+                    result[key] = None
 
-    # 타임아웃으로 완료되지 않은 태스크 None 처리
+        except FuturesTimeoutError:
+            # 전체 타임아웃 — 완료되지 않은 항목 None 처리 후 파이프라인 계속
+            logger.warning(
+                "[yfinance] 전체 타임아웃 (%ds) — 미완료 항목 None 처리",
+                _TOTAL_TIMEOUT_SEC,
+            )
+
+    # 완료되지 않은 태스크 None 처리 (타임아웃 또는 기타 이유)
     for key, _, _, _ in tasks:
         if key not in result:
-            logger.warning("[yfinance] %s: 전체 타임아웃으로 None 처리", key)
+            logger.warning("[yfinance] %s: None 처리 (미완료)", key)
             result[key] = None
 
     return result
