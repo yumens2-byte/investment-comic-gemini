@@ -236,7 +236,6 @@ def step_image(
     try:
         from engine.image.gemini_client import generate_episode as gemini_generate
         from engine.image.prompt_builder import build_for_episode
-        from engine.persist.asset_writer import upsert as asset_upsert
 
         output_dir = Path("output") / "episodes" / episode_date / "panels"
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -253,11 +252,13 @@ def step_image(
 
         panel_paths, total_cost = gemini_generate(panels_input, output_dir)
 
-        # episode_assets 업데이트
+        # episode_assets 업데이트 — patch 사용 (기존 script_json 등 보존)
+        from engine.persist.asset_writer import patch as asset_patch
+
         panels_json = [
             {"panel_idx": i + 1, "path": str(p) if p else None} for i, p in enumerate(panel_paths)
         ]
-        asset_upsert(
+        asset_patch(
             episode_date,
             ctx["event_type"],
             {

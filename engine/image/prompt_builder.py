@@ -54,6 +54,31 @@ def verify_negative_block_present(prompt_text: str) -> bool:
     return "NEGATIVE" in prompt_text.upper() or "No real people" in prompt_text
 
 
+def _tone_hint(panel_type: str, key_text: str, narration: str) -> str:
+    """
+    패널 타입 + 텍스트 내용 → 영문 분위기 힌트 변환.
+    Gemini에 한글 내용 노출 없이 장면 톤만 전달.
+    """
+    tone_map = {
+        "COVER": "Epic confrontation, cinematic wide shot, hero vs villain",
+        "TENSION": "Rising tension, data analysis, strategic observation",
+        "BATTLE": "Intense combat, energy clash, dynamic action",
+        "CLIMAX": "Peak moment, decisive strike, maximum intensity",
+        "AFTERMATH": "Post-battle calm, reflective mood, quiet observation",
+        "TEXT_CARD": "Clean dark background, minimalist, data visualization",
+        "DISCLAIMER": "Dark background, official notice, clean typography space",
+    }
+    base = tone_map.get(panel_type, "Dramatic scene")
+    # 한글 감정 키워드 → 영문 변환
+    if any(w in key_text for w in ["무승부", "DRAW"]):
+        base += ", stalemate energy, balanced forces"
+    elif any(w in key_text for w in ["승리", "VICTORY"]):
+        base += ", triumphant pose, victory energy"
+    elif any(w in key_text for w in ["위험", "DANGER", "위기"]):
+        base += ", danger aura, threat energy"
+    return base
+
+
 def build_panel_prompt(
     panel: dict,
     ref_paths: list[Path] | None = None,
@@ -90,7 +115,15 @@ def build_panel_prompt(
 
     char_desc = "\n".join(char_desc_lines) if char_desc_lines else "No characters"
 
+    # 장면 톤 힌트 (한글 내용 대신 분위기만 전달)
+    tone_hint = _tone_hint(panel_type, key_text, narration)
+
     lines = [
+        # ── 최우선 규칙: 텍스트 절대 금지 ──────────────────────────────
+        "CRITICAL RULE: PURE VISUAL SCENE ONLY.",
+        "ABSOLUTELY NO TEXT, LETTERS, KOREAN, JAPANESE, CHINESE, LATIN, NUMBERS, SPEECH BUBBLES, CAPTION BOXES, or any TYPOGRAPHY in the image.",
+        "Market data HUD displays on screens are permitted only as blurred background elements, NOT readable text.",
+        "",
         "== STYLE LOCK ==",
         style_block,
         "== END STYLE LOCK ==",
@@ -99,13 +132,12 @@ def build_panel_prompt(
         f"CAMERA: {camera}",
         f"SETTING: {setting}",
         f"ACTION: {action}",
+        f"SCENE TONE: {tone_hint}",
         "",
         "CHARACTERS:",
         char_desc,
         "",
-        f"KEY TEXT (Korean): {key_text}",
-        f"NARRATION (Korean): {narration}",
-        f"MARKET DATA: {market_ref}",
+        f"MARKET_CONTEXT (visual mood only, no text): {market_ref or 'general market'}",
         "",
         negative_block,
     ]

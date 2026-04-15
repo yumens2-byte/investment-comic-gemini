@@ -126,6 +126,35 @@ def get_episode(episode_date: str, event_type: str) -> dict | None:
     return rows.data[0]
 
 
+def patch(
+    episode_date: str,
+    event_type: str,
+    data: dict,
+) -> None:
+    """
+    icg.episode_assets 특정 컬럼만 UPDATE.
+    upsert와 달리 기존 컬럼값을 보존.
+    STEP 6처럼 일부 컬럼만 업데이트할 때 사용.
+
+    Args:
+        episode_date: 'YYYY-MM-DD'.
+        event_type: 에피소드 타입.
+        data: 업데이트할 필드만 포함한 딕셔너리.
+    """
+    from engine.common.supabase_client import icg_table
+
+    icg_table("episode_assets").update(data).eq("episode_date", episode_date).eq(
+        "event_type", event_type
+    ).execute()
+
+    logger.info(
+        "[asset_writer] patch date=%s type=%s fields=%s",
+        episode_date,
+        event_type,
+        list(data.keys()),
+    )
+
+
 def set_failed(episode_date: str, event_type: str, error_message: str) -> None:
     """
     episode_assets.status = 'failed' + error_message 업데이트.
