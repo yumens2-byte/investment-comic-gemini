@@ -67,7 +67,9 @@ def main() -> None:
     parser.add_argument("--force", action="store_true", help="assembled 상태 덮어쓰기")
     args = parser.parse_args()
 
-    episode_id = args.episode or _latest_episode_id()
+    # 빈 문자열("") 입력 시 None으로 처리 (yml에서 미입력 시 "" 전달되는 경우)
+    episode_id = (args.episode or None) and args.episode.strip() or None
+    episode_id = episode_id or _latest_episode_id()
     if not episode_id:
         logger.error("❌ 실행 가능한 에피소드 없음 (image_generated 상태 없음)")
         sys.exit(1)
