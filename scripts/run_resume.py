@@ -32,28 +32,52 @@ def _parse_date(episode_id: str) -> str:
 
 def _latest_episode_id() -> str | None:
     """
-    Supabase에서 가장 최신의 image_generated 상태 에피소드 ID 반환.
-    없으면 None.
+    Supabase에서 가장 최신의 재처리 가능한 에피소드 ID 반환.
+    우선순위: image_generated → assembled (재조립) → narrative_done
     """
+    try:
+        from engine.common.supabase_client import icg_table
+
+        for status in ("image_generated", "assembled", "narrative_done"):
+            rows = (
+                icg_table("episode_assets")
+                .select("episode_date, episode_no")
+                .eq("status", status)
+                .order("episode_date", desc=True)
+                .order("episode_no", desc=True)
+                .limit(1)
+                .execute()
+            )
+            if rows.data:
+                row = rows.data[0]
+                ep_date = str(row["episode_date"])
+                ep_no = row.get("episode_no") or 1
+                logger.info(
+                    "[run_resume] 자동 선택: %s (status=%s)", f"ICG-{ep_date}-{ep_no:03d}", status
+                )
+                return f"ICG-{ep_date}-{ep_no:03d}"
+    except Exception as exc:
+        logger.warning("[run_resume] 최신 에피소드 조회 실패: %s", exc)
+    return None
+
+
+def _get_artifact_run_id(episode_date: str, event_type: str) -> str | None:
+    """episode_assets에서 artifact_run_id 조회."""
     try:
         from engine.common.supabase_client import icg_table
 
         rows = (
             icg_table("episode_assets")
-            .select("episode_date, episode_no")
-            .eq("status", "image_generated")
-            .order("episode_date", desc=True)
-            .order("episode_no", desc=True)
+            .select("artifact_run_id")
+            .eq("episode_date", episode_date)
+            .eq("event_type", event_type)
             .limit(1)
             .execute()
         )
         if rows.data:
-            row = rows.data[0]
-            ep_date = str(row["episode_date"])
-            ep_no = row.get("episode_no") or 1
-            return f"ICG-{ep_date}-{ep_no:03d}"
-    except Exception as exc:
-        logger.warning("[run_resume] 최신 에피소드 조회 실패: %s", exc)
+            return rows.data[0].get("artifact_run_id")
+    except Exception:
+        pass
     return None
 
 
@@ -123,6 +147,20 @@ def main() -> None:
     event_type = row.get("event_type", "NORMAL")
     script_dict = row.get("script_json", {})
     dialog_edits = row.get("dialog_edits_json", {})
+
+    # artifact_run_id 출력 (yml의 다운로드 step에서 활용)
+    artifact_run_id = row.get("artifact_run_id")
+    if artifact_run_id:
+        sl.info("STEP_7", f"artifact_run_id={artifact_run_id}")
+        # GitHub Actions 출력 변수로 설정 (워크플로우에서 참조 가능)
+        import os as _os
+
+        gha_output = _os.environ.get("GITHUB_OUTPUT", "")
+        if gha_output:
+            with open(gha_output, "a") as f:
+                f.write(f"artifact_run_id={artifact_run_id}\n")
+    else:
+        sl.info("STEP_7", "artifact_run_id 없음 — 아티팩트 없이 진행 (text_card fallback 가능)")
 
     # dialog edits 적용
     if dialog_edits and dialog_edits.get("edits"):

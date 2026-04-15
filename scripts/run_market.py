@@ -279,6 +279,8 @@ def step_image(
         panel_paths, total_cost = gemini_generate(panels_input, output_dir)
 
         # episode_assets 업데이트 — patch 사용 (기존 script_json 등 보존)
+        import os as _os
+
         from engine.persist.asset_writer import patch as asset_patch
 
         panels_json = [
@@ -294,6 +296,8 @@ def step_image(
                 ],
                 "gemini_cost_usd": total_cost,
                 "status": "image_generated",
+                # GitHub Actions run_id → resume_episode.yml 아티팩트 다운로드용
+                "artifact_run_id": _os.environ.get("GITHUB_RUN_ID"),
             },
         )
 
