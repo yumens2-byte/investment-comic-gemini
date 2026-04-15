@@ -32,6 +32,32 @@ def _today() -> str:
     return date.today().strftime("%Y-%m-%d")
 
 
+def _latest_date(stage: str) -> str:
+    """
+    날짜 미입력 시 기준 날짜 결정.
+    - stage=all/data: 오늘 날짜 (신규 수집)
+    - stage=analysis/narrative/persist/image: Supabase 최신 daily_snapshots 날짜
+      → 없으면 오늘 날짜 fallback.
+    """
+    if stage in ("all", "data"):
+        return _today()
+    try:
+        from engine.common.supabase_client import icg_table
+
+        rows = (
+            icg_table("daily_snapshots")
+            .select("snapshot_date")
+            .order("snapshot_date", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if rows.data:
+            return str(rows.data[0]["snapshot_date"])
+    except Exception:
+        pass
+    return _today()
+
+
 def _make_episode_id(episode_date: str) -> str:
     """에피소드 ID 생성: ICG-YYYY-MM-DD-001."""
     from engine.common.supabase_client import icg_table
@@ -315,7 +341,7 @@ def main() -> None:
     parser.add_argument("--date", default=None, help="대상 날짜 (YYYY-MM-DD, 기본: 오늘)")
     args = parser.parse_args()
 
-    episode_date = args.date or _today()
+    episode_date = args.date or _latest_date(args.stage)
 
     # StepLogger 초기화
     from engine.common.logger import StepLogger, get_run_id

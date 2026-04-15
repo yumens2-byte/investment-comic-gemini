@@ -30,13 +30,48 @@ def _parse_date(episode_id: str) -> str:
     return m.group(1)
 
 
+def _latest_episode_id() -> str | None:
+    """
+    Supabase에서 가장 최신의 image_generated 상태 에피소드 ID 반환.
+    없으면 None.
+    """
+    try:
+        from engine.common.supabase_client import icg_table
+
+        rows = (
+            icg_table("episode_assets")
+            .select("episode_date, episode_no")
+            .eq("status", "image_generated")
+            .order("episode_date", desc=True)
+            .order("episode_no", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if rows.data:
+            row = rows.data[0]
+            ep_date = str(row["episode_date"])
+            ep_no = row.get("episode_no") or 1
+            return f"ICG-{ep_date}-{ep_no:03d}"
+    except Exception as exc:
+        logger.warning("[run_resume] 최신 에피소드 조회 실패: %s", exc)
+    return None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="ICG 에피소드 재개 (STEP 7 PIL 조립)")
-    parser.add_argument("--episode", required=True, help="에피소드 ID (ICG-YYYY-MM-DD-001)")
+    parser.add_argument(
+        "--episode",
+        default=None,
+        help="에피소드 ID (ICG-YYYY-MM-DD-001). 미입력 시 최신 image_generated 에피소드 자동 선택.",
+    )
     parser.add_argument("--force", action="store_true", help="assembled 상태 덮어쓰기")
     args = parser.parse_args()
 
-    episode_id = args.episode
+    episode_id = args.episode or _latest_episode_id()
+    if not episode_id:
+        logger.error("❌ 실행 가능한 에피소드 없음 (image_generated 상태 없음)")
+        sys.exit(1)
+    logger.info("[run_resume] 대상 에피소드: %s", episode_id)
     episode_date = _parse_date(episode_id)
 
     from engine.assembly.pil_composer import compose_episode
