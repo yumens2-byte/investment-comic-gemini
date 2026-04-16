@@ -112,6 +112,9 @@ def calc_hero_power(
 
         _bc = load_battle_constants()
         _hero_cfg = _bc.get("HERO_BONUS_TABLE", {}).get(hero_id, {})
+        # CHARACTER_BASE_POWER와 혼재 방지: int가 반환되면 빈 dict로 교체
+        if not isinstance(_hero_cfg, dict):
+            _hero_cfg = {}
     except Exception:
         _hero_cfg = {}
 

@@ -153,10 +153,18 @@ def load_battle_constants() -> dict:
             if not keys:
                 continue
             first_key = keys[0]
+            first_val = data[first_key]
             if first_key.startswith("CHAR_HERO"):
-                result["HERO_BONUS_TABLE"] = data
+                # 값이 dict이면 HERO_BONUS_TABLE, int이면 CHARACTER_BASE_POWER
+                if isinstance(first_val, dict):
+                    result["HERO_BONUS_TABLE"] = data
+                else:
+                    result["CHARACTER_BASE_POWER"] = data
             elif first_key.startswith("CHAR_VILLAIN"):
-                result["VILLAIN_PENALTY_TABLE"] = data
+                if isinstance(first_val, dict):
+                    result["VILLAIN_PENALTY_TABLE"] = data
+                else:
+                    result.setdefault("CHARACTER_BASE_POWER", {}).update(data)
             elif "HERO_VICTORY" in keys:
                 result["OUTCOME_THRESHOLDS"] = data
             elif "form0" in keys:
