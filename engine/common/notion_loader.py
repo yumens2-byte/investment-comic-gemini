@@ -371,8 +371,10 @@ def char_design_to_prompt_block(char_id: str, spec: dict) -> str:
         ("helmet", "Helmet"),
         ("shield", "Shield"),
         ("weapon", "Weapon"),
+        ("weapon_length", "Weapon Length — MANDATORY"),
         ("identifier", "Identifier — MANDATORY"),
         ("color_rule", "Color Rule — STRICT"),
+        ("must_not", "MUST NOT — HARD ERRORS"),
         ("strict", "STRICT CONSISTENCY"),
     ]
     for key, label in field_labels:
