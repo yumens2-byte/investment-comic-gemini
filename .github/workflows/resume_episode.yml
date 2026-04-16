@@ -1,6 +1,9 @@
 name: 🔄 Resume Episode
 
 on:
+  schedule:
+    # KST 05:00 월/수 = UTC 20:00 일/화
+    - cron: '0 20 * * 0,2'
   workflow_dispatch:
     inputs:
       episode_id:
@@ -14,7 +17,7 @@ on:
 
 permissions:
   contents: read
-  actions: read   # 다른 워크플로우 아티팩트 다운로드 권한
+  actions: read
 
 jobs:
   resume:
@@ -64,9 +67,6 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      # ── artifact_run_id 조회 (Supabase → GITHUB_OUTPUT) ──────────────────
-      # run_resume.py가 artifact_run_id를 GITHUB_OUTPUT에 쓰기 전에
-      # 아티팩트를 다운로드해야 하므로 Python으로 먼저 조회
       - name: Fetch artifact_run_id from Supabase
         id: fetch_run_id
         env:
@@ -107,7 +107,6 @@ jobs:
               print("[fetch_run_id] artifact_run_id 없음 — 아티팩트 없이 진행")
           PYEOF
 
-      # ── 아티팩트 다운로드 (artifact_run_id 있을 때만) ────────────────────
       - name: Download Episode Artifact (from Run Market)
         if: steps.fetch_run_id.outputs.run_id != ''
         uses: actions/download-artifact@v4
@@ -118,7 +117,6 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ steps.fetch_run_id.outputs.run_id }}
 
-      # ── STEP 7: PIL Assembly ─────────────────────────────────────────────
       - name: STEP 7 — Assembly
         run: |
           if [ -n "${{ github.event.inputs.episode_id }}" ]; then
