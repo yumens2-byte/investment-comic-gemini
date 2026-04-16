@@ -14,6 +14,7 @@ jobs:
 
     env:
       PYTHONPATH: .
+
       
       # ── Notion 보안 분리 Page ID ─────────────────────────────────────────
       NOTION_NARRATIVE_SYSTEM_ID: '3439208cbdc3810d9e7ceb5f48f8f093'
