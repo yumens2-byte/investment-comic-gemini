@@ -1,6 +1,7 @@
-version: '1.0'
-updated_at: '2026-04-14'
-source: ICG Placeholder v1.0 (Gemini 생성 전 임시)
+version: '2.0'
+updated_at: '2026-04-16'
+source: 'Original GPT images inoculated as canon REF (2026-04-16)'
+
 style_lock:
   line_weight: bold
   shading: cel
@@ -8,165 +9,176 @@ style_lock:
   influence: korean_manhwa
   gaze_law: hero_right, villain_left
   position_law: hero_left, villain_right
+
 heroes:
   CHAR_HERO_001:
     name_ko: EDT
     name_en: Endurance D Tiger
     notion_label: EDT
     crisis_role: Systemic Collapse
-    base_power: 0  # Notion NOTION_BATTLE_CONSTANTS_ID에서 로드
+    base_power: 0
     forms:
       form0:
         ref: assets/characters/hero_edt_form0.png
-        sha256: __TBD__
-        description: 기본형. 체인소, 브론즈 아머.
+        sha256: 0066b7d3acd999f3c81ab1358f0b4252865f0ade4579ea522b3a68f1cc4e00df
+        description: "기본형(ICG 기본). 체인소+블루바디수트+D엠블럼. 헤일로 없음."
       form1:
         ref: assets/characters/hero_edt_form1.png
-        sha256: 0107b96cd4e4315a3b9df0d2ca12151d0b1c49789043a8ccbc5d0d039744be43
-        description: ETF형. 현재 기본 전투폼.
+        sha256: 8502ac0388e459d5187c5e72a0ee295c57ef23b140dc1efeba2bced1c965de91
+        description: "ETF형. 골든 헤일로+방패+블루 검+레드 케이프+다크 아머."
       form2:
-        ref: assets/characters/hero_edt_form2.png
-        sha256: __TBD__
-        description: 1차 각성. 4-AND 트리거 필요.
+        ref: assets/characters/hero_edt_form0.png
+        sha256: 0066b7d3acd999f3c81ab1358f0b4252865f0ade4579ea522b3a68f1cc4e00df
+        description: "1차 각성. Form0 계승+백금 에너지 폭발. 4-AND 트리거."
       form3:
-        ref: assets/characters/hero_edt_form3.png
+        ref: assets/characters/hero_edt_form0.png
         sha256: __PENDING__
-        description: 2차 각성. 첫 발동 시 생성.
+        description: "2차 각성. 첫 발동 시 생성."
       form4:
-        ref: assets/characters/hero_edt_form4.png
+        ref: assets/characters/hero_edt_form0.png
         sha256: __TBD__
-        description: OMEGA. 전원 합체.
-    default_form: form1
+        description: "OMEGA. 전원 합체."
+    default_form: form0
     canon_lock: true
+
   CHAR_HERO_002:
     name_ko: 아이언 식큐리티 누나
     name_en: Iron Securities Nuna
     notion_label: Iron Nuna
     crisis_role: Financial Crisis
-    base_power: 0  # Notion NOTION_BATTLE_CONSTANTS_ID에서 로드
+    base_power: 0
     forms:
       form1:
         ref: assets/characters/hero_iron_securities_nuna.png
-        sha256: a7da84a29cd8738361d4340a4c43c6c43cabd4a76b570348054b6779d9ad7a46
-        description: 기본전투폼. 철갑 방어 + 데이터 분석.
+        sha256: 865f63279c8b8b9f5da3a6710c5c8514ddb2f7eddfe91ff4fdd15ff9bfefb931
+        description: "빨간+골드 아머, ETF 방패(왼손), 소총(오른손), 레드 케이프."
     default_form: form1
     canon_lock: true
+
   CHAR_HERO_003:
     name_ko: 레버리지 머슬맨
     name_en: Leverage Muscle Man
     notion_label: Leverage
     crisis_role: Oil Shock
-    base_power: 0  # Notion NOTION_BATTLE_CONSTANTS_ID에서 로드
-    special_synergy:
-      oil_shock: 8
+    base_power: 0
     forms:
       form1:
         ref: assets/characters/hero_leverage_muscle_man.png
-        sha256: 22835cc5b1777fd0b96318ca858d3de91edad14c584ba0638a49feb796ac31b7
-        description: 기본전투폼. 역기 + 레버리지 에너지.
+        sha256: 91954a79e22c1cf9928cbe75f21a0c9375004d1c2ffba181cebe8bd0e45f3909
+        description: "상의 탈의 머슬맨, 화염 머리, 블랙 카고 팬츠, 등에서 화염."
     default_form: form1
     canon_lock: true
+
   CHAR_HERO_004:
     name_ko: 익스포저 퓨처스 걸
     name_en: Exposure Futures Girl
     notion_label: Futures Girl
     crisis_role: Futures Volatility
-    base_power: 0  # Notion NOTION_BATTLE_CONSTANTS_ID에서 로드
+    base_power: 0
     forms:
       form1:
         ref: assets/characters/hero_futures_girl.png
-        sha256: 294673faf6453fcbc26ad8cdb178fd98d5e000a1f0d2586460b4b21c5dfba868
-        description: 기본전투폼. 선물 시장 감지 레이더.
+        sha256: 6233288971380c533320a0feeea255c2fa2eb6ae1fb6fac2608a36d25b8fc812
+        description: "숏컷 블랙 헤어, 블랙 전술수트, 사이안 악센트, 홀로그램 디스플레이."
     default_form: form1
     canon_lock: true
+
   CHAR_HERO_005:
     name_ko: 골드 본드 머슬
     name_en: Gold Bond Muscle
     notion_label: Gold Bond
     crisis_role: Defensive Shield
-    base_power: 0  # Notion NOTION_BATTLE_CONSTANTS_ID에서 로드
-    special_synergy:
-      high_vix_defense: 12
+    base_power: 0
     forms:
       form1:
         ref: assets/characters/hero_gold_bond_muscle.png
-        sha256: 33ffca78e5c65519bc114ca137ad69c61e789598315d624696579e32dc4bb230
-        description: 기본전투폼. 금/채권 방어 방패.
+        sha256: e2a672961a7f65a4b77d39158887498b7708a65bb723b057675aaa2ffdb44f06
+        description: "완전 골드 풀플레이트 아머, GOLD BOND 직사각 방패(왼손), 헬멧 얼굴 완전 은폐."
     default_form: form1
     canon_lock: true
+
 villains:
   CHAR_VILLAIN_001:
     name_ko: 듰트 타이탄
     name_en: Debt Titan
     notion_label: Debt Titan
     event: Debt Stress
-    base_power: 0  # Notion NOTION_BATTLE_CONSTANTS_ID에서 로드
+    base_power: 0
     ref: assets/characters/villain_debt_titan.png
-    sha256: 43f48206e3ec96d82a6752b358e12751185340947c3411bd7995113c3db15cef
+    sha256: 67e1cebf8dd88f9aeac485cf142b995afab8f7f807b25d9632a25de58464f46e
+    description: "검탄 용암/돌 거인, 상체에 오렌지 용암 균열, 단일 파이어 포인트."
     trigger_metrics:
     - metric: DGS10
       threshold: '>4.8'
     - metric: BAMLH0A0HYM2
       threshold: '>500'
     canon_lock: true
+
   CHAR_VILLAIN_002:
     name_ko: 오일 쇼크 타이탄
     name_en: Oil Shock Titan
     notion_label: Oil Shock Titan
     event: Oil Shock
-    base_power: 0  # Notion NOTION_BATTLE_CONSTANTS_ID에서 로드
+    base_power: 0
     ref: assets/characters/villain_oil_shock_titan.png
-    sha256: f65454315cbc283773d4712461ce6340688031022a459ff21101a1ca5a0b84be
-    power_formula: wti_pct_3d * 1.5, max 25
+    sha256: 8524a7df2fcce8fdeef91eef37f4e370b75f266ce03cb05de7db9e2894cc38a1
+    description: "불타는 용암 화염 크리처, 오렌지 눈, 전신 화염."
     trigger_metrics:
     - metric: DCOILWTICO
       threshold: pct_change_3d > 8
     canon_lock: true
+
   CHAR_VILLAIN_003:
     name_ko: 리퀴디티 레비아탄
     name_en: Liquidity Leviathan
     notion_label: Liquidity Leviathan
     event: Liquidity Crisis
-    base_power: 0  # Notion NOTION_BATTLE_CONSTANTS_ID에서 로드
+    base_power: 0
     ref: assets/characters/villain_liquidity_leviathan.png
     sha256: 434644ed6f982814971ab1c338c63f5b330a4c482b4c5e774021f17ebca5a759
+    description: "미등장 — 프롬프트 기반. 4개 머리, 달러 지폐/채권 바디."
     trigger_metrics:
     - metric: BAMLH0A0HYM2
       threshold: '>700'
     canon_lock: true
+
   CHAR_VILLAIN_004:
     name_ko: 볼래틸리티 하이드라
     name_en: Volatility Hydra
     notion_label: Volatility Hydra
     event: VIX Spike
-    base_power: 0  # Notion NOTION_BATTLE_CONSTANTS_ID에서 로드
+    base_power: 0
     ref: assets/characters/villain_volatility_hydra.png
-    sha256: 52fd6f3f3e8b478051de7a2da02b1b4a0982c8bd298b4938f381884e5a75bad1
-    power_formula: (vix - 20) * 1.2
+    sha256: 57d02e690533c314c94a819d7ebab253e1ac4885fd060297ecbfccdcc24b596d
+    description: "5개 뱀 머리(퍼플 번개 눈), 블랙 폭풍 바디, 도시 스케일."
     trigger_metrics:
     - metric: VIXCLS
       threshold: '>28'
     canon_lock: true
+
   CHAR_VILLAIN_005:
     name_ko: 알고리즘 리퍼
     name_en: Algorithm Reaper
     notion_label: Algorithm Reaper
     event: Algo Cascade
-    base_power: 0  # Notion NOTION_BATTLE_CONSTANTS_ID에서 로드
+    base_power: 0
     ref: assets/characters/villain_algorithm_reaper.png
-    sha256: 28567a68708974b26ddea7f44a4c645b4a470709045eed1ae4f343f2688b883e
+    sha256: 0332fc45c58b2965bd3adf1d30491fd17ee47cf7859c5e8a13a67c6bb8bf4223
+    description: "코로살 후드 디지털 리퍼, 빨간 눈만 노출, 바이너리 비, ERROR 홀로그램."
     trigger_metrics:
     - metric: SPY_CHANGE
       threshold: <-3
     canon_lock: true
+
   CHAR_VILLAIN_006:
     name_ko: 워 도미니온
     name_en: War Dominion
     notion_label: War Dominion
     event: Geopolitical Risk
-    base_power: 0  # Notion NOTION_BATTLE_CONSTANTS_ID에서 로드
+    base_power: 0
     ref: assets/characters/villain_war_dominion.png
-    sha256: bcdccbde3bf2a7813e5acbe313cf74ec829a46cf44d8bcd7fcaa4314283eeaf1
+    sha256: 7e47678e4a84e450b236d2016f70ddf0f97cf1f7e72ae327ad173aea67e2a8a3
+    description: "블랙 메카 전쟁 수트, 어깨 미사일런처 2개, 빨간 눈."
     trigger_metrics:
     - metric: DCOILWTICO
       threshold: '>90'
