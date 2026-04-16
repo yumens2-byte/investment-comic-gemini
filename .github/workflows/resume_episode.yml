@@ -31,16 +31,22 @@ jobs:
       NOTION_BATTLE_CONSTANTS_ID: '3439208cbdc3817bbdf9dbdb272508b8'
       NOTION_REF_PROMPTS_ID:      '3439208cbdc381ccb85cf8e177a1a3d2'
       # ── Secrets ──────────────────────────────────────────────────────────
-      ANTHROPIC_API_KEY:      ${{ secrets.ANTHROPIC_API_KEY }}
-      GEMINI_API_SUB_PAY_KEY: ${{ secrets.GEMINI_API_SUB_PAY_KEY }}
-      SUPABASE_URL:           ${{ secrets.SUPABASE_URL }}
-      SUPABASE_KEY:           ${{ secrets.SUPABASE_KEY }}
-      SUPABASE_SCHEMA:        icg
-      NOTION_API_KEY:         ${{ secrets.NOTION_API_KEY }}
-      NOTION_TRACKER_DS:      ${{ secrets.NOTION_TRACKER_DS }}
-      # ── 운영 제어 ────────────────────────────────────────────────────────
-      DRY_RUN:    'false'
       PYTHONPATH: .
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GEMINI_API_SUB_PAY_KEY: ${{ secrets.GEMINI_API_SUB_PAY_KEY }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+      LUNAR_CRUSH_API_KEY: ${{ secrets.LUNAR_CRUSH_API_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
+      TELEGRAM_PAID_CHANNEL_ID: ${{ secrets.TELEGRAM_PAID_CHANNEL_ID }}
+      X_API_KEY: ${{ secrets.X_API_KEY }}
+      X_API_SECRET: ${{ secrets.X_API_SECRET }}
+      X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+      X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+      DRY_RUN: ${{ secrets.DRY_RUN }}
 
     steps:
       - name: Checkout
