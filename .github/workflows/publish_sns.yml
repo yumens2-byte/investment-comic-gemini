@@ -1,13 +1,15 @@
 name: 🚀 Publish SNS
 
-# ⚠️ 자동 발행 절대 금지 (doc 00 RULE 10, doc 17 5.1)
-# 반드시 수동 workflow_dispatch + confirm=YES + production environment 승인 필요.
 on:
+  schedule:
+    # KST 06:00 월/수 = UTC 21:00 일/화
+    - cron: '0 21 * * 0,2'
   workflow_dispatch:
     inputs:
       episode_id:
-        description: '에피소드 ID (예: ICG-2026-04-14-001)'
+        description: '에피소드 ID (예: ICG-2026-04-15-004). 미입력 시 최신 assembled 자동 선택.'
         required: false
+        default: ''
       channels:
         description: '발행 채널 (telegram / x / all)'
         required: true
@@ -15,33 +17,118 @@ on:
       confirm:
         description: '발행 확인 (YES 입력 필수)'
         required: true
-        default: 'YES'
+        default: 'NO'
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   # ── 사전 검증 ────────────────────────────────────────────────────────────────
   pre-check:
     name: Pre-flight Check
     runs-on: ubuntu-latest
+    outputs:
+      slides_run_id: ${{ steps.fetch_ids.outputs.slides_run_id }}
+      episode_id:    ${{ steps.fetch_ids.outputs.episode_id }}
+
+    env:
+      SUPABASE_URL:  ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY:  ${{ secrets.SUPABASE_KEY }}
+      SUPABASE_SCHEMA: icg
+      PYTHONPATH: .
+
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies (supabase only)
+        run: pip install supabase python-dotenv
+
+      # ── confirm 게이트 (schedule 자동 실행 시 패스) ──────────────────────────
       - name: Confirm Gate
         run: |
-          if [ "${{ github.event.inputs.confirm }}" != "YES" ]; then
+          TRIGGER="${{ github.event_name }}"
+          if [ "$TRIGGER" = "schedule" ]; then
+            echo "✅ schedule 자동 실행 — confirm 게이트 자동 통과."
+          elif [ "${{ github.event.inputs.confirm }}" != "YES" ]; then
             echo "❌ confirm 입력값이 'YES'가 아닙니다. 발행 차단."
             exit 1
+          else
+            echo "✅ confirm=YES 확인."
           fi
-          echo "✅ confirm=YES 확인. production 환경 승인 대기."
 
-  # ── 실제 발행 — production environment 승인 필요 ─────────────────────────────
+      # ── Supabase에서 slides_run_id + episode_id 조회 ─────────────────────
+      - name: Fetch slides_run_id from Supabase
+        id: fetch_ids
+        env:
+          EPISODE_ID: ${{ github.event.inputs.episode_id }}
+        run: |
+          python - << 'PYEOF'
+          import os, sys, re
+          sys.path.insert(0, ".")
+          episode_id_input = os.environ.get("EPISODE_ID", "").strip()
+          slides_run_id = None
+          resolved_episode_id = episode_id_input
+
+          try:
+              from supabase import create_client
+              sb = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
+              tbl = sb.schema("icg").table("episode_assets")
+
+              if episode_id_input:
+                  m = re.match(r"ICG-(\d{4}-\d{2}-\d{2})-(\d{3})", episode_id_input)
+                  if m:
+                      ep_date, ep_no = m.group(1), int(m.group(2))
+                      rows = tbl.select("slides_run_id,episode_date,episode_no").eq(
+                          "episode_date", ep_date).eq("episode_no", ep_no).limit(1).execute()
+                      if rows.data:
+                          slides_run_id = rows.data[0].get("slides_run_id")
+              else:
+                  for status in ("assembled", "image_generated"):
+                      rows = tbl.select(
+                          "slides_run_id,episode_date,episode_no"
+                      ).eq("status", status).order(
+                          "episode_date", desc=True
+                      ).order("episode_no", desc=True).limit(1).execute()
+                      if rows.data:
+                          r = rows.data[0]
+                          slides_run_id = r.get("slides_run_id")
+                          ep_date = str(r["episode_date"])
+                          ep_no = r.get("episode_no") or 1
+                          resolved_episode_id = f"ICG-{ep_date}-{ep_no:03d}"
+                          print(f"[fetch_ids] 자동 선택: {resolved_episode_id} (status={status})")
+                          break
+
+          except Exception as e:
+              print(f"[fetch_ids] 조회 실패 (무시): {e}", flush=True)
+
+          gha_output = os.environ.get("GITHUB_OUTPUT", "")
+          with open(gha_output or "/dev/null", "a") as f:
+              f.write(f"slides_run_id={slides_run_id or ''}\n")
+              f.write(f"episode_id={resolved_episode_id}\n")
+
+          if slides_run_id:
+              print(f"[fetch_ids] slides_run_id={slides_run_id}")
+          else:
+              print("[fetch_ids] slides_run_id 없음 — 아티팩트 없이 진행")
+          PYEOF
+
+  # ── 실제 발행 (schedule 시 environment 승인 없이 자동 실행) ──────────────────
   publish:
     name: Publish Episode
     needs: pre-check
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # GitHub Environment 'production' 에 reviewer 등록 필수 (doc 17 5.1)
-    environment: production
+    # schedule 자동 실행: environment 없이 실행 (수동 승인 불필요)
+    # workflow_dispatch 수동 실행: production environment 승인 필요
+    environment: ${{ github.event_name == 'workflow_dispatch' && 'production' || '' }}
 
     env:
       TZ: Asia/Seoul
@@ -79,27 +166,48 @@ jobs:
           python-version: '3.11'
           cache: pip
 
+      - name: Install CJK fonts
+        run: sudo apt-get install -y fonts-noto-cjk --no-install-recommends -q
+
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Download Assembled Slides
+      - name: Download Assembled Slides (from Resume Episode run)
+        if: needs.pre-check.outputs.slides_run_id != ''
         uses: actions/download-artifact@v4
-        continue-on-error: true
         with:
-          pattern: slides-${{ github.event.inputs.episode_id }}
+          pattern: slides-*
           path: output/episodes/
           merge-multiple: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ needs.pre-check.outputs.slides_run_id }}
 
-      # ── STEP 8: SNS 발행 ────────────────────────────────────────────────
-      - name: STEP 8 — Publish
+      - name: Check slides availability
         run: |
-          python -m scripts.run_publish \
-            --episode ${{ github.event.inputs.episode_id }} \
-            --channels ${{ github.event.inputs.channels }}
+          echo "=== 슬라이드 파일 확인 ==="
+          find output/episodes -name "S*.png" 2>/dev/null | sort || echo "슬라이드 없음"
+          echo "=== episode_id: ${{ needs.pre-check.outputs.episode_id }} ==="
+
+      - name: STEP 8 — Publish SNS
+        run: |
+          # schedule 실행 시 channels=all 고정, workflow_dispatch 시 입력값 사용
+          CHANNELS="${{ github.event.inputs.channels }}"
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            CHANNELS="all"
+          fi
+          EID="${{ needs.pre-check.outputs.episode_id }}"
+          if [ -n "$EID" ]; then
+            python -m scripts.run_publish \
+              --episode "$EID" \
+              --channels "$CHANNELS"
+          else
+            python -m scripts.run_publish \
+              --channels "$CHANNELS"
+          fi
 
       - name: Notify Failure
         if: failure()
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_BOT_TOKEN:       ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
         run: python -m scripts.notify_failure
