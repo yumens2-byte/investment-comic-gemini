@@ -14,6 +14,7 @@ jobs:
 
     env:
       PYTHONPATH: .
+      
       # ── Notion 보안 분리 Page ID ─────────────────────────────────────────
       NOTION_NARRATIVE_SYSTEM_ID: '3439208cbdc3810d9e7ceb5f48f8f093'
       NOTION_NARRATIVE_USER_ID:   '3439208cbdc3816bb578d7355b3a1966'
@@ -21,6 +22,7 @@ jobs:
       NOTION_BATTLE_CONSTANTS_ID: '3439208cbdc3817bbdf9dbdb272508b8'
       NOTION_REF_PROMPTS_ID:      '3439208cbdc381ccb85cf8e177a1a3d2'
       # ── Secrets ──────────────────────────────────────────────────────────
+      
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       GEMINI_API_SUB_PAY_KEY: ${{ secrets.GEMINI_API_SUB_PAY_KEY }}
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
