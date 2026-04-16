@@ -191,7 +191,11 @@ def main() -> None:
         slides = compose_episode(panels, panel_images, slides_dir)
 
         # slides_json 업데이트
+        import os as _os
+
         slides_json = [{"idx": i + 1, "path": str(s)} for i, s in enumerate(slides)]
+        slides_run_id = _os.environ.get("GITHUB_RUN_ID")  # publish_sns.yml 아티팩트 다운로드용
+
         # patch 사용 — script_json 등 기존 컬럼 보존
         asset_patch(
             episode_date,
@@ -200,8 +204,17 @@ def main() -> None:
                 "slides_json": slides_json,
                 "dialog_edited": bool(dialog_edits),
                 "status": "assembled",
+                "slides_run_id": slides_run_id,  # 슬라이드 아티팩트 run_id 저장
             },
         )
+
+        if slides_run_id:
+            sl.info("STEP_7_PIL", f"slides_run_id={slides_run_id} → DB 저장 완료")
+            # GITHUB_OUTPUT에도 출력 (publish_sns.yml에서 참조 가능)
+            gha_output = _os.environ.get("GITHUB_OUTPUT", "")
+            if gha_output:
+                with open(gha_output, "a") as f:
+                    f.write(f"slides_run_id={slides_run_id}\n")
 
         sl.step_done("STEP_7_PIL", ts, f"슬라이드 {len(slides)}개 조립 완료")
         logger.info("✅ 조립 완료: %s", slides_dir)

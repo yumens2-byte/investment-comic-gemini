@@ -238,3 +238,59 @@ class TestAutoTrim:
         raw = {"panels": [{"idx": 1, "narration": normal, "key_text": "짧음"}]}
         result = _auto_trim_raw_json(raw)
         assert result["panels"][0]["narration"] == normal
+
+
+class TestCharDesign:
+    """캐릭터 외형 고정 명세 관련 테스트."""
+
+    def test_char_design_to_prompt_block_format(self):
+        """char_design_to_prompt_block이 올바른 형식을 생성해야 한다."""
+        from engine.common.notion_loader import char_design_to_prompt_block
+
+        spec = {
+            "name": "EDT (Endurance D Tiger)",
+            "role": "HERO",
+            "position": "LEFT",
+            "facing": "RIGHT",
+            "body": "Korean male warrior, 30s",
+            "costume": "Deep blue + gold armor",
+            "identifier": "EDT logo on chest",
+            "color_rule": "Deep blue + gold only",
+            "strict": "Same every panel",
+        }
+        result = char_design_to_prompt_block("CHAR_HERO_001", spec)
+        assert "EDT (Endurance D Tiger)" in result
+        assert "== CHAR_DESIGN:" in result
+        assert "== END CHAR_DESIGN:" in result
+        assert "HERO" in result
+        assert "LEFT" in result
+        assert "RIGHT" in result
+        assert "EDT logo on chest" in result
+
+    def test_char_design_to_prompt_block_empty_spec(self):
+        """빈 spec으로도 기본 블록이 생성되어야 한다."""
+        from engine.common.notion_loader import char_design_to_prompt_block
+
+        result = char_design_to_prompt_block("CHAR_HERO_001", {})
+        assert "== CHAR_DESIGN:" in result
+        assert "== END CHAR_DESIGN:" in result
+
+    def test_get_char_designs_empty_ids(self):
+        """빈 char_ids 입력 시 빈 문자열 반환."""
+        from engine.image.prompt_builder import _get_char_designs
+
+        result = _get_char_designs([])
+        assert result == ""
+
+    def test_get_char_designs_fallback_on_error(self):
+        """Notion 로드 실패 시 빈 문자열 반환 (파이프라인 차단 없음)."""
+        import os
+        from unittest.mock import patch
+
+        from engine.image.prompt_builder import _get_char_designs
+
+        # NOTION_API_KEY 없는 환경에서 fallback 확인
+        with patch.dict(os.environ, {"NOTION_API_KEY": ""}):
+            # 예외 발생 시 빈 문자열 반환
+            result = _get_char_designs(["CHAR_HERO_001"])
+            assert isinstance(result, str)

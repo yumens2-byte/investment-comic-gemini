@@ -38,8 +38,30 @@ def main() -> None:
     parser.add_argument("--channels", default="telegram", help="발행 채널 (telegram/x/all)")
     args = parser.parse_args()
 
+    # episode / date 미입력 시 Supabase 최신 assembled 에피소드 자동 선택
     if not args.episode and not args.date:
-        parser.error("--episode 또는 --date 중 하나 필수")
+        from engine.common.supabase_client import icg_table as _tbl
+
+        for _status in ("assembled", "image_generated"):
+            _rows = (
+                _tbl("episode_assets")
+                .select("episode_date, episode_no")
+                .eq("status", _status)
+                .order("episode_date", desc=True)
+                .order("episode_no", desc=True)
+                .limit(1)
+                .execute()
+            )
+            if _rows.data:
+                _r = _rows.data[0]
+                _ep_date = str(_r["episode_date"])
+                _ep_no = _r.get("episode_no") or 1
+                args.episode = f"ICG-{_ep_date}-{_ep_no:03d}"
+                logger.info("[run_publish] 자동 선택: %s (status=%s)", args.episode, _status)
+                break
+        if not args.episode:
+            logger.error("실행 가능한 에피소드 없음 (assembled/image_generated 없음)")
+            sys.exit(1)
 
     episode_date = args.date or _parse_date(args.episode)
 

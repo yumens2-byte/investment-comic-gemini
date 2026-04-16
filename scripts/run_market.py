@@ -292,7 +292,7 @@ def step_image(
             {
                 "panels_json": panels_json,
                 "image_prompts_json": [
-                    {"idx": pp.panel_idx, "prompt": pp.prompt_text[:500]} for pp in panel_prompts
+                    {"idx": pp.panel_idx, "prompt": pp.prompt_text} for pp in panel_prompts
                 ],
                 "gemini_cost_usd": total_cost,
                 "status": "image_generated",

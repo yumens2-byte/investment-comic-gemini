@@ -191,6 +191,191 @@ def load_ref_prompts() -> dict[str, str]:
     return result
 
 
+def load_chart_direction_rule() -> dict[str, str]:
+    """
+    아웃컴별 배경 차트 방향 규칙 로드.
+    Notion image_prompt_blocks의 CHART_DIRECTION_RULE JSON 파싱.
+    """
+    page_id = os.environ.get("NOTION_IMAGE_PROMPTS_ID")
+    if not page_id:
+        return {}
+    text = _load_page_cached(page_id)
+
+    spec_start = text.find("CHART_DIRECTION_RULE")
+    if spec_start == -1:
+        return {}
+
+    section_text = text[spec_start:]
+    brace_start = section_text.find("{")
+    if brace_start == -1:
+        return {}
+
+    depth = 0
+    json_end = -1
+    for i, ch in enumerate(section_text[brace_start:], brace_start):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                json_end = i + 1
+                break
+
+    if json_end == -1:
+        return {}
+
+    try:
+        return json.loads(section_text[brace_start:json_end])
+    except json.JSONDecodeError:
+        return {}
+
+
+def load_panel_visual_spec() -> dict[str, dict]:
+    """
+    패널 타입별 시각적 스펙 로드 (조명/구도/분위기).
+
+    Notion image_prompt_blocks의 PANEL_TYPE_VISUAL_SPEC JSON 파싱.
+
+    Returns:
+        {panel_type: {composition, lighting, atmosphere, camera_rule}}
+    """
+    page_id = os.environ.get("NOTION_IMAGE_PROMPTS_ID")
+    if not page_id:
+        raise RuntimeError("NOTION_IMAGE_PROMPTS_ID 환경변수 필수")
+    text = _load_page_cached(page_id)
+
+    # PANEL_TYPE_VISUAL_SPEC JSON 블록 추출 (중첩 JSON 대응)
+    # "PANEL_TYPE_VISUAL_SPEC" 헤더 이후 첫 번째 완전한 JSON 오브젝트 추출
+    spec_start = text.find("PANEL_TYPE_VISUAL_SPEC")
+    if spec_start == -1:
+        logger.warning("[notion_loader] PANEL_TYPE_VISUAL_SPEC 섹션 없음 — fallback 빈 dict")
+        return {}
+
+    # 해당 섹션 이후 텍스트에서 { ... } 블록 추출
+    section_text = text[spec_start:]
+    brace_start = section_text.find("{")
+    if brace_start == -1:
+        return {}
+
+    # 중첩 괄호 카운팅으로 JSON 범위 확정
+    depth = 0
+    json_end = -1
+    for i, ch in enumerate(section_text[brace_start:], brace_start):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                json_end = i + 1
+                break
+
+    if json_end == -1:
+        logger.warning("[notion_loader] PANEL_TYPE_VISUAL_SPEC JSON 범위 추출 실패")
+        return {}
+
+    try:
+        return json.loads(section_text[brace_start:json_end])
+    except json.JSONDecodeError as e:
+        logger.warning("[notion_loader] PANEL_TYPE_VISUAL_SPEC 파싱 실패: %s", e)
+        return {}
+
+
+def load_char_design_blocks(char_ids: list[str] | None = None) -> dict[str, dict]:
+    """
+    Notion character_ref_prompts 페이지의 CHAR_DESIGN_SPECS JSON 로드.
+
+    캐릭터별 외형 고정 명세를 패널 프롬프트에 자동 주입하기 위해 사용.
+
+    Args:
+        char_ids: 필터링할 char_id 목록. None이면 전체 반환.
+
+    Returns:
+        {char_id: {name, role, position, facing, body, costume, identifier, color_rule, strict, ...}}
+    """
+    page_id = os.environ.get("NOTION_REF_PROMPTS_ID")
+    if not page_id:
+        raise RuntimeError("NOTION_REF_PROMPTS_ID 환경변수 필수")
+    text = _load_page_cached(page_id)
+
+    # CHAR_DESIGN_SPECS JSON 블록 추출 (중첩 JSON 대응)
+    spec_start = text.find("CHAR_DESIGN_SPECS")
+    if spec_start == -1:
+        logger.warning("[notion_loader] CHAR_DESIGN_SPECS 섹션 없음")
+        return {}
+
+    section_text = text[spec_start:]
+    brace_start = section_text.find("{")
+    if brace_start == -1:
+        return {}
+
+    depth = 0
+    json_end = -1
+    for i, ch in enumerate(section_text[brace_start:], brace_start):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                json_end = i + 1
+                break
+
+    if json_end == -1:
+        logger.warning("[notion_loader] CHAR_DESIGN_SPECS JSON 범위 추출 실패")
+        return {}
+
+    try:
+        all_specs: dict[str, dict] = json.loads(section_text[brace_start:json_end])
+    except json.JSONDecodeError as e:
+        logger.warning("[notion_loader] CHAR_DESIGN_SPECS JSON 파싱 실패: %s", e)
+        return {}
+
+    if char_ids is None:
+        return all_specs
+
+    return {k: v for k, v in all_specs.items() if k in char_ids}
+
+
+def char_design_to_prompt_block(char_id: str, spec: dict) -> str:
+    """
+    캐릭터 외형 명세 dict → Gemini 프롬프트 텍스트 블록 변환.
+
+    Example output:
+        == CHAR_DESIGN: EDT (Endurance D Tiger) ==
+        Role: HERO | Position: LEFT | Facing: RIGHT
+        Body: Korean male warrior, 30s...
+        ...
+        STRICT: Same design every panel.
+        == END CHAR_DESIGN ==
+    """
+    name = spec.get("name", char_id)
+    role = spec.get("role", "")
+    position = spec.get("position", "")
+    facing = spec.get("facing", "")
+
+    lines = [
+        f"== CHAR_DESIGN: {name} ==",
+        f"Role: {role} | Position: {position} side | Facing: {facing}",
+    ]
+
+    field_labels = [
+        ("body", "Body"),
+        ("costume", "Costume"),
+        ("helmet", "Helmet"),
+        ("shield", "Shield"),
+        ("weapon", "Weapon"),
+        ("identifier", "Identifier — MANDATORY"),
+        ("color_rule", "Color Rule — STRICT"),
+        ("strict", "STRICT CONSISTENCY"),
+    ]
+    for key, label in field_labels:
+        val = spec.get(key)
+        if val:
+            lines.append(f"{label}: {val}")
+
+    lines.append(f"== END CHAR_DESIGN: {name} ==")
+    return "\n".join(lines)
+
+
 def load_characters_canon() -> dict:
     """
     characters.yaml 대신 Notion에서 캐릭터 캐논 로드.
