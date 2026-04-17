@@ -392,7 +392,7 @@ def main() -> None:
                     sl.error(
                         "PIPELINE",
                         f"🛑 이미 published 상태 — episode_date={episode_date} 재생성 차단. "
-                        f"강제 재생성이 필요하면 FORCE_RUN=true 설정 후 재실행.",
+                        "강제 재생성이 필요하면 FORCE_RUN=true 설정 후 재실행.",
                     )
                     sys.exit(1)
             except SystemExit:
@@ -408,7 +408,7 @@ def main() -> None:
                 if not ctx:
                     raise RuntimeError(
                         f"narrative 단계 실행 불가 — episode_date={episode_date}의 "
-                        f"analysis_ctx_json 없음. analysis stage를 먼저 실행하세요."
+                        "analysis_ctx_json 없음. analysis stage를 먼저 실행하세요."
                     )
                 sl.info("STEP_4", f"[Hybrid] ctx DB 복원 완료 event_type={ctx.get('event_type')}")
             script_dict = step_narrative(episode_date, episode_id, ctx, sl)
@@ -419,8 +419,8 @@ def main() -> None:
                 ctx = load_analysis_ctx(episode_date)
                 if not ctx:
                     raise RuntimeError(
-                        f"persist 단계 실행 불가 — analysis_ctx_json 없음. "
-                        f"analysis stage를 먼저 실행하세요."
+                        "persist 단계 실행 불가 — analysis_ctx_json 없음. "
+                        "analysis stage를 먼저 실행하세요."
                     )
             if not script_dict:
                 # script_json DB에서 복원
@@ -432,7 +432,7 @@ def main() -> None:
                     sl.info("STEP_5", "[Hybrid] script_json DB 복원 완료")
                 else:
                     raise RuntimeError(
-                        f"persist 단계 실행 불가 — script_json 없음. narrative stage를 먼저 실행하세요."
+                        "persist 단계 실행 불가 — script_json 없음. narrative stage를 먼저 실행하세요."
                     )
             step_persist(episode_date, episode_id, ctx, script_dict, sl)
 
@@ -442,8 +442,8 @@ def main() -> None:
                 ctx = load_analysis_ctx(episode_date)
                 if not ctx:
                     raise RuntimeError(
-                        f"image 단계 실행 불가 — analysis_ctx_json 없음. "
-                        f"analysis stage를 먼저 실행하세요."
+                        "image 단계 실행 불가 — analysis_ctx_json 없음. "
+                        "analysis stage를 먼저 실행하세요."
                     )
             if not script_dict:
                 from engine.common.supabase_client import icg_table as _tbl
@@ -454,7 +454,7 @@ def main() -> None:
                     sl.info("STEP_6", "[Hybrid] script_json DB 복원 완료")
                 else:
                     raise RuntimeError(
-                        f"image 단계 실행 불가 — script_json 없음. narrative stage를 먼저 실행하세요."
+                        "image 단계 실행 불가 — script_json 없음. narrative stage를 먼저 실행하세요."
                     )
             step_image(episode_date, episode_id, ctx, script_dict, sl)
 
