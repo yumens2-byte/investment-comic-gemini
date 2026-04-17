@@ -1,17 +1,15 @@
 """
 engine/narrative/scenario_selector.py
-VERSION = "2.0.0"
-
 ICG 2차 고도화 — Scenario 결정 + EndingTone 결정 + risk_level 산출.
 다른 모듈이 이 파일에만 의존하도록 단일 책임 유지.
 """
 
 from __future__ import annotations
 
-VERSION = "2.0.0"
-
 import logging
 from typing import Literal
+
+VERSION = "2.0.0"
 
 logger = logging.getLogger(__name__)
 

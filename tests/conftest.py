@@ -2,10 +2,12 @@
 tests/conftest.py
 전수 테스트용 공통 픽스처 — 외부 API mock (Supabase, Notion, Anthropic).
 """
+
+from __future__ import annotations
+
+import os
 import sys
 from unittest.mock import MagicMock
-
-import pytest
 
 # ── Supabase client mock ───────────────────────────────────────────────────────
 _mock_table = MagicMock()
@@ -20,36 +22,29 @@ _mock_table.execute.return_value = MagicMock(data=[])
 
 mock_sb_module = MagicMock()
 mock_sb_module.icg_table = lambda table_name: _mock_table
-sys.modules['engine.common.supabase_client'] = mock_sb_module
+sys.modules["engine.common.supabase_client"] = mock_sb_module
 
-# ── notion_loader: 실제 함수는 유지하되 외부 API 호출 함수만 mock ──────────────
-# char_design_to_prompt_block, get_char_designs 등 로컬 연산 함수는 실제 사용
-import importlib.util, os
+# ── notion_client mock (test_asset_writer 용) ──────────────────────────────────
+mock_notion_client_module = MagicMock()
+sys.modules["notion_client"] = mock_notion_client_module
 
-_NOTION_API_KEY_ORIG = os.environ.get("NOTION_API_KEY")
+# ── requests mock (notion_loader 외부 API 호출 차단) ──────────────────────────
 os.environ.setdefault("NOTION_API_KEY", "ntn_test_token_00000000000000000000000000")
 
-# notion_loader를 실제로 로드 (requests mock으로 보호)
 mock_requests = MagicMock()
 mock_requests.get.return_value = MagicMock(
     status_code=200,
-    json=lambda: {"results": []}
+    json=lambda: {"results": []},
 )
-sys.modules['requests'] = mock_requests
+sys.modules["requests"] = mock_requests
 
-# notion_client mock (test_asset_writer에서 사용)
-mock_notion_client_module = MagicMock()
-sys.modules['notion_client'] = mock_notion_client_module
+# ── notion_loader: 실제 함수 유지, 외부 API 함수만 mock 교체 ─────────────────
+import engine.common.notion_loader as _real_notion_loader  # noqa: E402
 
-# 실제 notion_loader 로드 (requests는 이미 mock됨)
-import engine.common.notion_loader as _real_notion_loader
-
-# 외부 API 의존 함수들만 mock으로 교체
-_mock_template = """## Battle Scenario: {{ scenario_type }}
+_MOCK_TEMPLATE = """## Battle Scenario: {{ scenario_type }}
 {% if scenario_type == 'NO_BATTLE' %}
 Hero: {{ hero_id }}
 Villain: NONE
-Outcome: PEACEFUL_GROWTH
 {% elif scenario_type == 'ALLIANCE' %}
 Hero 1: {{ hero_ids[0] }}
 Hero 2: {{ hero_ids[1] }}
@@ -62,7 +57,7 @@ Outcome: {{ battle_result.outcome }}
 Ending Tone: {{ ending_tone }}
 """
 
-_real_notion_loader.load_narrative_user_template = lambda: _mock_template
+_real_notion_loader.load_narrative_user_template = lambda: _MOCK_TEMPLATE
 _real_notion_loader.load_narrative_system = lambda: "You are an ICG episode generator."
 _real_notion_loader.load_characters_canon = lambda: {
     "heroes": {

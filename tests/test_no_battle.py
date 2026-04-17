@@ -1,7 +1,6 @@
 """tests/test_no_battle.py
 NO_BATTLE 시나리오 — 히어로 선정 + PEACEFUL_GROWTH 통합 검증
 """
-import pytest
 from engine.narrative.character_selector import select_for_no_battle
 from engine.narrative.scenario_selector import select_ending_tone, select_scenario
 

@@ -201,7 +201,7 @@ class TestScenarioC_Alliance:
         assert heroes[0] != heroes[1]   # 두 히어로가 달라야 함
 
     def test_battle_alliance_result(self):
-        from engine.narrative.battle_calc import battle_alliance, resolve_alliance_outcome, select_characters_for_event
+        from engine.narrative.battle_calc import battle_alliance, select_characters_for_event
         from engine.narrative.character_selector import select_for_alliance
 
         delta = _delta_high_shock()
@@ -333,7 +333,7 @@ class TestFeatureFlagOff:
 
     def test_existing_battle_unaffected(self):
         """기존 battle() 함수 결과는 v2.0 추가와 무관하게 동일해야 함."""
-        from engine.narrative.battle_calc import battle, resolve_outcome
+        from engine.narrative.battle_calc import battle
 
         market_ctx = {"vix": 22.4, "wti_pct_3d": 2.1, "dgs10": 4.3, "hy_spread": 350}
         arc_ctx = {"tension": 40}

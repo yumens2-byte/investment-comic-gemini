@@ -1,16 +1,14 @@
 """
 engine/narrative/character_selector.py
-VERSION = "2.0.0"
-
 ICG 2차 고도화 — NO_BATTLE, ALLIANCE 시나리오 캐릭터 선정.
 ONE_VS_ONE은 기존 battle_calc.select_characters_for_event() 그대로 유지.
 """
 
 from __future__ import annotations
 
-VERSION = "2.0.0"
-
 import logging
+
+VERSION = "2.0.0"
 
 logger = logging.getLogger(__name__)
 
