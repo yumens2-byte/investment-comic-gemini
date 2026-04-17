@@ -94,11 +94,27 @@ def _upload_media(api_v1, image_paths: list[Path]) -> list[str]:
     media_ids: list[str] = []
     for path in image_paths:
         if not path.exists():
-            logger.warning("[x_publisher] 슬라이드 없음: %s", path)
+            logger.error("[x_publisher] ❌ 슬라이드 파일 없음: %s", path)
             continue
-        media = api_v1.media_upload(filename=str(path))
-        media_ids.append(str(media.media_id))
-        logger.debug("[x_publisher] 이미지 업로드: %s → %s", path.name, media.media_id)
+        try:
+            media = api_v1.media_upload(filename=str(path))
+            media_id = str(media.media_id)
+            media_ids.append(media_id)
+            logger.info(
+                "[x_publisher] ✅ 이미지 업로드 성공: %s (%dKB) → media_id=%s",
+                path.name,
+                path.stat().st_size // 1024,
+                media_id,
+            )
+        except Exception as exc:
+            logger.error(
+                "[x_publisher] ❌ 이미지 업로드 실패: %s — %s: %s",
+                path.name,
+                type(exc).__name__,
+                exc,
+            )
+            # 업로드 실패 시 즉시 raise — 텍스트만 발행되는 상황 방지
+            raise
     return media_ids
 
 
@@ -171,9 +187,31 @@ def publish_episode_x(
     for i, (chunk, caption) in enumerate(zip(chunks, captions), start=1):
         media_ids = _upload_media(api_v1, chunk)
 
+        # 청크에 이미지가 있는데 media_ids가 비면 치명적 문제 — 텍스트만 발행되는 상황
+        if chunk and not media_ids:
+            logger.error(
+                "[x_publisher] ❌ T%d 치명적 오류: 슬라이드 %d장 있으나 media_ids=0. "
+                "텍스트만 발행됩니다. X API 플랜(Basic 이상) 또는 OAuth 권한을 확인하세요.",
+                i,
+                len(chunk),
+            )
+
         kwargs: dict = {"text": caption}
         if media_ids:
             kwargs["media_ids"] = media_ids
+            logger.info(
+                "[x_publisher] T%d 발행 시도: 이미지 %d장 (%s) + 텍스트 %d자",
+                i,
+                len(media_ids),
+                ",".join(media_ids),
+                len(caption),
+            )
+        else:
+            logger.warning(
+                "[x_publisher] T%d 발행 시도: 이미지 없음, 텍스트 %d자만",
+                i,
+                len(caption),
+            )
         if reply_to:
             kwargs["in_reply_to_tweet_id"] = reply_to
 

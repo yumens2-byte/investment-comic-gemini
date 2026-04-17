@@ -28,7 +28,7 @@ def record_publish(
     2. icg.episode_assets.status = published 업데이트
     """
     from engine.common.supabase_client import icg_table
-    from engine.persist.asset_writer import upsert as asset_upsert
+    from engine.persist.asset_writer import patch as asset_patch
 
     # 1. published_comics 기록
     try:
@@ -48,9 +48,9 @@ def record_publish(
     except Exception as exc:
         logger.warning("[history_writer] published_comics 기록 실패: %s", exc)
 
-    # 2. episode_assets status → published
+    # 2. episode_assets status → published (UPDATE only, script_json 같은 NOT NULL 필드 보존)
     try:
-        asset_upsert(
+        asset_patch(
             episode_date,
             event_type,
             {

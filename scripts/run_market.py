@@ -369,6 +369,29 @@ def main() -> None:
         if args.stage in ("all", "analysis"):
             ctx = step_analysis(episode_date, sl)
 
+        # ── 중복 발행 방어 (Layer 3) ─────────────────────────────────────
+        # narrative 이후 단계는 이미 published 된 에피소드면 차단.
+        # FORCE_RUN=true 로 우회 가능.
+        if args.stage in ("all", "narrative", "persist", "image"):
+            import os as _os
+
+            from engine.persist.asset_writer import get_current_status
+
+            _force = _os.environ.get("FORCE_RUN", "false").lower() == "true"
+            try:
+                _cur = get_current_status(episode_date, "NORMAL")
+                if _cur == "published" and not _force:
+                    sl.error(
+                        "PIPELINE",
+                        f"🛑 이미 published 상태 — episode_date={episode_date} 재생성 차단. "
+                        f"강제 재생성이 필요하면 FORCE_RUN=true 설정 후 재실행.",
+                    )
+                    sys.exit(1)
+            except SystemExit:
+                raise
+            except Exception as _exc:
+                sl.warning("PIPELINE", f"published 상태 체크 실패 (진행): {_exc}")
+
         if args.stage in ("all", "narrative"):
             if not ctx:
                 raise RuntimeError("narrative 단계는 analysis 먼저 실행해야 합니다.")

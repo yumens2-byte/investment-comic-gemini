@@ -97,6 +97,47 @@ def main() -> None:
     script_dict = row.get("script_json", {})
     episode_id = args.episode or f"ICG-{episode_date}-001"
 
+    # ── 중복 발행 방어 (Layer 1) ─────────────────────────────────────────
+    # 1) 이미 published 상태면 차단 (FORCE_REPUBLISH=true 환경변수로만 우회)
+    current_status = row.get("status", "")
+    force_republish = os.environ.get("FORCE_REPUBLISH", "false").lower() == "true"
+    if current_status == "published" and not force_republish:
+        sl.error(
+            "STEP_8",
+            f"🛑 중복 발행 차단 — episode={episode_id} status=published 이미 발행됨. "
+            f"재발행이 필요하면 FORCE_REPUBLISH=true 환경변수 설정 후 재실행.",
+        )
+        logger.error("❌ 이미 published 상태. 중복 발행 차단.")
+        sys.exit(1)
+
+    # 2) published_comics 테이블 이중 체크 (asset_writer 실패 시 대비)
+    try:
+        ep_no = int(episode_id.split("-")[-1])
+        dup_rows = (
+            icg_table("published_comics")
+            .select("id, tweet_id, created_at")
+            .eq("publish_date", episode_date)
+            .eq("episode_no", ep_no)
+            .eq("comic_type", event_type)
+            .limit(1)
+            .execute()
+        )
+        if dup_rows.data and not force_republish:
+            existing = dup_rows.data[0]
+            sl.error(
+                "STEP_8",
+                f"🛑 published_comics 중복 차단 — episode={episode_id} "
+                f"이미 발행 이력 존재 (id={existing.get('id')}, "
+                f"tweet_id={existing.get('tweet_id')}, "
+                f"created_at={existing.get('created_at')}).",
+            )
+            logger.error("❌ published_comics에 이미 기록됨. 중복 발행 차단.")
+            sys.exit(1)
+    except SystemExit:
+        raise
+    except Exception as exc:
+        sl.warning("STEP_8", f"published_comics 중복 체크 실패 (진행): {exc}")
+
     # 슬라이드 경로 복원
     slides_json = row.get("slides_json", [])
     slides = [Path(s["path"]) for s in slides_json if isinstance(s, dict) and s.get("path")]
