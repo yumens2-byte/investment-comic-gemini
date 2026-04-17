@@ -413,6 +413,13 @@ def main() -> None:
                 sl.info("STEP_4", f"[Hybrid] ctx DB 복원 완료 event_type={ctx.get('event_type')}")
             script_dict = step_narrative(episode_date, episode_id, ctx, sl)
 
+            # ── Hybrid: script_dict를 DB에 저장 (persist/image 독립 실행 대비) ──
+            try:
+                from engine.persist.asset_writer import save_narrative_script
+                save_narrative_script(episode_date, script_dict)
+            except Exception as _exc:
+                logger.warning("[step_narrative] script DB 저장 실패 (진행): %s", _exc)
+
         if args.stage in ("all", "persist"):
             if not ctx:
                 from engine.persist.asset_writer import load_analysis_ctx
@@ -423,17 +430,15 @@ def main() -> None:
                         "analysis stage를 먼저 실행하세요."
                     )
             if not script_dict:
-                # script_json DB에서 복원
-                from engine.common.supabase_client import icg_table as _tbl
-                _rows = _tbl("episode_assets").select("script_json").eq(
-                    "episode_date", episode_date).order("created_at", desc=True).limit(1).execute()
-                if _rows.data and _rows.data[0].get("script_json"):
-                    script_dict = _rows.data[0]["script_json"]
-                    sl.info("STEP_5", "[Hybrid] script_json DB 복원 완료")
-                else:
+                # script_json DB에서 복원 (daily_analysis.narrative_script_json)
+                from engine.persist.asset_writer import load_narrative_script
+                script_dict = load_narrative_script(episode_date)
+                if not script_dict:
                     raise RuntimeError(
-                        "persist 단계 실행 불가 — script_json 없음. narrative stage를 먼저 실행하세요."
+                        "persist 단계 실행 불가 — script_json 없음. "
+                        "narrative stage를 먼저 실행하세요."
                     )
+                sl.info("STEP_5", "[Hybrid] narrative_script_json DB 복원 완료")
             step_persist(episode_date, episode_id, ctx, script_dict, sl)
 
         if args.stage in ("all", "image"):
@@ -446,16 +451,14 @@ def main() -> None:
                         "analysis stage를 먼저 실행하세요."
                     )
             if not script_dict:
-                from engine.common.supabase_client import icg_table as _tbl
-                _rows = _tbl("episode_assets").select("script_json").eq(
-                    "episode_date", episode_date).order("created_at", desc=True).limit(1).execute()
-                if _rows.data and _rows.data[0].get("script_json"):
-                    script_dict = _rows.data[0]["script_json"]
-                    sl.info("STEP_6", "[Hybrid] script_json DB 복원 완료")
-                else:
+                from engine.persist.asset_writer import load_narrative_script
+                script_dict = load_narrative_script(episode_date)
+                if not script_dict:
                     raise RuntimeError(
-                        "image 단계 실행 불가 — script_json 없음. narrative stage를 먼저 실행하세요."
+                        "image 단계 실행 불가 — script_json 없음. "
+                        "narrative stage를 먼저 실행하세요."
                     )
+                sl.info("STEP_6", "[Hybrid] narrative_script_json DB 복원 완료")
             step_image(episode_date, episode_id, ctx, script_dict, sl)
 
         sl.info("PIPELINE", f"완료 episode_id={episode_id}")

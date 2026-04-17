@@ -245,3 +245,58 @@ def load_analysis_ctx(episode_date: str) -> dict | None:
 
     logger.info("[asset_writer] analysis_ctx_json 복원 완료 date=%s", episode_date)
     return ctx
+
+
+def save_narrative_script(episode_date: str, script_dict: dict) -> None:
+    """
+    step_narrative 결과 script_dict를 daily_analysis.narrative_script_json에 저장.
+
+    Hybrid 설계: persist/image stage 독립 실행 시 script_json 복원 소스.
+    daily_analysis는 analysis stage에서 이미 행이 존재하므로 UPDATE만 수행.
+    """
+    from engine.common.supabase_client import icg_table
+
+    icg_table("daily_analysis").update(
+        {"narrative_script_json": script_dict}
+    ).eq("analysis_date", episode_date).execute()
+
+    logger.info("[asset_writer] narrative_script_json 저장 완료 date=%s", episode_date)
+
+
+def load_narrative_script(episode_date: str) -> dict | None:
+    """
+    daily_analysis.narrative_script_json에서 script_dict 복원.
+
+    persist/image stage가 별도 프로세스로 실행될 때 호출.
+
+    Returns:
+        script_dict 또는 None (narrative 미실행).
+    """
+    from engine.common.supabase_client import icg_table
+
+    rows = (
+        icg_table("daily_analysis")
+        .select("narrative_script_json")
+        .eq("analysis_date", episode_date)
+        .limit(1)
+        .execute()
+    )
+    if not rows.data:
+        logger.warning(
+            "[asset_writer] load_narrative_script: date=%s daily_analysis 행 없음 "
+            "— analysis stage를 먼저 실행하세요.",
+            episode_date,
+        )
+        return None
+
+    script = rows.data[0].get("narrative_script_json")
+    if not script:
+        logger.warning(
+            "[asset_writer] load_narrative_script: date=%s narrative_script_json 없음 "
+            "— narrative stage를 먼저 실행하세요.",
+            episode_date,
+        )
+        return None
+
+    logger.info("[asset_writer] narrative_script_json 복원 완료 date=%s", episode_date)
+    return script
