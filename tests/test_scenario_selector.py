@@ -3,6 +3,7 @@ ICG v2.0 — scenario_selector 유닛 테스트
 21개 조합 (7 event_type × 3 risk_level) 전수 검증
 """
 import pytest
+
 from engine.narrative.scenario_selector import (
     compute_risk_level_from_delta,
     select_ending_tone,

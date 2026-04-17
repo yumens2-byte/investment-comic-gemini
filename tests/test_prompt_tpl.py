@@ -10,8 +10,8 @@ prompt_tpl.py v2.0 — render_user_prompt() 파라미터 확장 테스트
   - heroes=None → [hero_id] 자동 세팅
 """
 import pytest
-from engine.narrative.prompt_tpl import render_user_prompt
 
+from engine.narrative.prompt_tpl import render_user_prompt
 
 # ── 공통 픽스처 ─────────────────────────────────────────────────────────────
 
