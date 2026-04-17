@@ -18,6 +18,10 @@ on:
         description: '실행 단계 (all/data/analysis/narrative/persist/image)'
         required: false
         default: 'all'
+      scenario_v2:
+        description: 'Scenario v2.0 활성화 (true=Shadow Run / false=기존 로직)'
+        required: false
+        default: 'false'
 
 permissions:
   contents: read
@@ -40,7 +44,7 @@ jobs:
       NOTION_IMAGE_PROMPTS_ID: '3439208cbdc3817191e1c2cccd3865cc'
       NOTION_BATTLE_CONSTANTS_ID: '3439208cbdc3817bbdf9dbdb272508b8'
       NOTION_REF_PROMPTS_ID: '3439208cbdc381ccb85cf8e177a1a3d2'
-      
+
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       GEMINI_API_SUB_PAY_KEY: ${{ secrets.GEMINI_API_SUB_PAY_KEY }}
       FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
@@ -52,6 +56,7 @@ jobs:
       NOTION_TRACKER_DS: '485ba577-0512-45fd-9445-b9e86c53d88b'
       DRY_RUN: 'false'
       FORCE_RUN: ${{ github.event.inputs.force || 'false' }}
+      SCENARIO_V2_ENABLED: ${{ github.event.inputs.scenario_v2 || 'false' }}
       PYTHONPATH: .
 
     steps:
@@ -71,30 +76,35 @@ jobs:
         run: sudo apt-get install -y fonts-noto-cjk --no-install-recommends -q
 
       - name: STEP 2 — Data Ingest
+        if: ${{ github.event.inputs.stage == '' || github.event.inputs.stage == 'all' || github.event.inputs.stage == 'data' }}
         run: |
           python -m scripts.run_market \
             --stage data \
             ${{ github.event.inputs.target_date && format('--date {0}', github.event.inputs.target_date) || '' }}
 
       - name: STEP 3 — Analysis
+        if: ${{ github.event.inputs.stage == '' || github.event.inputs.stage == 'all' || github.event.inputs.stage == 'analysis' }}
         run: |
           python -m scripts.run_market \
             --stage analysis \
             ${{ github.event.inputs.target_date && format('--date {0}', github.event.inputs.target_date) || '' }}
 
       - name: STEP 4 — Narrative (Claude)
+        if: ${{ github.event.inputs.stage == '' || github.event.inputs.stage == 'all' || github.event.inputs.stage == 'narrative' }}
         run: |
           python -m scripts.run_market \
             --stage narrative \
             ${{ github.event.inputs.target_date && format('--date {0}', github.event.inputs.target_date) || '' }}
 
       - name: STEP 5 — Persist
+        if: ${{ github.event.inputs.stage == '' || github.event.inputs.stage == 'all' || github.event.inputs.stage == 'persist' }}
         run: |
           python -m scripts.run_market \
             --stage persist \
             ${{ github.event.inputs.target_date && format('--date {0}', github.event.inputs.target_date) || '' }}
 
       - name: STEP 6 — Image Generation (Gemini)
+        if: ${{ github.event.inputs.stage == '' || github.event.inputs.stage == 'all' || github.event.inputs.stage == 'image' }}
         run: |
           python -m scripts.run_market \
             --stage image \
@@ -104,6 +114,7 @@ jobs:
         run: |
           echo "✅ STEP 2~6 완료."
           echo "📝 schedule 실행: resume_episode.yml이 KST 05:00에 자동 실행됩니다."
+          echo "🔰 SCENARIO_V2_ENABLED=${{ env.SCENARIO_V2_ENABLED }}"
 
       - name: Upload Episode Artifact
         uses: actions/upload-artifact@v4
