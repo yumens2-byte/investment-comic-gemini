@@ -7,6 +7,11 @@ EDT Battle Engine v2.4 이식.
 - Claude는 이 결과를 '해석'만 한다. 승패 결과를 Claude가 변경하는 것은 BattleOverride 예외.
 - doc 07: Battle & Narrative Engine as Code 기반.
 - doc 16a: balance 기반 6단계 outcome 테이블.
+
+v2.0 변경사항 (2026-04-18):
+- Outcome에 PEACEFUL_GROWTH (NO_BATTLE 전용), PYRRHIC_VICTORY (ALLIANCE 전용) 추가
+- battle_alliance() 함수 추가 — hero 2명 연합 vs villain 1명 강적
+- resolve_alliance_outcome() 함수 추가 — ALLIANCE 전용 판정 (HERO_TACTICAL_VICTORY → PYRRHIC_VICTORY 재지정)
 """
 
 from __future__ import annotations
@@ -15,12 +20,14 @@ from dataclasses import dataclass
 from typing import Literal
 
 Outcome = Literal[
-    "HERO_VICTORY",  # balance >= 30
-    "HERO_TACTICAL_VICTORY",  # balance >= 10
-    "DRAW",  # -5 ~ +9
-    "VILLAIN_TEMP_VICTORY",  # -10 ~ -6
-    "HERO_DEFEAT",  # -30 ~ -11
-    "SYSTEM_COLLAPSE",  # <= -31
+    "HERO_VICTORY",           # balance >= 30
+    "HERO_TACTICAL_VICTORY",  # balance >= 10  (ONE_VS_ONE 전용)
+    "DRAW",                   # -5 ~ +9
+    "VILLAIN_TEMP_VICTORY",   # -10 ~ -6
+    "HERO_DEFEAT",            # -30 ~ -11
+    "SYSTEM_COLLAPSE",        # <= -31
+    "PEACEFUL_GROWTH",        # v2.0 — NO_BATTLE 전용, balance 없음
+    "PYRRHIC_VICTORY",        # v2.0 — ALLIANCE 전용, balance 10~29
 ]
 
 # 빌런 Canon 이름 목록 (RULE 06)
@@ -320,3 +327,115 @@ def select_characters_for_event(
     hero_id = _villain_to_hero.get(villain_id, "CHAR_HERO_001")
 
     return hero_id, villain_id
+
+
+# ── v2.0 신규: ALLIANCE 전투 계산 ─────────────────────────────────────────────
+
+
+def resolve_alliance_outcome(balance: int) -> Outcome:
+    """
+    ALLIANCE Outcome 결정.
+
+    ONE_VS_ONE 대비 핵심 차이:
+        balance 10~29 → PYRRHIC_VICTORY (HERO_TACTICAL_VICTORY 대신)
+        → "이겼지만 큰 대가" 서사를 담기 위한 ALLIANCE 전용 판정.
+
+    Args:
+        balance: hero_power - villain_power 결과값.
+
+    Returns:
+        Outcome — HERO_TACTICAL_VICTORY 절대 반환 안 함.
+    """
+    if balance >= 30:
+        return "HERO_VICTORY"
+    elif balance >= 10:
+        return "PYRRHIC_VICTORY"       # 🆕 ALLIANCE 전용
+    elif balance >= -5:
+        return "DRAW"
+    elif balance >= -10:
+        return "VILLAIN_TEMP_VICTORY"
+    elif balance >= -30:
+        return "HERO_DEFEAT"
+    else:
+        return "SYSTEM_COLLAPSE"
+
+
+def battle_alliance(
+    hero_ids: list[str],
+    hero_bases: list[int],
+    villain_id: str,
+    villain_base: int,
+    market_context: dict,
+    arc_context: dict,
+) -> BattleResult:
+    """
+    ALLIANCE 전투 계산.
+
+    설계 의도:
+        - hero 2명 연합 → 시너지 감쇠 0.85 적용 (연합은 완벽하지 않다)
+        - villain은 1.25 강화 적용 (ALLIANCE가 발동될 만큼 강한 적)
+        - resolve_alliance_outcome으로 PYRRHIC_VICTORY 판정
+
+    Args:
+        hero_ids:       히어로 ID 리스트 (2개, [main_hero, support_hero])
+        hero_bases:     각 히어로 base_power 리스트 (hero_ids와 동일 순서)
+        villain_id:     빌런 ID
+        villain_base:   빌런 base_power
+        market_context: 시장 지표
+        arc_context:    에피소드 연속성 정보
+
+    Returns:
+        BattleResult — hero_id는 hero_ids[0] (후방 호환)
+
+    Raises:
+        ValueError: villain_id가 Canon 외 값인 경우
+        ValueError: hero_ids가 CANON_HERO_IDS 외 값 포함 시
+    """
+    from engine.common.exceptions import UnknownCharacterError
+
+    # Canon 검증
+    for h_id in hero_ids:
+        if h_id not in CANON_HERO_IDS:
+            raise UnknownCharacterError(h_id)
+    if villain_id not in CANON_VILLAIN_IDS:
+        raise UnknownCharacterError(villain_id)
+
+    # 히어로 개별 전투력 계산
+    hero_results = [
+        calc_hero_power(h_id, h_base, market_context, arc_context)
+        for h_id, h_base in zip(hero_ids, hero_bases)
+    ]
+    total_raw = sum(power for power, _ in hero_results)
+
+    # 연합 시너지 감쇠 0.85 적용
+    hero_power = int(total_raw * 0.85)
+
+    # 합산 breakdown (키 충돌 시 합산)
+    combined_hero_breakdown: dict[str, int] = {}
+    for _, bd in hero_results:
+        for k, v in bd.items():
+            combined_hero_breakdown[k] = combined_hero_breakdown.get(k, 0) + v
+    # 감쇠 반영 표시
+    combined_hero_breakdown["alliance_decay"] = -(total_raw - hero_power)
+
+    # 빌런 강화 1.25 적용
+    villain_power_raw, villain_breakdown = calc_villain_power(
+        villain_id, villain_base, market_context
+    )
+    villain_power = int(villain_power_raw * 1.25)
+    villain_breakdown = dict(villain_breakdown)  # frozen dict 방어 복사
+    villain_breakdown["alliance_threat_bonus"] = villain_power - villain_power_raw
+
+    balance = hero_power - villain_power
+    outcome = resolve_alliance_outcome(balance)
+
+    return BattleResult(
+        hero_id=hero_ids[0],              # 후방 호환: 주 히어로 ID
+        villain_id=villain_id,
+        hero_power=hero_power,
+        villain_power=villain_power,
+        balance=balance,
+        outcome=outcome,
+        hero_power_breakdown=combined_hero_breakdown,
+        villain_power_breakdown=villain_breakdown,
+    )

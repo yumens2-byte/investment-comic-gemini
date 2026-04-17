@@ -7,6 +7,11 @@ max_tokens: 8000
 temperature: 0.7
 검증 실패 시 최대 3회 재전송.
 자동 트리밍: Pydantic 검증 전 글자수 초과 필드 자동 처리.
+
+v2.0 변경사항 (2026-04-18):
+- generate_episode(): scenario_type, ending_tone, heroes 파라미터 추가 (기본값 포함)
+- render_user_prompt() 호출에 v2.0 파라미터 전달
+- _validate_canon(): NO_BATTLE 시 villain 패널이 없음을 확인하는 방어 로직 추가
 """
 
 from __future__ import annotations
@@ -146,11 +151,16 @@ def _extract_json(text: str) -> str:
     return text
 
 
-def _validate_canon(script: EpisodeScript) -> None:
+def _validate_canon(script: EpisodeScript, scenario_type: str = "ONE_VS_ONE") -> None:
     """
     Canon 검증:
     1. char_id가 characters.yaml에 존재하는지 확인.
     2. villain role 캐릭터의 영문 이름이 6 Canon 리스트 내인지 확인.
+    3. v2.0: NO_BATTLE 시나리오에서 villain role 캐릭터가 등장하지 않아야 함.
+
+    Args:
+        script:        검증할 EpisodeScript.
+        scenario_type: "NO_BATTLE" 시 villain 패널 금지 검증 추가.
     """
     from pathlib import Path
 
@@ -164,9 +174,22 @@ def _validate_canon(script: EpisodeScript) -> None:
 
     for panel in script.panels:
         for char in panel.characters:
+            # ── Canon ID 검증 ────────────────────────────────────────────────
             if char.char_id not in all_char_ids:
                 raise ValueError(f"Canon 외 char_id 사용: {char.char_id}")
+
+            # ── villain 이름 Canon 검증 ──────────────────────────────────────
             if char.role == "villain":
+                # v2.0: NO_BATTLE에서 villain 등장 금지
+                if scenario_type == "NO_BATTLE":
+                    raise NarrativeValidationError(
+                        attempt=0,
+                        detail=(
+                            f"NO_BATTLE 시나리오에서 villain role 캐릭터 등장 금지: "
+                            f"panel={panel.idx} char_id={char.char_id}. "
+                            "Claude가 Scenario 지시를 무시한 것으로 판단, 재생성 필요."
+                        ),
+                    )
                 en_name = villain_map.get(char.char_id, "")
                 if en_name and en_name not in _CANON_VILLAIN_NAMES:
                     raise InvalidVillainNameError(en_name)
@@ -181,9 +204,26 @@ def generate_episode(
     hero_id: str,
     villain_id: str,
     arc_context: dict,
+    # ── v2.0 신규 파라미터 (기본값으로 하위 호환 보장) ────────────────────────
+    scenario_type: str = "ONE_VS_ONE",
+    ending_tone: str = "TENSE",
+    heroes: list[str] | None = None,
 ) -> EpisodeScript:
     """
     Claude API를 호출하여 EpisodeScript를 생성.
+
+    Args:
+        date:          에피소드 날짜 (YYYY-MM-DD).
+        episode_id:    에피소드 ID (예: ICG-2026-04-18-001).
+        event_type:    이벤트 타입 (7종).
+        delta:         시장 변화 데이터.
+        battle_result: 전투 결과 dict (battle_calc 순수 함수 출력).
+        hero_id:       히어로 캐릭터 ID.
+        villain_id:    빌런 캐릭터 ID.
+        arc_context:   에피소드 연속성 정보.
+        scenario_type: v2.0 — "ONE_VS_ONE" | "NO_BATTLE" | "ALLIANCE" (기본: ONE_VS_ONE).
+        ending_tone:   v2.0 — "OPTIMISTIC" | "TENSE" | "OMINOUS" (기본: TENSE).
+        heroes:        v2.0 — 히어로 ID 리스트 (ALLIANCE=2개, 그 외=1개, 기본: [hero_id]).
 
     Returns:
         검증된 EpisodeScript 인스턴스.
@@ -191,24 +231,73 @@ def generate_episode(
     Raises:
         NarrativeValidationError: 3회 재시도 후에도 검증 실패 시.
     """
+    if heroes is None:
+        heroes = [hero_id]
+
     client = Anthropic()
     system_prompt = load_system_prompt()
-    user_prompt = render_user_prompt(
-        date=date,
-        episode_id=episode_id,
-        event_type=event_type,
-        delta=delta,
-        battle_result=battle_result,
-        hero_id=hero_id,
-        villain_id=villain_id,
-        arc_context=arc_context,
-    )
+
+    # ── render_user_prompt() 호출 — v2.0 파라미터 추가 ──────────────────────
+    # render_user_prompt()가 **kwargs 또는 v2.0 파라미터를 수용하는 경우 직접 전달.
+    # 그렇지 않으면 기존 파라미터만 전달하고 v2.0 정보를 user_prompt에 append.
+    try:
+        user_prompt = render_user_prompt(
+            date=date,
+            episode_id=episode_id,
+            event_type=event_type,
+            delta=delta,
+            battle_result=battle_result,
+            hero_id=hero_id,
+            villain_id=villain_id,
+            arc_context=arc_context,
+            # v2.0 추가 파라미터
+            scenario_type=scenario_type,
+            ending_tone=ending_tone,
+            heroes=heroes,
+        )
+    except TypeError:
+        # render_user_prompt()가 v2.0 파라미터를 수용하지 못할 경우 fallback:
+        # 기존 방식으로 호출 후 v2.0 컨텍스트를 문자열로 append.
+        logger.warning(
+            "[claude] render_user_prompt()가 v2.0 파라미터를 수용하지 못함 — "
+            "기존 방식 fallback. prompt_tpl.py 업데이트를 권장합니다."
+        )
+        user_prompt = render_user_prompt(
+            date=date,
+            episode_id=episode_id,
+            event_type=event_type,
+            delta=delta,
+            battle_result=battle_result,
+            hero_id=hero_id,
+            villain_id=villain_id,
+            arc_context=arc_context,
+        )
+        # v2.0 컨텍스트를 직접 append
+        _heroes_str = ", ".join(heroes)
+        user_prompt += (
+            f"\n\n## [v2.0 Scenario Override]\n"
+            f"scenario_type: {scenario_type}\n"
+            f"ending_tone: {ending_tone}\n"
+            f"heroes: [{_heroes_str}]\n"
+        )
+        if scenario_type == "NO_BATTLE":
+            user_prompt += (
+                "\n⚠️ NO_BATTLE: DO NOT introduce any villain character in any panel.\n"
+            )
+        elif scenario_type == "ALLIANCE":
+            user_prompt += (
+                f"\n⚠️ ALLIANCE: 2 heroes ({_heroes_str}) vs 1 villain. "
+                "Show alliance formation in panels 3-4.\n"
+            )
 
     last_error: Exception | None = None
 
     for attempt in range(1, _MAX_RETRIES + 1):
         try:
-            logger.info("[claude] 에피소드 생성 시도 %d/%d", attempt, _MAX_RETRIES)
+            logger.info(
+                "[claude] 에피소드 생성 시도 %d/%d (scenario=%s)",
+                attempt, _MAX_RETRIES, scenario_type,
+            )
 
             # 재시도 시 에러 정보 + 글자수 가이드 추가
             if attempt > 1 and last_error:
@@ -253,12 +342,15 @@ def generate_episode(
             raw_json = _auto_trim_raw_json(raw_json)
 
             script = EpisodeScript.model_validate(raw_json)
-            _validate_canon(script)
+
+            # v2.0 scenario_type 전달하여 Canon 검증
+            _validate_canon(script, scenario_type=scenario_type)
 
             usage = resp.usage
             logger.info(
-                "[claude] 에피소드 생성 완료 (model=%s, input=%d, output=%d)",
+                "[claude] 에피소드 생성 완료 (model=%s, scenario=%s, input=%d, output=%d)",
                 model,
+                scenario_type,
                 usage.input_tokens,
                 usage.output_tokens,
             )

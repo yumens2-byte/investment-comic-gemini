@@ -1,9 +1,13 @@
 """
 engine/narrative/prompt_tpl.py
 Claude 사용자 프롬프트 Jinja2 렌더링.
-
 프롬프트 원본은 Public repo에 노출되지 않도록
 Notion에 저장하고 런타임에 로드한다.
+
+v2.0 변경사항 (2026-04-18):
+- render_user_prompt(): scenario_type, ending_tone, heroes 파라미터 추가 (기본값 포함).
+- template.render()에 3개 변수 주입 → Notion 템플릿의 {{ scenario_type }} 등 치환 가능.
+- 후방 호환: 기본값으로 기존 ONE_VS_ONE 동작 유지.
 """
 
 from __future__ import annotations
@@ -44,18 +48,42 @@ def render_user_prompt(
     hero_id: str,
     villain_id: str,
     arc_context: dict,
+    # ── v2.0 신규 파라미터 (기본값으로 하위 호환 보장) ────────────────────────
+    scenario_type: str = "ONE_VS_ONE",
+    ending_tone: str = "TENSE",
+    heroes: list[str] | None = None,
 ) -> str:
     """
     Notion에서 로드한 narrative_user 템플릿 렌더링.
+
+    Args:
+        date:          에피소드 날짜 (YYYY-MM-DD).
+        episode_id:    에피소드 ID.
+        event_type:    이벤트 타입 (7종).
+        delta:         시장 변화 데이터.
+        battle_result: 전투 결과 dict.
+        hero_id:       주 히어로 ID.
+        villain_id:    빌런 ID.
+        arc_context:   에피소드 연속성 정보.
+        scenario_type: v2.0 — "ONE_VS_ONE" | "NO_BATTLE" | "ALLIANCE" (기본: ONE_VS_ONE).
+        ending_tone:   v2.0 — "OPTIMISTIC" | "TENSE" | "OMINOUS" (기본: TENSE).
+        heroes:        v2.0 — 히어로 ID 리스트. ALLIANCE=2개, 그 외=1개.
+                       None이면 [hero_id] 사용.
+
+    Returns:
+        렌더링된 사용자 프롬프트 문자열.
     """
     from engine.common.notion_loader import load_narrative_user_template
 
+    # heroes 기본값 처리 — None이면 기존 단일 히어로로 fallback
+    if heroes is None:
+        heroes = [hero_id]
+
     template_str = load_narrative_user_template()
     canon = _load_canon()
-    heroes = canon.get("heroes", {})
+    heroes_canon = canon.get("heroes", {})
     villains = canon.get("villains", {})
-
-    hero_entry = heroes.get(hero_id, {})
+    hero_entry = heroes_canon.get(hero_id, {})
     villain_entry = villains.get(villain_id, {})
 
     env = _make_jinja_env_from_string(template_str)
@@ -72,8 +100,12 @@ def render_user_prompt(
         villain_id=villain_id,
         villain_name=villain_entry.get("name_ko", villain_id),
         arc_context=arc_context,
-        heroes=heroes,
+        heroes=heroes_canon,          # 기존: 캐릭터 전체 dict ({% for cid, char in heroes.items() %} 루프용)
         villains=villains,
+        # ── v2.0 신규 변수 ────────────────────────────────────────────────────
+        scenario_type=scenario_type,  # {{ scenario_type }} 치환
+        ending_tone=ending_tone,      # {{ ending_tone }} 치환
+        hero_ids=heroes,              # {{ hero_ids[0] }}, {{ hero_ids[1] }} 치환 (ALLIANCE 2명)
     )
 
 
