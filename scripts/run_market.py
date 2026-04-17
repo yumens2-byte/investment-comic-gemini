@@ -169,6 +169,14 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
             "villain_id": villain_id,
             "arc_context": arc_context,
         }
+
+        # ── Hybrid 설계: ctx를 DB에 저장 (narrative/persist/image 독립 실행 대비) ──
+        try:
+            from engine.persist.asset_writer import save_analysis_ctx
+            save_analysis_ctx(episode_date, event_type, ctx)
+        except Exception as _exc:
+            logger.warning("[step_analysis] ctx DB 저장 실패 (진행): %s", _exc)
+
         logger_inst.step_done("STEP_3", ts, f"event={event_type} outcome={battle_result.outcome}")
         return ctx
     except Exception as exc:
@@ -394,17 +402,60 @@ def main() -> None:
 
         if args.stage in ("all", "narrative"):
             if not ctx:
-                raise RuntimeError("narrative 단계는 analysis 먼저 실행해야 합니다.")
+                # ── Hybrid: 단독 실행 시 DB에서 ctx 복원 ────────────────
+                from engine.persist.asset_writer import load_analysis_ctx
+                ctx = load_analysis_ctx(episode_date)
+                if not ctx:
+                    raise RuntimeError(
+                        f"narrative 단계 실행 불가 — episode_date={episode_date}의 "
+                        f"analysis_ctx_json 없음. analysis stage를 먼저 실행하세요."
+                    )
+                sl.info("STEP_4", f"[Hybrid] ctx DB 복원 완료 event_type={ctx.get('event_type')}")
             script_dict = step_narrative(episode_date, episode_id, ctx, sl)
 
         if args.stage in ("all", "persist"):
-            if not ctx or not script_dict:
-                raise RuntimeError("persist 단계는 narrative 먼저 실행해야 합니다.")
+            if not ctx:
+                from engine.persist.asset_writer import load_analysis_ctx
+                ctx = load_analysis_ctx(episode_date)
+                if not ctx:
+                    raise RuntimeError(
+                        f"persist 단계 실행 불가 — analysis_ctx_json 없음. "
+                        f"analysis stage를 먼저 실행하세요."
+                    )
+            if not script_dict:
+                # script_json DB에서 복원
+                from engine.common.supabase_client import icg_table as _tbl
+                _rows = _tbl("episode_assets").select("script_json").eq(
+                    "episode_date", episode_date).order("created_at", desc=True).limit(1).execute()
+                if _rows.data and _rows.data[0].get("script_json"):
+                    script_dict = _rows.data[0]["script_json"]
+                    sl.info("STEP_5", "[Hybrid] script_json DB 복원 완료")
+                else:
+                    raise RuntimeError(
+                        f"persist 단계 실행 불가 — script_json 없음. narrative stage를 먼저 실행하세요."
+                    )
             step_persist(episode_date, episode_id, ctx, script_dict, sl)
 
         if args.stage in ("all", "image"):
-            if not ctx or not script_dict:
-                raise RuntimeError("image 단계는 narrative 먼저 실행해야 합니다.")
+            if not ctx:
+                from engine.persist.asset_writer import load_analysis_ctx
+                ctx = load_analysis_ctx(episode_date)
+                if not ctx:
+                    raise RuntimeError(
+                        f"image 단계 실행 불가 — analysis_ctx_json 없음. "
+                        f"analysis stage를 먼저 실행하세요."
+                    )
+            if not script_dict:
+                from engine.common.supabase_client import icg_table as _tbl
+                _rows = _tbl("episode_assets").select("script_json").eq(
+                    "episode_date", episode_date).order("created_at", desc=True).limit(1).execute()
+                if _rows.data and _rows.data[0].get("script_json"):
+                    script_dict = _rows.data[0]["script_json"]
+                    sl.info("STEP_6", "[Hybrid] script_json DB 복원 완료")
+                else:
+                    raise RuntimeError(
+                        f"image 단계 실행 불가 — script_json 없음. narrative stage를 먼저 실행하세요."
+                    )
             step_image(episode_date, episode_id, ctx, script_dict, sl)
 
         sl.info("PIPELINE", f"완료 episode_id={episode_id}")

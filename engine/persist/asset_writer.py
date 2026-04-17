@@ -178,3 +178,74 @@ def set_failed(episode_date: str, event_type: str, error_message: str) -> None:
         event_type,
         error_message[:200],
     )
+
+
+def save_analysis_ctx(episode_date: str, event_type: str, ctx: dict) -> None:
+    """
+    step_analysis 결과 ctx를 episode_assets.analysis_ctx_json에 저장.
+
+    Hybrid 설계 (2026-04-18): narrative/persist/image stage가 별도 프로세스로
+    실행될 때 ctx를 복원할 수 있도록 DB에 full dump.
+
+    Args:
+        episode_date: 'YYYY-MM-DD'.
+        event_type: 에피소드 타입 (예: 'NORMAL').
+        ctx: step_analysis() 반환값 (event_type/delta/battle_result/hero_id/villain_id/arc_context).
+    """
+    from engine.common.supabase_client import icg_table
+
+    icg_table("episode_assets").upsert(
+        {
+            "episode_date": episode_date,
+            "event_type": event_type,
+            "analysis_ctx_json": ctx,
+        },
+        on_conflict="episode_date,event_type",
+    ).execute()
+
+    logger.info(
+        "[asset_writer] analysis_ctx_json 저장 완료 date=%s type=%s",
+        episode_date,
+        event_type,
+    )
+
+
+def load_analysis_ctx(episode_date: str) -> dict | None:
+    """
+    episode_assets.analysis_ctx_json에서 ctx 복원.
+
+    narrative/persist/image stage가 별도 프로세스로 실행될 때 호출.
+    analysis stage가 먼저 실행되어 저장한 ctx를 복원한다.
+
+    Args:
+        episode_date: 'YYYY-MM-DD'.
+
+    Returns:
+        ctx dict (event_type/delta/battle_result/hero_id/villain_id/arc_context)
+        또는 None (저장된 ctx 없음 — analysis 미실행).
+    """
+    from engine.common.supabase_client import icg_table
+
+    rows = (
+        icg_table("episode_assets")
+        .select("analysis_ctx_json, event_type")
+        .eq("episode_date", episode_date)
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    if not rows.data:
+        logger.warning("[asset_writer] load_analysis_ctx: episode_date=%s 행 없음", episode_date)
+        return None
+
+    ctx = rows.data[0].get("analysis_ctx_json")
+    if not ctx:
+        logger.warning(
+            "[asset_writer] load_analysis_ctx: date=%s analysis_ctx_json 없음 "
+            "— analysis stage 먼저 실행 필요",
+            episode_date,
+        )
+        return None
+
+    logger.info("[asset_writer] analysis_ctx_json 복원 완료 date=%s", episode_date)
+    return ctx
