@@ -1,0 +1,91 @@
+name: Run Video Trailer (ICG Video Track)
+
+on:
+  schedule:
+    # 토요일 KST 09:00 = UTC 00:00 (토)
+    - cron: '0 0 * * 6'
+  workflow_dispatch:
+    inputs:
+      target_date:
+        description: 'YYYY-MM-DD (empty = today KST)'
+        required: false
+      dry_run:
+        description: 'true = no actual API calls'
+        required: false
+        default: 'true'
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  video_pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    concurrency:
+      group: icg-video-${{ github.event.inputs.target_date || 'today' }}
+      cancel-in-progress: false
+    env:
+      TZ: Asia/Seoul
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GEMINI_API_PAY_KEY: ${{ secrets.GEMINI_API_PAY_KEY }}
+      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      SUPABASE_SCHEMA: icg
+      NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+      X_API_KEY: ${{ secrets.X_API_KEY }}
+      X_API_SECRET: ${{ secrets.X_API_SECRET }}
+      X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+      X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
+      YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+      YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+      YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
+      TELEGRAM_PAID_CHANNEL_ID: ${{ secrets.TELEGRAM_PAID_CHANNEL_ID }}
+      MASTER_CHAT_ID: ${{ secrets.MASTER_CHAT_ID }}
+      VIDEO_BUDGET_USD_MONTHLY: '80'
+      DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install Python deps
+        run: pip install -r requirements-video.txt
+
+      - name: STEP 1V-2V data load
+        run: python -m scripts.run_video_trailer --stage data
+
+      - name: STEP 3V scenario
+        run: python -m scripts.run_video_trailer --stage scenario
+
+      - name: STEP 4V narrative
+        run: python -m scripts.run_video_trailer --stage narrative
+
+      - name: STEP 5V persist init
+        run: python -m scripts.run_video_trailer --stage persist_init
+
+      - name: STEP 6V veo generate
+        run: python -m scripts.run_video_trailer --stage veo
+
+      - name: STEP 7V ffmpeg assembly
+        run: python -m scripts.run_video_trailer --stage assembly
+
+      - name: PAUSE human gate notify
+        run: python -m scripts.run_video_trailer --stage gate_notify
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: video-${{ github.run_id }}
+          path: output/videos/
+          retention-days: 30
