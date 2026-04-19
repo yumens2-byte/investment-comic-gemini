@@ -184,6 +184,12 @@ jobs:
           find output/episodes -name "S*.png" 2>/dev/null | sort || echo "슬라이드 없음"
           echo "=== episode_id: ${{ needs.pre-check.outputs.episode_id }} ==="
 
+      - name: Anti-bot random delay
+        run: |
+          DELAY=$((RANDOM % 100))
+          echo "⏱️ Random delay: ${DELAY}s ($((DELAY/60))m $((DELAY%60))s)"
+          sleep $DELAY    
+
       - name: STEP 8 — Publish SNS
         run: |
           # schedule 실행 시 channels=all 고정, workflow_dispatch 시 입력값 사용
