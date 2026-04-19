@@ -1,8 +1,9 @@
-# ICG Video Track dependencies (v1.0)
+# ICG Video Track dependencies (v1.1)
 # Python 3.11+ required
 
 # Google GenAI SDK for Veo 3.1 Lite + Gemini TTS
-google-genai>=0.3.0
+# v1.0.0+ required for Veo 3.1 generate_videos API + GenerateVideosConfig
+google-genai>=1.0.0
 
 # Claude API for video scenario generation
 anthropic>=0.40.0

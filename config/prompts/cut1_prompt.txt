@@ -1,0 +1,19 @@
+# ICG Video Track — Cut 1 Prompt v2.0
+# Anchor scene: Iron Securities Nuna delivering breaking news
+# Based on v2 lessons from 2026-04-19 실증 테스트
+# Total duration: 8 seconds, 9:16 vertical, 1080p
+
+===PROMPT===
+Breaking news broadcast, vertical 9:16 format. A professional Korean female news anchor in her late 20s wearing a navy blue business suit, sitting behind a modern news desk in a dark blue studio. She has long straight black hair, sharp intelligent eyes, and a serious focused expression. The studio features clean minimalist design with subtle financial market data screens in the background showing abstract stock charts and numbers in cool blue tones. A breaking news lower-third graphic bar appears at the bottom of the screen in Korean style news broadcasting aesthetic, but the bar contains NO visible text, NO letters, NO words, NO logos — just a solid red-and-white color block shape. The anchor looks directly at the camera with urgent composed intensity. Camera slowly pushes in from medium shot to medium close-up over 8 seconds. Professional broadcast lighting with key light from front, subtle rim light. Cinematic depth of field with softly blurred studio background. Color palette: deep navy, cool blue, crimson accent. Modern Korean news broadcast style, Seoul 2026.
+
+===CHARACTER_LOCK===
+ANCHOR IDENTITY: Korean female, late 20s
+HAIR: long straight black
+OUTFIT: navy blue business suit, white inner top
+EXPRESSION: serious, urgent, composed
+SETTING: professional dark blue news studio
+DO NOT change the anchor's gender, race, age, or outfit at any point.
+DO NOT introduce any other character in this shot.
+
+===NEGATIVE_PROMPT===
+no Marvel, no DC, no Disney, no Pixar, no Nintendo, no copyrighted characters, no copyrighted logos, no brand names, no MARVEL text, no DC text, no studio watermarks, no fake brand names, no random text overlays, no channel logos, no visible words, no visible letters, no subtitles, no captions, no lower-third text, no headline text, no network identifier, no TV station name, no anchor changing gender, no anchor changing race, no anchor changing outfit mid-shot, no cartoon style, no anime style, no superhero costumes, no capes, no masks, blurry, low quality, distorted face, deformed hands, extra fingers, text artifacts
