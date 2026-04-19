@@ -15,6 +15,20 @@ Why `generate_audio` parameter removed in v1.3.1:
   - Phase V4 will strip audio via ffmpeg -an during assembly.
   - Cost locked at $0.15/s × 8s = $1.20 per cut.
 
+Why `person_generation` and `number_of_videos` removed in v1.3.2 (2026-04-20):
+  - Run #8 (DRY_RUN=false) returned 400 INVALID_ARGUMENT with exact message:
+      "allow_adult for personGeneration is currently not supported."
+  - `person_generation` is a Vertex AI-only parameter; Gemini API preview
+    does NOT support ANY value (allow_adult, allow_all, dont_allow).
+  - `number_of_videos` also removed as a preventive measure — it is absent
+    from the Issue #1981 verified working example for fast-generate-preview
+    and Gemini API defaults to 1 anyway.
+  - Final minimal config matches Issue #1981 spec:
+      aspect_ratio + resolution + duration_seconds + negative_prompt.
+  - Signature kept with `person_generation` param for backward-compat with
+    callers; value is silently ignored with a WARNING log (same pattern
+    as `generate_audio`).
+
 Extension    : Not supported → use I2V chaining instead
 SynthID      : Auto-watermarked (invisible)
 
@@ -32,11 +46,13 @@ import time
 from pathlib import Path
 from typing import Optional
 
-VERSION = "1.3.1"
+VERSION = "1.3.2"
 MODEL = "veo-3.1-fast-generate-preview"
 DEFAULT_RESOLUTION = "720p"
 DEFAULT_ASPECT_RATIO = "9:16"
 DEFAULT_DURATION_SEC = 8
+# NOTE: DEFAULT_PERSON_GENERATION kept for backward-compat of public API only.
+#       As of v1.3.2, the value is IGNORED — see config_kwargs in generate_text_to_video.
 DEFAULT_PERSON_GENERATION = "allow_adult"
 
 # Pricing (USD per second, 2026-04-19 rates for Veo 3.1 Fast via Gemini API)
@@ -85,7 +101,7 @@ class VeoClient:
         resolution: str = DEFAULT_RESOLUTION,
         aspect_ratio: str = DEFAULT_ASPECT_RATIO,
         negative_prompt: Optional[str] = None,
-        person_generation: str = DEFAULT_PERSON_GENERATION,
+        person_generation: Optional[str] = None,  # v1.3.2: ignored, kept for backward-compat
         generate_audio: bool = False,
     ) -> dict:
         """
@@ -98,7 +114,9 @@ class VeoClient:
             resolution       : "720p" or "1080p"
             aspect_ratio     : "9:16" (vertical) or "16:9" (landscape)
             negative_prompt  : What NOT to generate (Fast officially supports)
-            person_generation: "allow_adult" | "allow_all" | "dont_allow"
+            person_generation: PARAMETER IGNORED AS OF v1.3.2. Vertex AI-only field;
+                               Gemini API preview returns 400 INVALID_ARGUMENT.
+                               Kept in signature for backward compatibility.
             generate_audio   : PARAMETER DEPRECATED AT API LEVEL. Kept for API compatibility.
                                Veo default (audio ON) is applied regardless of this value.
                                Audio will be stripped in Phase V4 ffmpeg assembly if needed.
@@ -121,6 +139,16 @@ class VeoClient:
                 "Audio track will be included in output mp4; strip via ffmpeg -an if needed."
             )
 
+        # v1.3.2: person_generation is silently dropped from API request.
+        # Gemini API preview returns 400 for ANY value of this parameter.
+        if person_generation is not None:
+            logger.warning(
+                "[VeoClient] person_generation=%r received but NOT sent to API — "
+                "veo-3.1-fast-generate-preview (Gemini API) does not support this "
+                "parameter (Vertex AI only). Ignoring.",
+                person_generation,
+            )
+
         logger.info(
             f"[VeoClient] T2V start: model={MODEL} resolution={resolution} "
             f"aspect={aspect_ratio} duration={duration_sec}s "
@@ -132,12 +160,13 @@ class VeoClient:
             )
 
         start_ts = time.time()
+        # v1.3.2: Minimal config matching GitHub Issue #1981 verified working example.
+        # Removed: person_generation (400: "allow_adult ... not supported"),
+        #          number_of_videos (absent from working example, Gemini defaults to 1).
         config_kwargs = {
             "aspect_ratio": aspect_ratio,
             "resolution": resolution,
             "duration_seconds": duration_sec,
-            "person_generation": person_generation,
-            "number_of_videos": 1,
         }
         if negative_prompt:
             config_kwargs["negative_prompt"] = negative_prompt
@@ -221,7 +250,7 @@ class VeoClient:
         resolution: str = DEFAULT_RESOLUTION,
         aspect_ratio: str = DEFAULT_ASPECT_RATIO,
         negative_prompt: Optional[str] = None,
-        person_generation: str = DEFAULT_PERSON_GENERATION,
+        person_generation: Optional[str] = None,  # v1.3.2: ignored, kept for backward-compat
         generate_audio: bool = False,
     ) -> dict:
         """

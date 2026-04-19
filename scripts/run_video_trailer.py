@@ -30,7 +30,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-VERSION = "1.4.1"
+VERSION = "1.4.2"
 
 logger = logging.getLogger("run_video_trailer")
 
@@ -412,6 +412,8 @@ def stage_veo():
         from engine.video.veo_client import VeoClient
 
         veo = VeoClient()
+        # v1.4.2: person_generation removed — Gemini API preview rejects with 400.
+        # See engine/video/veo_client.py v1.3.2 docstring for full context.
         gen_result = veo.generate_text_to_video(
             prompt=full_prompt,
             output_path=output_path,
@@ -419,7 +421,6 @@ def stage_veo():
             resolution="720p",
             aspect_ratio="9:16",
             negative_prompt=negative_prompt,
-            person_generation="allow_adult",
             generate_audio=False,
         )
         logger.info(
