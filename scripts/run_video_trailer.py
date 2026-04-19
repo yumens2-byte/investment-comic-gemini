@@ -23,17 +23,143 @@ Note on publish stages:
 import argparse
 import logging
 import os
+import platform
 import sys
+import time
 from datetime import datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-)
 logger = logging.getLogger("run_video_trailer")
+
+# Environment variables we check for presence on every run (masked in logs).
+# Not all are required — missing ones are logged as warnings but don't fail execution.
+_TRACKED_ENV_VARS = [
+    # Veo + Gemini
+    "GEMINI_API_PAY_KEY",
+    "GEMINI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    # Telegram (master + channels)
+    "TELEGRAM_BOT_TOKEN",
+    "MASTER_CHAT_ID",
+    "TELEGRAM_FREE_CHANNEL_ID",
+    "TELEGRAM_PAID_CHANNEL_ID",
+    # Supabase
+    "SUPABASE_URL",
+    "SUPABASE_SERVICE_ROLE_KEY",
+    # X (Twitter)
+    "X_API_KEY",
+    "X_API_SECRET",
+    "X_ACCESS_TOKEN",
+    "X_ACCESS_SECRET",
+    # YouTube Shorts (Phase V5+)
+    "YOUTUBE_CLIENT_ID",
+    "YOUTUBE_CLIENT_SECRET",
+    "YOUTUBE_REFRESH_TOKEN",
+    # Budget cap
+    "VIDEO_BUDGET_USD_MONTHLY",
+]
+
+
+def _mask_secret(value: str, env_name: str) -> str:
+    """Mask sensitive env values for logging. Show first 4 chars + **** for tokens."""
+    if not value:
+        return "(empty)"
+    # Non-sensitive values display as-is (truncated if too long)
+    non_sensitive = {"MASTER_CHAT_ID", "SUPABASE_URL", "VIDEO_BUDGET_USD_MONTHLY"}
+    if env_name in non_sensitive or env_name.endswith("_ID") or env_name.endswith("_URL"):
+        return value if len(value) <= 40 else value[:37] + "..."
+    # Sensitive values: show prefix only
+    return value[:4] + "****" if len(value) > 4 else "****"
+
+
+def _setup_logging(stage: str) -> Path:
+    """
+    Configure root logger with Console (INFO) + File (DEBUG) handlers.
+
+    Returns:
+        Path to the log file written for this stage.
+    """
+    log_level_name = os.environ.get("LOG_LEVEL", "INFO").upper()
+    console_level = getattr(logging, log_level_name, logging.INFO)
+
+    root = logging.getLogger()
+    # Remove any pre-existing handlers (e.g., from prior basicConfig)
+    for h in root.handlers[:]:
+        root.removeHandler(h)
+    root.setLevel(logging.DEBUG)  # capture everything; handlers filter
+
+    fmt = logging.Formatter(
+        "%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    # Console handler (stdout; GitHub Actions captures this)
+    console_handler = logging.StreamHandler(stream=sys.stdout)
+    console_handler.setLevel(console_level)
+    console_handler.setFormatter(fmt)
+    root.addHandler(console_handler)
+
+    # File handler (always DEBUG for full detail)
+    run_id = os.environ.get("GITHUB_RUN_ID", "local")
+    log_dir = Path("logs") / str(run_id)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / f"{stage}.log"
+
+    file_handler = logging.FileHandler(log_file, mode="w", encoding="utf-8")
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(fmt)
+    root.addHandler(file_handler)
+
+    return log_file
+
+
+def _log_environment_info(stage: str, log_file: Path) -> None:
+    """Dump runtime context at the start of each stage for easier debugging."""
+    logger.info("=" * 72)
+    logger.info(f"STAGE START: {stage}")
+    logger.info("=" * 72)
+    logger.info(f"run_video_trailer v{VERSION}")
+    logger.info(
+        f"Python {platform.python_version()} on "
+        f"{platform.system()} {platform.release()} ({platform.machine()})"
+    )
+    logger.info(f"Working directory: {Path.cwd()}")
+    logger.info(f"Log file: {log_file.resolve()}")
+
+    # GitHub Actions context
+    gh_run_id = os.environ.get("GITHUB_RUN_ID", "N/A")
+    gh_workflow = os.environ.get("GITHUB_WORKFLOW", "N/A")
+    gh_ref = os.environ.get("GITHUB_REF_NAME", "N/A")
+    gh_sha = os.environ.get("GITHUB_SHA", "N/A")
+    logger.info(
+        f"GitHub: workflow={gh_workflow} run_id={gh_run_id} "
+        f"ref={gh_ref} sha={gh_sha[:8] if gh_sha != 'N/A' else gh_sha}"
+    )
+
+    # Runtime flags
+    dry_run = os.environ.get("DRY_RUN", "false")
+    log_level = os.environ.get("LOG_LEVEL", "INFO")
+    logger.info(f"Flags: DRY_RUN={dry_run} LOG_LEVEL={log_level}")
+
+    # Environment variables check (masked)
+    present = []
+    missing = []
+    for env in _TRACKED_ENV_VARS:
+        val = os.environ.get(env, "")
+        if val:
+            present.append(env)
+            logger.debug(f"  ENV {env}={_mask_secret(val, env)} (set)")
+        else:
+            missing.append(env)
+
+    logger.info(
+        f"Env vars: {len(present)}/{len(_TRACKED_ENV_VARS)} set"
+        + (f", missing={missing}" if missing else "")
+    )
+    logger.info("-" * 72)
 
 
 def stage_data():
@@ -215,7 +341,6 @@ STAGES = {
 
 
 def main():
-    logger.info(f"[run_video_trailer] v{VERSION} 시작")
     parser = argparse.ArgumentParser(description="ICG Video Track runner")
     parser.add_argument(
         "--stage",
@@ -225,11 +350,37 @@ def main():
     )
     args = parser.parse_args()
 
-    dry_run = os.environ.get("DRY_RUN", "false").lower() == "true"
-    if dry_run:
-        logger.info("[run_video_trailer] DRY_RUN=true — no external API calls")
+    # Setup logging FIRST (console + file)
+    log_file = _setup_logging(args.stage)
 
-    STAGES[args.stage]()
+    # Dump environment / runtime context
+    _log_environment_info(args.stage, log_file)
+
+    # Execute the stage with timing
+    start_ts = time.monotonic()
+    exit_code = 0
+    try:
+        STAGES[args.stage]()
+    except SystemExit as exc:
+        # stage_scenario raises SystemExit(0) on NO_BATTLE; preserve code
+        exit_code = exc.code if isinstance(exc.code, int) else 1
+        logger.info(f"[run_video_trailer] stage={args.stage} exited with code={exit_code}")
+    except Exception:
+        exit_code = 1
+        logger.exception(f"[run_video_trailer] stage={args.stage} failed with exception")
+    finally:
+        elapsed = time.monotonic() - start_ts
+        logger.info("-" * 72)
+        logger.info(
+            f"STAGE END: {args.stage} | elapsed={elapsed:.3f}s | exit_code={exit_code}"
+        )
+        logger.info(f"Log file saved: {log_file.resolve()}")
+        logger.info("=" * 72)
+        # Ensure file handler flushes before exit
+        logging.shutdown()
+
+    if exit_code != 0:
+        sys.exit(exit_code)
     logger.info(f"[run_video_trailer] stage={args.stage} 완료")
 
 
