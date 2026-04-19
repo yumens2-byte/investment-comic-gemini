@@ -1,0 +1,36 @@
+# ICG Video Track dependencies (v1.0)
+# Python 3.11+ required
+
+# Google GenAI SDK for Veo 3.1 Lite + Gemini TTS
+google-genai>=0.3.0
+
+# Claude API for video scenario generation
+anthropic>=0.40.0
+
+# X API (chunked upload for video)
+tweepy>=4.14.0
+
+# YouTube Data API v3 (Shorts upload)
+google-api-python-client>=2.100.0
+google-auth>=2.23.0
+google-auth-oauthlib>=1.1.0
+google-auth-httplib2>=0.1.1
+
+# Telegram Bot API (human gate)
+python-telegram-bot>=20.7
+
+# Supabase (icg.video_assets CRUD)
+supabase>=2.0.0
+
+# Template rendering (video_scenario.j2)
+jinja2>=3.1.0
+
+# Data validation (VideoEpisodeScript schema)
+pydantic>=2.5.0
+
+# Environment variables (local dev only)
+python-dotenv>=1.0.0
+
+# HTTP client (retry logic)
+requests>=2.31.0
+tenacity>=8.2.0

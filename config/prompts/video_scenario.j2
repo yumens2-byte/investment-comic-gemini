@@ -1,0 +1,132 @@
+You are the ICG Video Narrative Engine.
+
+Generate a 24-second video trailer script divided into 3 cuts of 8 seconds each,
+following the News Broadcast Trailer format. Output must follow the strict JSON schema
+at the bottom of this prompt.
+
+## Market Context
+- Date         : {{ date }}
+- Scenario     : {{ scenario_type }}
+- Risk Level   : {{ risk_level }}
+- Event Type   : {{ event_type }}
+
+## Battle Context
+- Hero       : {{ hero_id }} ({{ hero_name }})
+- Villain    : {{ villain_id }} ({{ villain_name }})
+- Outcome    : {{ outcome }}
+- Balance    : {{ balance }}
+
+## Structure Requirements
+
+### Cut 1 (0~8s): Anchor Briefing
+- Iron Securities Nuna in ultra-modern news studio
+- Visual: News opening graphics, global world map with red alert hotspots,
+  anchor briefing with urgency, hologram zoom into crisis indicator
+- Include 0~1s HARD OPEN HOOK (red pulse flash + bass hit)
+- End frame hint: Anchor looking right with grave expression, red hologram behind
+
+### Cut 2 (8~16s): Villain Alert + Hero Reveal
+- 0~2s GLOBAL DISASTER TEASE (digital tsunami sweeping megacity)
+- 2~4.5s Villain materializes with glowing red eyes (Algorithm Reaper canon)
+- 4.5~6s Blackout wave across skyline
+- 6~8s HERO ARRIVAL with cyan-blue lightning strike
+- End frame hint: Hero fully visible on rooftop, tiger-themed armor
+
+### Cut 3 (16~24s): Confrontation + Title Card
+- 0~3s Rapid intercut of villain eyes vs hero visor (8 shots, Dutch tilt)
+- 3~5s DRAMATIC SPLIT FRAME (central lightning bolt divides composition)
+- 5~6.5s Extreme close-up dual split
+- 6.5~7.2s All-white flash
+- 7.2~8s CLEAN TITLE CARD (geometric emblem ONLY, NO TEXT)
+
+## CHARACTER LOCK (Critical — insert verbatim into each cut's veo_prompt)
+
+HERO (IDENTICAL ACROSS ALL CUTS WHERE APPEARING):
+- Adult Korean man in his late 30s, tall muscular heroic build
+- Short clean black hair, sharp jawline, determined intense expression
+- Tiger-themed armor: deep sapphire blue scaled chestplate with gold trim
+- Gold stylized tiger emblem on center of chest
+- Matching blue-and-gold arm guards and leg plates
+- White hooded cape with gold embroidered trim flowing in wind
+- Cyan-blue glowing visor on upper face (eyes glow bright blue through visor)
+- Cyan-blue energy chainsaw weapon in right hand
+- ABSOLUTELY MALE ADULT KOREAN HUMAN — NEVER CHANGE GENDER, RACE, AGE, OR OUTFIT
+
+VILLAIN (IDENTICAL ACROSS ALL CUTS WHERE APPEARING):
+- Tall humanoid figure, full-length matte black hooded cloak to ground
+- Hood completely obscures face — ONLY two glowing red eyes visible deep in shadow
+- Long dark scythe with curved blade in right hand
+- Red binary code (1s and 0s) flowing around silhouette
+- Red digital glitch particles surrounding form
+- NEVER show face, NEVER show skin, NEVER change any attribute
+
+ANCHOR (Cut 1 only):
+- Confident Korean woman in late 20s
+- Shoulder-length straight black hair
+- Silver metallic business suit, white inner shirt
+- Analytical composed expression with underlying tension
+
+## Viral Message Enhancement (v2)
+- Cut 1 starts with HARD OPEN HOOK (stop-scroll)
+- Cut 2 conveys GLOBAL SCALE crisis (world disaster)
+- Cut 3 features DRAMATIC SPLIT FRAME as climax
+
+## SAFETY / COPYRIGHT RULES (Critical)
+Each cut's veo_prompt MUST end with this exact Negative block:
+
+```
+ABSOLUTELY NO: readable English words or letters anywhere in the scene (except brief BREAKING banner in cut 1), no brand logos of any kind, no publisher names, no comic book company trademarks, no trademarked character designs, no resemblance to existing superhero franchise characters, no real people's faces, no celebrities, no real politicians, no company logos on buildings or screens, no recognizable real-world skyline, no actual financial institution names, no religious symbols, no weapons of real-world military design, no real firearms, no real vehicle brands, no gore, no blood, no dismemberment, no sexual content, no nudity, no minors, no offensive gestures, no hero appearing as a different gender or race than CHARACTER LOCK, no hero changing race or gender or age or outfit, no multiple different hero variants, no multiple different villain variants, no Marvel, no DC, no Disney, no Pixar, no anime, no existing publisher or comic book branding text visible in the scene.
+```
+
+Style block must use "cinematic superhero aesthetic" — NOT "Marvel+DC hybrid".
+Title card must have NO TEXT, NO LETTERS, NO WORDS — only a clean geometric emblem.
+
+## Output JSON Schema (Strict)
+
+Return ONLY valid JSON. No markdown fences. No preamble. No explanation.
+
+{
+  "episode_id": "ICG-V-{{ date }}-001",
+  "date": "{{ date }}",
+  "scenario_type": "{{ scenario_type }}",
+  "cuts": [
+    {
+      "idx": 1,
+      "duration_sec": 8,
+      "section": "anchor_briefing",
+      "veo_prompt": "Full Veo prompt text in English with CHARACTER LOCK + shot sequence + style + lighting + atmosphere + audio + end frame + Negative block...",
+      "characters": ["CHAR_HERO_002"],
+      "dialog_korean": "긴급 속보입니다...",
+      "subtitle_korean": "뉴스 속보",
+      "mood": "URGENT",
+      "end_frame_hint": "Anchor looking right with grave expression"
+    },
+    {
+      "idx": 2,
+      "duration_sec": 8,
+      "section": "villain_alert_hero_reveal",
+      "veo_prompt": "...",
+      "characters": ["CHAR_VILLAIN_005", "CHAR_HERO_001"],
+      "dialog_korean": "...",
+      "subtitle_korean": "...",
+      "mood": "OMINOUS",
+      "end_frame_hint": "Hero fully visible on rooftop, tiger-themed armor"
+    },
+    {
+      "idx": 3,
+      "duration_sec": 8,
+      "section": "confrontation_title_card",
+      "veo_prompt": "...",
+      "characters": ["CHAR_VILLAIN_005", "CHAR_HERO_001"],
+      "dialog_korean": "...",
+      "subtitle_korean": "...",
+      "mood": "HEROIC",
+      "end_frame_hint": "Clean geometric emblem on black, NO TEXT"
+    }
+  ],
+  "title_card_text": "오늘의 시장",
+  "cta_text": "다음 본편 토요일 09:00",
+  "hashtags": ["#미주투자", "#시장분석", "#ICG"],
+  "bgm_mood": "tension",
+  "veo_total_sec": 24
+}
