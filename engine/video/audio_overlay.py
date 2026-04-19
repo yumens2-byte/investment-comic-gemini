@@ -14,7 +14,7 @@ import logging
 import os
 from pathlib import Path
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 logger = logging.getLogger(__name__)
 
 TARGET_LUFS = -14.0  # Social media standard (YouTube, TikTok, Instagram)
@@ -39,9 +39,9 @@ def generate_tts(
     if importlib.util.find_spec("google.genai") is None:
         raise RuntimeError("google-genai package not installed")
 
-    api_key = os.environ.get("GEMINI_API_KEY")
+    api_key = os.environ.get("GEMINI_API_SUB_PAY_KEY")
     if not api_key:
-        raise RuntimeError("GEMINI_API_KEY env variable not set")
+        raise RuntimeError("GEMINI_API_SUB_PAY_KEY env variable not set")
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     logger.info(f"[audio_overlay] v{VERSION} TTS request: len={len(text)} voice={voice}")

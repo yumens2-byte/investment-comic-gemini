@@ -30,34 +30,32 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 logger = logging.getLogger("run_video_trailer")
 
-# Environment variables we check for presence on every run (masked in logs).
-# Not all are required — missing ones are logged as warnings but don't fail execution.
+# Environment variables tracked for presence on every run (masked in logs).
+# These follow the existing ICG repository Secret naming convention.
+# Not all are required — missing ones are logged but don't fail execution.
 _TRACKED_ENV_VARS = [
-    # Veo + Gemini
-    "GEMINI_API_PAY_KEY",
-    "GEMINI_API_KEY",
+    # Core APIs (ICG 규약 준수)
     "ANTHROPIC_API_KEY",
-    # Telegram (master + channels)
-    "TELEGRAM_BOT_TOKEN",
-    "MASTER_CHAT_ID",
-    "TELEGRAM_FREE_CHANNEL_ID",
-    "TELEGRAM_PAID_CHANNEL_ID",
+    "GEMINI_API_SUB_PAY_KEY",  # Veo + TTS 공용 Paid 키
+    "FRED_API_KEY",
+    "NOTION_API_KEY",
     # Supabase
     "SUPABASE_URL",
-    "SUPABASE_SERVICE_ROLE_KEY",
+    "SUPABASE_KEY",
     # X (Twitter)
     "X_API_KEY",
     "X_API_SECRET",
     "X_ACCESS_TOKEN",
-    "X_ACCESS_SECRET",
-    # YouTube Shorts (Phase V5+)
-    "YOUTUBE_CLIENT_ID",
-    "YOUTUBE_CLIENT_SECRET",
-    "YOUTUBE_REFRESH_TOKEN",
+    "X_ACCESS_TOKEN_SECRET",
+    # Telegram (게이트 + 채널)
+    "TELEGRAM_BOT_TOKEN",
+    "TELEGRAM_FREE_CHANNEL_ID",
+    "TELEGRAM_PAID_CHANNEL_ID",
+    "MASTER_CHAT_ID",  # Phase V5 게이트 전 등록 필요
     # Budget cap
     "VIDEO_BUDGET_USD_MONTHLY",
 ]

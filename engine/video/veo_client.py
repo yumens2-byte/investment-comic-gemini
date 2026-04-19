@@ -14,7 +14,7 @@ import os
 import time
 from typing import Optional
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 MODEL = "veo-3.1-lite-generate-preview"
 DEFAULT_RESOLUTION = "1080p"
 DEFAULT_ASPECT_RATIO = "9:16"
@@ -33,9 +33,9 @@ class VeoClient:
                 "google-genai package not installed. Run: pip install google-genai"
             ) from e
 
-        api_key = os.environ.get("GEMINI_API_PAY_KEY")
+        api_key = os.environ.get("GEMINI_API_SUB_PAY_KEY")
         if not api_key:
-            raise RuntimeError("GEMINI_API_PAY_KEY env variable not set")
+            raise RuntimeError("GEMINI_API_SUB_PAY_KEY env variable not set")
 
         self.client = genai.Client(api_key=api_key)
         logger.info(f"[VeoClient] v{VERSION} initialized (model={MODEL})")
