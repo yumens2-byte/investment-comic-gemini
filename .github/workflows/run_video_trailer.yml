@@ -13,6 +13,15 @@ on:
         description: 'true = no actual API calls'
         required: false
         default: 'true'
+      log_level:
+        description: 'Console log level (DEBUG shows more detail)'
+        required: false
+        default: 'INFO'
+        type: choice
+        options:
+          - DEBUG
+          - INFO
+          - WARNING
 
 permissions:
   contents: read
@@ -48,6 +57,7 @@ jobs:
       MASTER_CHAT_ID: ${{ secrets.MASTER_CHAT_ID }}
       VIDEO_BUDGET_USD_MONTHLY: '80'
       DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+      LOG_LEVEL: ${{ github.event.inputs.log_level || 'INFO' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -83,9 +93,24 @@ jobs:
       - name: PAUSE human gate notify
         run: python -m scripts.run_video_trailer --stage gate_notify
 
+      - name: Summarize logs
+        if: always()
+        run: |
+          echo "::group::Log files generated"
+          find logs -type f -name "*.log" 2>/dev/null | sort || echo "(no logs directory)"
+          echo "::endgroup::"
+          echo "::group::Full log tail (last 40 lines per file)"
+          for f in $(find logs -type f -name "*.log" 2>/dev/null | sort); do
+            echo "---------- $f ----------"
+            tail -40 "$f"
+          done
+          echo "::endgroup::"
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: video-${{ github.run_id }}
-          path: output/videos/
+          path: |
+            output/videos/
+            logs/
           retention-days: 30
