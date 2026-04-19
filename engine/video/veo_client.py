@@ -109,8 +109,11 @@ class VeoClient:
 
         with open(start_frame_path, "rb") as f:
             img_b64 = base64.b64encode(f.read()).decode()
+        logger.debug(
+            "[VeoClient] encoded start frame: %d chars (base64)", len(img_b64)
+        )
 
-        # TODO: Implement actual Veo I2V API call with inline image
+        # TODO: Implement actual Veo I2V API call with inline image (V5)
         # operation = self.client.models.generate_videos(
         #     model=MODEL,
         #     prompt=prompt,

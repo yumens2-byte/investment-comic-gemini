@@ -122,7 +122,7 @@ def publish_to_youtube_shorts(
     #     "published_at": response["snippet"]["publishedAt"],
     # }
 
-    logger.info(f"[youtube_shorts_publisher] upload done (SKELETON — implement in V5)")
+    logger.info("[youtube_shorts_publisher] upload done (SKELETON — implement in V5)")
     return {
         "youtube_video_id": None,
         "youtube_url": None,

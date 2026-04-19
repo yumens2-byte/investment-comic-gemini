@@ -227,7 +227,7 @@ def main():
 
     dry_run = os.environ.get("DRY_RUN", "false").lower() == "true"
     if dry_run:
-        logger.info(f"[run_video_trailer] DRY_RUN=true — no external API calls")
+        logger.info("[run_video_trailer] DRY_RUN=true — no external API calls")
 
     STAGES[args.stage]()
     logger.info(f"[run_video_trailer] stage={args.stage} 완료")

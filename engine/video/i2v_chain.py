@@ -57,7 +57,7 @@ def run_i2v_chain(
 
     # ─ Cut 1: Text-to-Video ────────────────────────────────────
     cut1_path = f"{output_dir}/cut1.mp4"
-    logger.info(f"[i2v_chain] Cut 1 (T2V) start")
+    logger.info("[i2v_chain] Cut 1 (T2V) start")
     r1 = veo.generate_text_to_video(
         prompt=cut_prompts[0],
         duration_sec=duration_sec,
@@ -76,7 +76,7 @@ def run_i2v_chain(
 
     # ─ Cut 2: Image-to-Video from cut1 last frame ──────────────
     cut2_path = f"{output_dir}/cut2.mp4"
-    logger.info(f"[i2v_chain] Cut 2 (I2V from cut1_last) start")
+    logger.info("[i2v_chain] Cut 2 (I2V from cut1_last) start")
     r2 = veo.generate_image_to_video(
         prompt=cut_prompts[1],
         start_frame_path=cut1_last_frame,
@@ -96,7 +96,7 @@ def run_i2v_chain(
 
     # ─ Cut 3: Image-to-Video from cut2 last frame ──────────────
     cut3_path = f"{output_dir}/cut3.mp4"
-    logger.info(f"[i2v_chain] Cut 3 (I2V from cut2_last) start")
+    logger.info("[i2v_chain] Cut 3 (I2V from cut2_last) start")
     r3 = veo.generate_image_to_video(
         prompt=cut_prompts[2],
         start_frame_path=cut2_last_frame,

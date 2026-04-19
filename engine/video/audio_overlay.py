@@ -9,9 +9,9 @@ Workflow:
 Note: Veo native audio is unreliable for Korean narration.
       We MUTE Veo's audio and overlay our own TTS + BGM track.
 """
+import importlib.util
 import logging
 import os
-import subprocess
 from pathlib import Path
 
 VERSION = "1.0.0"
@@ -36,10 +36,8 @@ def generate_tts(
     Returns:
         output_path
     """
-    try:
-        from google import genai
-    except ImportError as e:
-        raise RuntimeError("google-genai package not installed") from e
+    if importlib.util.find_spec("google.genai") is None:
+        raise RuntimeError("google-genai package not installed")
 
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
@@ -48,7 +46,8 @@ def generate_tts(
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     logger.info(f"[audio_overlay] v{VERSION} TTS request: len={len(text)} voice={voice}")
 
-    # TODO: actual TTS API call via google-genai
+    # TODO: actual TTS API call via google-genai (V5)
+    # from google import genai
     # client = genai.Client(api_key=api_key)
     # response = client.models.generate_content(
     #     model="gemini-2.5-flash-preview-tts",

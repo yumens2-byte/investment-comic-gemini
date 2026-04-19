@@ -26,7 +26,6 @@ Requirements:
 """
 import logging
 import os
-import time
 from pathlib import Path
 from typing import Optional
 
@@ -120,7 +119,7 @@ def publish_video_to_x(
     #     "published_at": time.time(),
     # }
 
-    logger.info(f"[x_video_publisher] X video publish done (SKELETON — implement in V5)")
+    logger.info("[x_video_publisher] X video publish done (SKELETON — implement in V5)")
     return {
         "tweet_id": None,
         "media_id": None,

@@ -24,7 +24,6 @@ Telegram API:
 import logging
 import os
 from pathlib import Path
-from typing import Optional
 
 VERSION = "1.0.0"
 logger = logging.getLogger(__name__)
@@ -91,8 +90,13 @@ def send_approval_request(
         f"[telegram_gate] v{VERSION} sending approval request: "
         f"episode={episode_id} size={size_mb:.1f}MB"
     )
+    logger.debug(
+        "[telegram_gate] prepared payload: caption_len=%d, buttons=%d",
+        len(caption),
+        len(reply_markup["inline_keyboard"]),
+    )
 
-    # TODO: actual Telegram sendVideo API call
+    # TODO: actual Telegram sendVideo API call (V5)
     # from telegram import Bot
     # bot = Bot(token=bot_token)
     # with open(video_path, "rb") as f:
@@ -106,7 +110,7 @@ def send_approval_request(
     #     )
     # return {"message_id": msg.message_id, "chat_id": chat_id, "sent_at": msg.date.isoformat()}
 
-    logger.info(f"[telegram_gate] approval request sent (SKELETON — implement in V5)")
+    logger.info("[telegram_gate] approval request sent (SKELETON — implement in V5)")
     return {
         "message_id": None,
         "chat_id": chat_id,
