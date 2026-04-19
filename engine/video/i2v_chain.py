@@ -13,8 +13,8 @@ import logging
 from pathlib import Path
 from typing import List
 
-from engine.video.veo_client import VeoClient
 from engine.video.frame_extractor import extract_last_frame
+from engine.video.veo_client import VeoClient
 
 VERSION = "1.0.0"
 logger = logging.getLogger(__name__)
