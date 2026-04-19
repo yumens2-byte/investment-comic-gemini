@@ -30,7 +30,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 
 logger = logging.getLogger("run_video_trailer")
 
@@ -355,7 +355,9 @@ def stage_veo():
         BudgetExceededError,
         check_before_generation,
     )
-    estimated_cost = 0.64  # 8s * $0.08 for 1080p
+    # B-2: Veo 3.1 Fast 720p audio OFF = $0.10/s × 8s = $0.80
+    # (Fallback to $0.15/s × 8s = $1.20 if generate_audio param not supported)
+    estimated_cost = 0.80
     try:
         if dry_run:
             logger.info(
@@ -399,12 +401,13 @@ def stage_veo():
             "cost_usd": 0.0,
             "generation_ms": 0,
             "file_size_mb": round(size / 1024 / 1024, 3),
-            "resolution": "1080p",
+            "resolution": "720p",
             "aspect_ratio": "9:16",
+            "audio_generated": False,
             "dry_run": True,
         }
     else:
-        logger.info("[6V] Calling Veo API (this will charge ~$0.64)...")
+        logger.info("[6V] Calling Veo API (estimated charge ~$0.80, may fallback to $1.20)...")
         from engine.video.veo_client import VeoClient
 
         veo = VeoClient()
@@ -412,16 +415,18 @@ def stage_veo():
             prompt=full_prompt,
             output_path=output_path,
             duration_sec=8,
-            resolution="1080p",
+            resolution="720p",
             aspect_ratio="9:16",
             negative_prompt=negative_prompt,
             person_generation="allow_adult",
+            generate_audio=False,
         )
         logger.info(
             f"[6V] Veo cut 1 generated: path={gen_result['video_uri']} "
             f"size={gen_result['file_size_mb']}MB "
             f"elapsed={gen_result['generation_ms']}ms "
-            f"cost=${gen_result['cost_usd']:.4f}"
+            f"cost=${gen_result['cost_usd']:.4f} "
+            f"audio={gen_result['audio_generated']}"
         )
 
     # Step D: Supabase UPDATE
