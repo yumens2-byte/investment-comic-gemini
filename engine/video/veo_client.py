@@ -1,135 +1,141 @@
-"""
-Veo 3.1 Lite API wrapper.
-
-Model        : veo-3.1-lite-generate-preview
-Resolution   : 1080p (9:16 vertical)
-Duration     : 8 seconds per cut (max)
-Unit price   : $0.08 per second
-Extension    : Not supported → use I2V chaining instead
-SynthID      : Auto-watermarked (invisible)
-"""
-import base64
-import logging
-import os
-import time
-from typing import Optional
-
-VERSION = "1.1.0"
-MODEL = "veo-3.1-lite-generate-preview"
-DEFAULT_RESOLUTION = "1080p"
-DEFAULT_ASPECT_RATIO = "9:16"
-DEFAULT_DURATION_SEC = 8
-UNIT_PRICE_USD_PER_SEC = 0.08
-
-logger = logging.getLogger(__name__)
-
-
-class VeoClient:
-    def __init__(self):
-        try:
-            from google import genai
-        except ImportError as e:
-            raise RuntimeError(
-                "google-genai package not installed. Run: pip install google-genai"
-            ) from e
-
-        api_key = os.environ.get("GEMINI_API_SUB_PAY_KEY")
-        if not api_key:
-            raise RuntimeError("GEMINI_API_SUB_PAY_KEY env variable not set")
-
-        self.client = genai.Client(api_key=api_key)
-        logger.info(f"[VeoClient] v{VERSION} initialized (model={MODEL})")
-
-    def generate_text_to_video(
-        self,
-        prompt: str,
-        duration_sec: int = DEFAULT_DURATION_SEC,
-        resolution: str = DEFAULT_RESOLUTION,
-        aspect_ratio: str = DEFAULT_ASPECT_RATIO,
-        output_path: str = "cut.mp4",
-        negative_prompt: Optional[str] = None,
-    ) -> dict:
-        """Text-to-Video generation (used for cut 1)."""
-        logger.info(
-            f"[VeoClient] T2V start: resolution={resolution} "
-            f"aspect={aspect_ratio} duration={duration_sec}s"
-        )
-        start_ts = time.time()
-
-        # TODO: Implement actual Veo API call via google-genai SDK
-        # operation = self.client.models.generate_videos(
-        #     model=MODEL,
-        #     prompt=prompt,
-        #     config={
-        #         "aspect_ratio": aspect_ratio,
-        #         "resolution": resolution,
-        #         "duration_seconds": duration_sec,
-        #         "negative_prompt": negative_prompt or "",
-        #     },
-        # )
-        # while not operation.done:
-        #     time.sleep(10)
-        #     operation = self.client.operations.get(operation)
-        # video_bytes = operation.response.generated_videos[0].video
-        # with open(output_path, "wb") as f:
-        #     f.write(video_bytes)
-
-        elapsed_ms = int((time.time() - start_ts) * 1000)
-        cost_usd = UNIT_PRICE_USD_PER_SEC * duration_sec
-        logger.info(
-            f"[VeoClient] T2V done: {output_path} "
-            f"elapsed={elapsed_ms}ms cost=${cost_usd:.4f}"
-        )
-        return {
-            "video_uri": output_path,
-            "duration_sec": duration_sec,
-            "cost_usd": cost_usd,
-            "generation_ms": elapsed_ms,
-        }
-
-    def generate_image_to_video(
-        self,
-        prompt: str,
-        start_frame_path: str,
-        duration_sec: int = DEFAULT_DURATION_SEC,
-        resolution: str = DEFAULT_RESOLUTION,
-        aspect_ratio: str = DEFAULT_ASPECT_RATIO,
-        output_path: str = "cut.mp4",
-        negative_prompt: Optional[str] = None,
-    ) -> dict:
-        """Image-to-Video generation (used for cut 2, 3 in I2V chain)."""
-        if not os.path.exists(start_frame_path):
-            raise FileNotFoundError(f"start_frame_path not found: {start_frame_path}")
-
-        logger.info(
-            f"[VeoClient] I2V start: start_frame={start_frame_path} "
-            f"resolution={resolution} duration={duration_sec}s"
-        )
-        start_ts = time.time()
-
-        with open(start_frame_path, "rb") as f:
-            img_b64 = base64.b64encode(f.read()).decode()
-        logger.debug(
-            "[VeoClient] encoded start frame: %d chars (base64)", len(img_b64)
-        )
-
-        # TODO: Implement actual Veo I2V API call with inline image (V5)
-        # operation = self.client.models.generate_videos(
-        #     model=MODEL,
-        #     prompt=prompt,
-        #     image={"image_bytes": img_b64, "mime_type": "image/png"},
-        #     config={...},
-        # )
-
-        elapsed_ms = int((time.time() - start_ts) * 1000)
-        cost_usd = UNIT_PRICE_USD_PER_SEC * duration_sec
-        logger.info(
-            f"[VeoClient] I2V done: {output_path} "
-            f"elapsed={elapsed_ms}ms cost=${cost_usd:.4f}"
-        )
-        return {
-            "video_uri": output_path,
-            "duration_sec": duration_sec,
-            "cost_usd": cost_usd,
-            "generation_ms": elapsed_ms,
-        }
+diff --git a/engine/publish/x_video_publisher.py b/engine/publish/x_video_publisher.py
+index 42e382001c9e0835653df916f79bca0c33b83ab0..8fef657729041f5ee802e6e509bcafdd7058d1f7 100644
+--- a/engine/publish/x_video_publisher.py
++++ b/engine/publish/x_video_publisher.py
+@@ -1,50 +1,50 @@
+ """
+ X Video Publisher — Twitter/X chunked video upload.
+ 
+ Purpose:
+   After master approval, publish the 24s video to X (@tiger18272 or ICG account).
+ 
+ X Video Upload Requirements:
+   - Must use chunked upload API (INIT → APPEND × N → FINALIZE → status poll)
+   - Video size: max 512 MB
+   - Video length: max 2:20 (140 seconds)
+   - Format: MP4 with H.264 and AAC audio
+   - Our 24s 1080x1920 mp4 is well within limits
+ 
+ API Flow:
+   1. POST media/upload INIT    → media_id
+   2. POST media/upload APPEND  × N (5MB chunks)
+   3. POST media/upload FINALIZE
+   4. GET  media/upload STATUS  (poll until processing_info.state = succeeded)
+   5. POST statuses/update with media_ids and caption
+ 
+ Requirements:
+   X_API_KEY (env)
+   X_API_SECRET (env)
+   X_ACCESS_TOKEN (env)
+-  X_ACCESS_SECRET (env)
++  X_ACCESS_TOKEN_SECRET (env, legacy alias: X_ACCESS_SECRET)
+ """
+ import logging
+ import os
+ from pathlib import Path
+ from typing import Optional
+ 
+ VERSION = "1.0.0"
+ logger = logging.getLogger(__name__)
+ 
+ MAX_VIDEO_SIZE_MB = 512
+ MAX_DURATION_SEC = 140
+ MAX_CAPTION_LEN = 280  # X post limit
+ CHUNK_SIZE_BYTES = 5 * 1024 * 1024  # 5MB
+ 
+ 
+ class XVideoPublishError(Exception):
+     """Raised when X video publish fails."""
+ 
+ 
+ def publish_video_to_x(
+     video_path: str,
+     caption: str,
+     episode_id: str,
+     additional_media_tags: Optional[list] = None,
+ ) -> dict:
+@@ -53,76 +53,81 @@ def publish_video_to_x(
+ 
+     Args:
+         video_path              : Final mp4 file
+         caption                 : X post text (≤280 chars)
+         episode_id              : Unique episode identifier (for logging)
+         additional_media_tags   : Optional user tags
+ 
+     Returns:
+         dict: tweet_id, media_id, published_at
+     """
+     if not Path(video_path).exists():
+         raise XVideoPublishError(f"video_path not found: {video_path}")
+ 
+     size_mb = Path(video_path).stat().st_size / 1024 / 1024
+     if size_mb > MAX_VIDEO_SIZE_MB:
+         raise XVideoPublishError(
+             f"Video size {size_mb:.1f}MB exceeds X limit {MAX_VIDEO_SIZE_MB}MB"
+         )
+ 
+     if len(caption) > MAX_CAPTION_LEN:
+         logger.warning(
+             f"[x_video_publisher] caption too long ({len(caption)}), truncating to {MAX_CAPTION_LEN}"
+         )
+         caption = caption[: MAX_CAPTION_LEN - 3] + "..."
+ 
+-    for key in ("X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_SECRET"):
++    required = ("X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN")
++    for key in required:
+         if not os.environ.get(key):
+             raise XVideoPublishError(f"{key} env not set")
+ 
++    access_secret = os.environ.get("X_ACCESS_TOKEN_SECRET") or os.environ.get("X_ACCESS_SECRET")
++    if not access_secret:
++        raise XVideoPublishError("X_ACCESS_TOKEN_SECRET env not set (or legacy X_ACCESS_SECRET)")
++
+     logger.info(
+         f"[x_video_publisher] v{VERSION} X video publish start: "
+         f"episode={episode_id} size={size_mb:.1f}MB"
+     )
+ 
+     # TODO: actual chunked upload via tweepy v4
+     # import tweepy
+     # auth = tweepy.OAuth1UserHandler(
+     #     os.environ["X_API_KEY"],
+     #     os.environ["X_API_SECRET"],
+     #     os.environ["X_ACCESS_TOKEN"],
+-    #     os.environ["X_ACCESS_SECRET"],
++    #     access_secret,
+     # )
+     # api_v1 = tweepy.API(auth)  # v1.1 API for media upload (chunked)
+     #
+     # # 1. INIT + APPEND + FINALIZE via media_upload(chunked=True)
+     # media = api_v1.media_upload(
+     #     filename=video_path,
+     #     media_category="tweet_video",
+     #     chunked=True,
+     #     wait_for_async_finalize=True,
+     # )
+     # media_id = media.media_id
+     #
+     # # 2. Post tweet with media_id via v2 API
+     # client = tweepy.Client(
+     #     consumer_key=os.environ["X_API_KEY"],
+     #     consumer_secret=os.environ["X_API_SECRET"],
+     #     access_token=os.environ["X_ACCESS_TOKEN"],
+-    #     access_token_secret=os.environ["X_ACCESS_SECRET"],
++    #     access_token_secret=access_secret,
+     # )
+     # response = client.create_tweet(text=caption, media_ids=[media_id])
+     # tweet_id = response.data["id"]
+     #
+     # return {
+     #     "tweet_id": tweet_id,
+     #     "media_id": media_id,
+     #     "published_at": time.time(),
+     # }
+ 
+     logger.info("[x_video_publisher] X video publish done (SKELETON — implement in V5)")
+     return {
+         "tweet_id": None,
+         "media_id": None,
+         "published_at": None,
+         "status": "skeleton",
+     }
