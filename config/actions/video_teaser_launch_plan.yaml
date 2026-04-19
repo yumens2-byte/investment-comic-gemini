@@ -1,0 +1,104 @@
+version: 1
+project:
+  id: hero_villain_news_teaser_24s
+  name: "24초 뉴스형 히어로 vs 빌런 티저"
+  objective: "즉시 개발착수 및 파일럿 테스트 후 반영"
+  deliverable:
+    duration_sec: 24.0
+    aspect_ratio: "9:16"
+    resolution: "1080x1920"
+    fps: 30
+
+publishing:
+  cadence: ["sunday", "tuesday"]
+  timezone: "Asia/Seoul"
+  publish_time_window: "19:00-21:00"
+  cta:
+    sunday: "다음 전개는 화요일 속보에서 공개됩니다"
+    tuesday: "다음 본편은 일요일 20:00 공개"
+
+actions:
+  - id: A00_kickoff
+    name: "개발 착수"
+    owner: "producer"
+    due: "D0"
+    status: "ready"
+    tasks:
+      - "에피소드 Ep.0 범위 확정"
+      - "작업자 역할 배정(기획/편집/모션/사운드)"
+      - "작업 보드 생성 및 마일스톤 등록"
+
+  - id: A10_preproduction
+    name: "프리프로덕션"
+    owner: "planning"
+    due: "D0"
+    status: "ready"
+    tasks:
+      - "24초 쇼트리스트 확정(0-3/3-7/7-11/11-15/15-20/20-24)"
+      - "내레이션/자막 카피 확정"
+      - "라이선스 체크리스트 작성"
+
+  - id: A20_asset_build
+    name: "에셋 제작"
+    owner: "design"
+    due: "D0-D1"
+    status: "ready"
+    tasks:
+      - "앵커 배경, 히어로/빌런 실루엣, HUD 오버레이 제작"
+      - "lower-third, LIVE 배지, 타이틀 카드 제작"
+      - "요일별(일/화) CTA 그래픽 2종 제작"
+
+  - id: A30_edit_master
+    name: "러프컷 및 마스터 편집"
+    owner: "editor"
+    due: "D1"
+    status: "ready"
+    tasks:
+      - "러프컷 24.0초 고정"
+      - "모션그래픽/자막 삽입"
+      - "사운드 디자인 및 밸런싱"
+
+  - id: A40_qc_dod
+    name: "DoD 검수"
+    owner: "lead_editor"
+    due: "D1"
+    status: "ready"
+    checks:
+      - "길이 24.0초(±0.2)"
+      - "-14 LUFS / peak <= -1dB"
+      - "모바일 자막 가독성 통과"
+      - "요일/CTA 문구 정확성 확인"
+
+  - id: A50_pilot_test
+    name: "파일럿 테스트"
+    owner: "qa"
+    due: "D2"
+    status: "ready"
+    sample_size: 5
+    tasks:
+      - "내부 시사 링크 배포"
+      - "5개 항목(훅/명확성/가독성/오디오/CTA 인지) 설문 회수"
+      - "이슈 P0/P1/P2 분류"
+
+  - id: A60_reflect_release
+    name: "반영 및 릴리즈"
+    owner: "producer"
+    due: "D3"
+    status: "ready"
+    tasks:
+      - "P0 즉시 수정, P1 출시 전 반영"
+      - "release_candidate 확정"
+      - "일/화 업로드 24시간 전 예약"
+
+artifacts:
+  - "pilot_feedback_log.md"
+  - "change_log_ep0.md"
+  - "ep0_master_final.mp4"
+
+success_metrics:
+  - key: "hook_score"
+    target: ">=4.0/5"
+  - key: "message_clarity"
+    target: ">=80%"
+  - key: "cta_recall"
+    target: ">=85%"
