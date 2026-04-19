@@ -30,7 +30,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 
 logger = logging.getLogger("run_video_trailer")
 
@@ -355,9 +355,10 @@ def stage_veo():
         BudgetExceededError,
         check_before_generation,
     )
-    # B-2: Veo 3.1 Fast 720p audio OFF = $0.10/s × 8s = $0.80
-    # (Fallback to $0.15/s × 8s = $1.20 if generate_audio param not supported)
-    estimated_cost = 0.80
+    # A1 decision (v2.2): Veo 3.1 Fast $0.15/s × 8s = $1.20
+    # (generate_audio=False removed due to API 400 on 2026-04-20 run #6; Veo default audio ON)
+    # Audio track will be stripped in Phase V4 ffmpeg assembly if needed.
+    estimated_cost = 1.20
     try:
         if dry_run:
             logger.info(
@@ -403,11 +404,11 @@ def stage_veo():
             "file_size_mb": round(size / 1024 / 1024, 3),
             "resolution": "720p",
             "aspect_ratio": "9:16",
-            "audio_generated": False,
+            "audio_generated": True,
             "dry_run": True,
         }
     else:
-        logger.info("[6V] Calling Veo API (estimated charge ~$0.80, may fallback to $1.20)...")
+        logger.info("[6V] Calling Veo API (estimated charge $1.20, audio included by Veo default)...")
         from engine.video.veo_client import VeoClient
 
         veo = VeoClient()

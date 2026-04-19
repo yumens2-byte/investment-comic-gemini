@@ -5,20 +5,18 @@ Model        : veo-3.1-fast-generate-preview
 Resolution   : 720p (9:16 vertical) — B-2 conservative option
 Duration     : 4/6/8 seconds per cut
 Pricing (2026-04-19, Google official Gemini API):
-  - 720p with audio    : $0.15/s
-  - 720p without audio : $0.10/s  (33% savings)
-  - 1080p with audio   : $0.15/s  (same price as 720p)
-  - 1080p without audio: $0.10/s
+  - Veo 3.1 Fast (720p or 1080p, with audio) : $0.15/s
+  - Veo 3.1 Fast (720p or 1080p, audio off)  : $0.10/s (Vertex AI only — Gemini API does NOT honor)
 
-Why Fast + 720p (B-2):
-  - Lite model does NOT support `negative_prompt` (confirmed 2026-04-19 via 400 error)
-  - Fast supports negative_prompt (MARVEL 3-layer defense)
-  - 720p + 9:16 is the safest combo (no reported 1080p+9:16 compatibility issues)
-  - ICG final distribution is Shorts/Reels — 720p is sufficient
+Why `generate_audio` parameter removed in v1.3.1:
+  - GenerateVideosConfig SDK field exists (GitHub Issue #1559) but
+    `veo-3.1-fast-generate-preview` Gemini API returned 400 on 2026-04-20 run #6.
+  - A1 decision: remove param entirely, let Veo default (audio ON) apply.
+  - Phase V4 will strip audio via ffmpeg -an during assembly.
+  - Cost locked at $0.15/s × 8s = $1.20 per cut.
 
 Extension    : Not supported → use I2V chaining instead
 SynthID      : Auto-watermarked (invisible)
-Audio OFF    : We disable Veo audio; own TTS+BGM mixing in Phase V4
 
 IMPORTANT: Veo retains generated videos on Google servers for 2 days only.
            Download immediately after generation.
@@ -26,6 +24,7 @@ IMPORTANT: Veo retains generated videos on Google servers for 2 days only.
 Reference:
   - https://ai.google.dev/gemini-api/docs/video
   - https://ai.google.dev/gemini-api/docs/pricing
+  - https://github.com/googleapis/python-genai (official SDK)
 """
 import logging
 import os
@@ -33,17 +32,16 @@ import time
 from pathlib import Path
 from typing import Optional
 
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 MODEL = "veo-3.1-fast-generate-preview"
 DEFAULT_RESOLUTION = "720p"
 DEFAULT_ASPECT_RATIO = "9:16"
 DEFAULT_DURATION_SEC = 8
 DEFAULT_PERSON_GENERATION = "allow_adult"
-DEFAULT_GENERATE_AUDIO = False  # ICG uses own TTS+BGM in Phase V4
 
-# Pricing (USD per second, 2026-04-19 rates for Veo 3.1 Fast)
-UNIT_PRICE_AUDIO_ON = 0.15   # Same for 720p and 1080p
-UNIT_PRICE_AUDIO_OFF = 0.10  # Same for 720p and 1080p
+# Pricing (USD per second, 2026-04-19 rates for Veo 3.1 Fast via Gemini API)
+# NOTE: Audio-off discount ($0.10/s) is Vertex AI only; Gemini API charges $0.15/s regardless.
+UNIT_PRICE = 0.15
 
 # Polling configuration
 POLL_INTERVAL_SEC = 15
@@ -58,25 +56,6 @@ class VeoGenerationError(RuntimeError):
 
 class VeoTimeoutError(VeoGenerationError):
     """Raised when Veo operation polling exceeds POLL_TIMEOUT_SEC."""
-
-
-def _unit_price(generate_audio: bool) -> float:
-    """Return per-second cost based on audio setting.
-
-    Resolution (720p/1080p) has no price impact for Fast tier.
-    Audio inclusion is the only cost differentiator.
-    """
-    return UNIT_PRICE_AUDIO_ON if generate_audio else UNIT_PRICE_AUDIO_OFF
-
-
-def _is_unknown_param_error(err: Exception, param_name: str) -> bool:
-    """Detect the 'parameter isn't supported by this model' 400 error pattern."""
-    msg = str(err).lower()
-    return (
-        "400" in msg
-        and param_name.lower() in msg
-        and ("not supported" in msg or "isn't supported" in msg or "invalid_argument" in msg)
-    )
 
 
 class VeoClient:
@@ -98,40 +77,6 @@ class VeoClient:
         self.client = genai.Client(api_key=api_key)
         logger.info(f"[VeoClient] v{VERSION} initialized (model={MODEL})")
 
-    def _submit_operation(self, prompt: str, config_kwargs: dict):
-        """Submit the generate_videos operation with graceful fallback for unsupported params.
-
-        If the API rejects `generate_audio` (e.g., Gemini SDK param name mismatch or model
-        not honoring it), remove the param and retry once. Same for any other optional param
-        that might not be supported.
-        """
-        from google.genai import types
-
-        # First attempt: full config
-        try:
-            op = self.client.models.generate_videos(
-                model=MODEL,
-                prompt=prompt,
-                config=types.GenerateVideosConfig(**config_kwargs),
-            )
-            return op
-        except Exception as e:
-            # Check if the error is about `generate_audio` specifically
-            if "generate_audio" in config_kwargs and _is_unknown_param_error(e, "generate_audio"):
-                logger.warning(
-                    f"[VeoClient] `generate_audio` not supported — removing and retrying. "
-                    f"Cost will be $0.15/s instead of $0.10/s. Error: {e}"
-                )
-                fallback_config = {k: v for k, v in config_kwargs.items() if k != "generate_audio"}
-                op = self.client.models.generate_videos(
-                    model=MODEL,
-                    prompt=prompt,
-                    config=types.GenerateVideosConfig(**fallback_config),
-                )
-                return op
-            # Any other error: re-raise
-            raise
-
     def generate_text_to_video(
         self,
         prompt: str,
@@ -141,7 +86,7 @@ class VeoClient:
         aspect_ratio: str = DEFAULT_ASPECT_RATIO,
         negative_prompt: Optional[str] = None,
         person_generation: str = DEFAULT_PERSON_GENERATION,
-        generate_audio: bool = DEFAULT_GENERATE_AUDIO,
+        generate_audio: bool = False,
     ) -> dict:
         """
         Text-to-Video generation (used for cut 1 in the ICG trailer pipeline).
@@ -152,9 +97,11 @@ class VeoClient:
             duration_sec     : 4, 6, or 8
             resolution       : "720p" or "1080p"
             aspect_ratio     : "9:16" (vertical) or "16:9" (landscape)
-            negative_prompt  : Text describing what NOT to generate (MARVEL defense — Fast公式 supported)
+            negative_prompt  : What NOT to generate (Fast officially supports)
             person_generation: "allow_adult" | "allow_all" | "dont_allow"
-            generate_audio   : False = $0.10/s, True = $0.15/s (ICG default False)
+            generate_audio   : PARAMETER DEPRECATED AT API LEVEL. Kept for API compatibility.
+                               Veo default (audio ON) is applied regardless of this value.
+                               Audio will be stripped in Phase V4 ffmpeg assembly if needed.
 
         Returns:
             dict with video_uri, duration_sec, cost_usd, generation_ms, file_size_mb,
@@ -164,9 +111,19 @@ class VeoClient:
             VeoGenerationError on API errors
             VeoTimeoutError on polling timeout
         """
+        from google.genai import types
+
+        # Honor the interface but warn if caller expected audio-off behavior
+        if generate_audio is False:
+            logger.warning(
+                "[VeoClient] generate_audio=False requested but NOT applied — "
+                "Gemini API charges $0.15/s for Fast regardless. "
+                "Audio track will be included in output mp4; strip via ffmpeg -an if needed."
+            )
+
         logger.info(
             f"[VeoClient] T2V start: model={MODEL} resolution={resolution} "
-            f"aspect={aspect_ratio} duration={duration_sec}s audio={generate_audio} "
+            f"aspect={aspect_ratio} duration={duration_sec}s "
             f"prompt_len={len(prompt)}"
         )
         if negative_prompt:
@@ -181,14 +138,17 @@ class VeoClient:
             "duration_seconds": duration_sec,
             "person_generation": person_generation,
             "number_of_videos": 1,
-            "generate_audio": generate_audio,
         }
         if negative_prompt:
             config_kwargs["negative_prompt"] = negative_prompt
 
-        # Submit with fallback for unsupported params
+        # Submit operation (no fallback logic — param set is minimal and SDK-verified)
         try:
-            operation = self._submit_operation(prompt, config_kwargs)
+            operation = self.client.models.generate_videos(
+                model=MODEL,
+                prompt=prompt,
+                config=types.GenerateVideosConfig(**config_kwargs),
+            )
         except Exception as e:
             raise VeoGenerationError(f"Veo API call failed: {e}") from e
 
@@ -235,11 +195,11 @@ class VeoClient:
             raise VeoGenerationError(f"Downloaded file empty or missing: {out}")
 
         elapsed_ms = int((time.time() - start_ts) * 1000)
-        cost_usd = _unit_price(generate_audio) * duration_sec
+        cost_usd = UNIT_PRICE * duration_sec
         file_size_mb = out.stat().st_size / 1024 / 1024
         logger.info(
             f"[VeoClient] T2V done: path={out} size={file_size_mb:.2f}MB "
-            f"elapsed={elapsed_ms}ms cost=${cost_usd:.4f} audio={generate_audio}"
+            f"elapsed={elapsed_ms}ms cost=${cost_usd:.4f}"
         )
         return {
             "video_uri": str(out),
@@ -249,7 +209,7 @@ class VeoClient:
             "file_size_mb": round(file_size_mb, 2),
             "resolution": resolution,
             "aspect_ratio": aspect_ratio,
-            "audio_generated": generate_audio,
+            "audio_generated": True,  # Veo default ON — strip via ffmpeg in Phase V4
         }
 
     def generate_image_to_video(
@@ -262,7 +222,7 @@ class VeoClient:
         aspect_ratio: str = DEFAULT_ASPECT_RATIO,
         negative_prompt: Optional[str] = None,
         person_generation: str = DEFAULT_PERSON_GENERATION,
-        generate_audio: bool = DEFAULT_GENERATE_AUDIO,
+        generate_audio: bool = False,
     ) -> dict:
         """
         Image-to-Video generation (used for cut 2, 3 in I2V chain).
