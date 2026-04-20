@@ -515,6 +515,26 @@ def _send_telegram_text(chat_id: str, text: str) -> dict:
     }
 
 
+def _split_message_chunks(text: str, chunk_size: int = 3500) -> list[str]:
+    """Split long text into Telegram-safe chunks preserving line boundaries when possible."""
+    if len(text) <= chunk_size:
+        return [text]
+
+    chunks: list[str] = []
+    remaining = text
+    while remaining:
+        if len(remaining) <= chunk_size:
+            chunks.append(remaining)
+            break
+
+        split_at = remaining.rfind("\n", 0, chunk_size)
+        if split_at <= 0:
+            split_at = chunk_size
+        chunks.append(remaining[:split_at].rstrip())
+        remaining = remaining[split_at:].lstrip("\n")
+    return chunks
+
+
 def stage_manual_prompt_notify():
     """
     PRE-OP stage: Send Veo prompt to Telegram for manual generation in Gemini chat.
@@ -564,24 +584,43 @@ def stage_manual_prompt_notify():
         "policy: manual Gemini generation / no X publish\n\n"
         + "\n\n".join(prompt_blocks)
     )
-    max_len = 3900
-    if len(message) > max_len:
-        suffix = "\n\n...(truncated in Telegram)"
-        message = message[: max_len - len(suffix)] + suffix
+    # Always persist prompt package so operator can recover even if Telegram send fails.
+    out_dir = Path("output/manual_prompts")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    prompt_file = out_dir / f"{episode_id}.txt"
+    prompt_file.write_text(message, encoding="utf-8")
+    logger.info(f"[PRE-OP] prompt package saved: {prompt_file}")
+
+    chunks = _split_message_chunks(message, chunk_size=3500)
 
     if dry_run:
         logger.info(
             "[PRE-OP] DRY_RUN: skip Telegram send "
-            f"(chat_id={master_chat_id}, message_len={len(message)})"
+            f"(chat_id={master_chat_id}, message_len={len(message)}, chunks={len(chunks)})"
         )
         logger.debug(f"[PRE-OP] payload preview:\n{message}")
         return
 
-    result = _send_telegram_text(chat_id=master_chat_id, text=message)
-    logger.info(
-        f"[PRE-OP] prompt sent to Telegram: chat_id={result['chat_id']} "
-        f"message_id={result['message_id']}"
-    )
+    sent = 0
+    last_result = None
+    try:
+        for idx, chunk in enumerate(chunks, start=1):
+            if len(chunks) == 1:
+                payload = chunk
+            else:
+                payload = f"[{idx}/{len(chunks)}]\n{chunk}"
+            last_result = _send_telegram_text(chat_id=master_chat_id, text=payload)
+            sent += 1
+        logger.info(
+            f"[PRE-OP] prompt sent to Telegram: chat_id={last_result['chat_id']} "
+            f"chunks={sent} last_message_id={last_result['message_id']}"
+        )
+    except Exception as e:
+        logger.exception(
+            "[PRE-OP] Telegram send failed. "
+            f"Prompt file is saved for manual recovery: {prompt_file} | error={e}"
+        )
+        logger.warning("[PRE-OP] continuing without Telegram delivery (fail-open)")
 
 
 def stage_publish_telegram():

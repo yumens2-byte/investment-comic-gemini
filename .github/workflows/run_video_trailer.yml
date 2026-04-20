@@ -134,5 +134,6 @@ jobs:
           name: video-${{ github.run_id }}
           path: |
             output/videos/
+            output/manual_prompts/
             logs/
           retention-days: 30

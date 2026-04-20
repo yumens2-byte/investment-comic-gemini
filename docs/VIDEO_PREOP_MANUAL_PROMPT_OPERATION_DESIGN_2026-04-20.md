@@ -45,9 +45,10 @@
 
 예외/안전장치:
 - `DRY_RUN=true`면 실제 전송 없이 payload preview 로그만 남김
-- 메시지 길이 3900자 초과 시 텔레그램 한도 전에 안전 절단
+- 긴 메시지는 3,500자 단위로 분할 전송(순번 `[1/N]` 헤더)
 - `MASTER_CHAT_ID` 없으면 `TELEGRAM_FREE_CHANNEL_ID` fallback
 - cut2/cut3 파일 누락 시 cut1 프롬프트 fallback 사용(운영 중단 방지)
+- 텔레그램 전송 실패 시에도 `output/manual_prompts/{episode_id}.txt`에 저장 후 fail-open 지속
 
 ## 3-2. X 게시 차단
 - `stage_publish_x`에서 `OPERATION_MODE=manual_prompt`면 즉시 skip/warn 처리
