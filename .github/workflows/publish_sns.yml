@@ -2,7 +2,7 @@ name: 🚀 Publish SNS
 
 on:
   schedule:
-    # KST 06:00 월/수 = UTC 21:00 일/화
+    # KST 월/수 06:00 = UTC 일/화 21:00
     - cron: '0 21 * * 0,2'
   workflow_dispatch:
     inputs:
@@ -24,12 +24,78 @@ permissions:
   actions: read
 
 jobs:
-  # ── 사전 검증 ────────────────────────────────────────────────────────────────
+  # ──────────────────────────────────────────────
+  # Job 1: 사전 점검 + episode_id / slides_run_id 결정
+  # ──────────────────────────────────────────────
   pre-check:
     name: Pre-flight Check
     runs-on: ubuntu-latest
     outputs:
-@@ -170,46 +170,46 @@ jobs:
+      episode_id:    ${{ steps.resolve.outputs.episode_id }}
+      slides_run_id: ${{ steps.resolve.outputs.slides_run_id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Confirm guard (workflow_dispatch only)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "YES" ]; then
+            echo "❌ confirm=YES 미입력. 발행 중단."
+            exit 1
+          fi
+
+      - name: Resolve episode & slides run id
+        id: resolve
+        env:
+          INPUT_EPISODE_ID: ${{ github.event.inputs.episode_id }}
+          GH_TOKEN:         ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python -m scripts.resolve_episode \
+            --episode-id "$INPUT_EPISODE_ID" \
+            >> "$GITHUB_OUTPUT"
+
+  # ──────────────────────────────────────────────
+  # Job 2: 실제 SNS 발행
+  # ──────────────────────────────────────────────
+  publish:
+    name: Publish to SNS
+    needs: pre-check
+    runs-on: ubuntu-latest
+    if: needs.pre-check.outputs.episode_id != ''
+    env:
+      TELEGRAM_BOT_TOKEN:         ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_FREE_CHANNEL_ID:   ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
+      TELEGRAM_PAID_CHANNEL_ID:   ${{ secrets.TELEGRAM_PAID_CHANNEL_ID }}
+      X_API_KEY:                  ${{ secrets.X_API_KEY }}
+      X_API_SECRET:               ${{ secrets.X_API_SECRET }}
+      X_ACCESS_TOKEN:             ${{ secrets.X_ACCESS_TOKEN }}
+      X_ACCESS_TOKEN_SECRET:      ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
       - name: Download Assembled Slides (from Resume Episode run)
         if: needs.pre-check.outputs.slides_run_id != ''
@@ -49,30 +115,26 @@ jobs:
 
       - name: Anti-bot random delay
         run: |
-          DELAY=$((RANDOM % 100))
+          # 60~360초(1~6분) 랜덤 — 동일 시각 반복 발행 패턴 회피
+          DELAY=$((RANDOM % 301 + 60))
           echo "⏱️ Random delay: ${DELAY}s ($((DELAY/60))m $((DELAY%60))s)"
-          sleep $DELAY    
+          sleep "$DELAY"
 
       - name: STEP 8 — Publish SNS
         run: |
-          # schedule 실행 시 channels=all 고정, workflow_dispatch 시 입력값 사용
-          CHANNELS="${{ github.event.inputs.channels }}"
           if [ "${{ github.event_name }}" = "schedule" ]; then
             CHANNELS="all"
+          else
+            CHANNELS="${{ github.event.inputs.channels }}"
           fi
+
           EID="${{ needs.pre-check.outputs.episode_id }}"
           if [ -n "$EID" ]; then
-            python -m scripts.run_publish \
-              --episode "$EID" \
-              --channels "$CHANNELS"
+            python -m scripts.run_publish --episode "$EID" --channels "$CHANNELS"
           else
-            python -m scripts.run_publish \
-              --channels "$CHANNELS"
+            python -m scripts.run_publish --channels "$CHANNELS"
           fi
 
       - name: Notify Failure
         if: failure()
-        env:
-          TELEGRAM_BOT_TOKEN:       ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
         run: python -m scripts.notify_failure
