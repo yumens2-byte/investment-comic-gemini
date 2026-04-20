@@ -22,6 +22,14 @@ on:
           - DEBUG
           - INFO
           - WARNING
+      operation_mode:
+        description: 'manual_prompt=텔레그램 프롬프트 전송(수기 생성), full_pipeline=Veo/assembly/gate 실행'
+        required: false
+        default: 'manual_prompt'
+        type: choice
+        options:
+          - manual_prompt
+          - full_pipeline
 
 permissions:
   contents: read
@@ -63,6 +71,7 @@ jobs:
       VIDEO_BUDGET_USD_MONTHLY: '80'
       DRY_RUN:                  ${{ github.event.inputs.dry_run || 'false' }}
       LOG_LEVEL:                ${{ github.event.inputs.log_level || 'INFO' }}
+      OPERATION_MODE:           ${{ github.event.inputs.operation_mode || 'manual_prompt' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -87,16 +96,24 @@ jobs:
         run: python -m scripts.run_video_trailer --stage narrative
 
       - name: STEP 5V persist init
+        if: ${{ env.OPERATION_MODE == 'full_pipeline' }}
         run: python -m scripts.run_video_trailer --stage persist_init
 
       - name: STEP 6V veo generate
+        if: ${{ env.OPERATION_MODE == 'full_pipeline' }}
         run: python -m scripts.run_video_trailer --stage veo
 
       - name: STEP 7V ffmpeg assembly
+        if: ${{ env.OPERATION_MODE == 'full_pipeline' }}
         run: python -m scripts.run_video_trailer --stage assembly
 
       - name: PAUSE human gate notify
+        if: ${{ env.OPERATION_MODE == 'full_pipeline' }}
         run: python -m scripts.run_video_trailer --stage gate_notify
+
+      - name: PRE-OP manual prompt notify (Telegram)
+        if: ${{ env.OPERATION_MODE == 'manual_prompt' }}
+        run: python -m scripts.run_video_trailer --stage manual_prompt_notify
 
       - name: Summarize logs
         if: always()
