@@ -86,6 +86,29 @@ def _make_episode_id(episode_date: str) -> str:
     return f"ICG-{episode_date}-{no:03d}"
 
 
+def _load_recent_scenarios(episode_date: str, limit: int = 7) -> list[str]:
+    """
+    최근 에피소드 시나리오 타입 목록 조회.
+
+    중복 방지용 참고 데이터로만 사용하므로, 실패 시 빈 리스트 반환(진행).
+    """
+    try:
+        from engine.common.supabase_client import icg_table
+
+        rows = (
+            icg_table("episode_assets")
+            .select("scenario_type")
+            .lt("episode_date", episode_date)
+            .order("episode_date", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return [str(r.get("scenario_type") or "").upper() for r in (rows.data or []) if r]
+    except Exception as exc:
+        logger.warning("[step_analysis] 최근 시나리오 조회 실패 (진행): %s", exc)
+        return []
+
+
 def step_data(episode_date: str, logger_inst) -> None:
     """STEP 2: 시장 데이터 수집 → icg.daily_snapshots."""
     ts = logger_inst.step_start("STEP_2", "데이터 수집")
@@ -173,6 +196,24 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
             from engine.narrative.scenario_selector import select_scenario
             scenario_type_v2 = select_scenario(risk_level_v2, event_type)
             logger.info("[Step 3-3] scenario=%s", scenario_type_v2)
+
+            # ── STEP 3-3b: 스토리라인 중복 완화 (최근 시나리오 연속 반복 방지) ──
+            from engine.narrative.storyline_guard import choose_scenario_with_diversity
+
+            recent_scenarios = _load_recent_scenarios(episode_date, limit=7)
+            scenario_type_v2, diversity_reason = choose_scenario_with_diversity(
+                base_scenario=scenario_type_v2,
+                risk_level=risk_level_v2,
+                event_type=event_type,
+                recent_scenarios=recent_scenarios,
+                max_same_streak=2,
+            )
+            logger.info(
+                "[Step 3-3b] scenario_diversity scenario=%s recent=%s reason=%s",
+                scenario_type_v2,
+                recent_scenarios[:5],
+                diversity_reason,
+            )
 
             # ── STEP 3-4: 캐릭터 재선정 (scenario별 분기) ─────────────────────
             if scenario_type_v2 == "NO_BATTLE":
