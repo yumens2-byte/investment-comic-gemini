@@ -10,6 +10,7 @@ Stages:
   veo               : STEP 6V — Veo 3.1 Lite x 3 cuts (I2V chaining)
   assembly          : STEP 7V — FFmpeg concat + audio + subtitle + render
   gate_notify       : PAUSE   — Telegram approval request to master
+  manual_prompt_notify: PRE-OP — Telegram prompt delivery for manual Gemini generation
   publish_telegram  : STEP 8V-a — TG free + paid channel video publish
   publish_x         : STEP 8V-b — X (Twitter) chunked video upload
   publish_shorts    : STEP 8V-c — YouTube Shorts API upload
@@ -30,7 +31,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-VERSION = "1.4.2"
+VERSION = "1.4.3"
 
 logger = logging.getLogger("run_video_trailer")
 
@@ -214,9 +215,9 @@ def _get_episode_id(today: str) -> str:
     return f"icg-v-{today}-001"
 
 
-def _load_cut1_prompt() -> tuple[str, str]:
+def _load_cut_prompt(cut_no: int) -> tuple[str, str]:
     """
-    Load cut1 prompt from config/prompts/cut1_prompt.txt.
+    Load cut prompt from config/prompts/cut{n}_prompt.txt.
 
     File format (section-based):
         ===PROMPT===
@@ -234,9 +235,9 @@ def _load_cut1_prompt() -> tuple[str, str]:
     """
     from pathlib import Path
 
-    prompt_path = Path("config/prompts/cut1_prompt.txt")
+    prompt_path = Path(f"config/prompts/cut{cut_no}_prompt.txt")
     if not prompt_path.exists():
-        raise FileNotFoundError(f"Cut1 prompt file not found: {prompt_path}")
+        raise FileNotFoundError(f"Cut{cut_no} prompt file not found: {prompt_path}")
 
     text = prompt_path.read_text(encoding="utf-8")
     sections = {}
@@ -259,13 +260,18 @@ def _load_cut1_prompt() -> tuple[str, str]:
     negative = sections.get("NEGATIVE_PROMPT", "")
 
     if not main_prompt:
-        raise ValueError("PROMPT section missing or empty in cut1_prompt.txt")
+        raise ValueError(f"PROMPT section missing or empty in cut{cut_no}_prompt.txt")
 
     full_prompt = main_prompt
     if character_lock:
         full_prompt = f"{main_prompt}\n\n[CHARACTER LOCK]\n{character_lock}"
 
     return full_prompt, negative
+
+
+def _load_cut1_prompt() -> tuple[str, str]:
+    """Backward-compatible wrapper for existing cut1 call sites."""
+    return _load_cut_prompt(1)
 
 
 def _create_dummy_mp4(output_path: str) -> int:
@@ -483,6 +489,101 @@ def stage_gate_notify():
     logger.info("[PAUSE] awaiting master approval — workflow ends here")
 
 
+def _send_telegram_text(chat_id: str, text: str) -> dict:
+    """Send plain text message via Telegram Bot API."""
+    import requests
+
+    bot_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    if not bot_token:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN env not set")
+
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "disable_web_page_preview": True,
+    }
+    resp = requests.post(url, json=payload, timeout=15)
+    resp.raise_for_status()
+    data = resp.json()
+    if not data.get("ok"):
+        raise RuntimeError(f"Telegram API error: {data}")
+    result = data.get("result", {})
+    return {
+        "chat_id": result.get("chat", {}).get("id"),
+        "message_id": result.get("message_id"),
+    }
+
+
+def stage_manual_prompt_notify():
+    """
+    PRE-OP stage: Send Veo prompt to Telegram for manual generation in Gemini chat.
+
+    Why:
+      Video quality is not finalized yet, so before production rollout we only deliver
+      the prompt package to operator Telegram chat and generate manually in Gemini.
+      In this mode, X publishing is intentionally disabled.
+    """
+    logger.info("[PRE-OP] manual prompt notify start")
+
+    master_chat_id = os.environ.get("MASTER_CHAT_ID") or os.environ.get("TELEGRAM_FREE_CHANNEL_ID")
+    if not master_chat_id:
+        raise RuntimeError("MASTER_CHAT_ID (or TELEGRAM_FREE_CHANNEL_ID fallback) env not set")
+
+    prompt_blocks: list[str] = []
+    for cut_no in (1, 2, 3):
+        try:
+            full_prompt, negative_prompt = _load_cut_prompt(cut_no)
+            source = f"cut{cut_no}_prompt.txt"
+        except FileNotFoundError:
+            # Fallback for compatibility: if cut2/3 prompt file is not prepared yet,
+            # reuse cut1 prompt so manual flow still receives 3 prompt blocks.
+            full_prompt, negative_prompt = _load_cut1_prompt()
+            source = f"cut1_prompt.txt (fallback for cut{cut_no})"
+            logger.warning(
+                f"[PRE-OP] cut{cut_no} prompt file missing; fallback to cut1 prompt"
+            )
+
+        prompt_blocks.append(
+            f"[CUT {cut_no} / 8s / source={source}]\n"
+            f"{full_prompt}\n\n"
+            f"[CUT {cut_no} NEGATIVE_PROMPT]\n"
+            f"{negative_prompt}"
+        )
+
+    today_kst = datetime.now(ZoneInfo("Asia/Seoul")).date().isoformat()
+    episode_id = _get_episode_id(today_kst)
+    operation_mode = os.environ.get("OPERATION_MODE", "manual_prompt").lower()
+    dry_run = os.environ.get("DRY_RUN", "false").lower() == "true"
+
+    message = (
+        "🎬 ICG VIDEO PRE-OP MODE\n"
+        f"episode_id: {episode_id}\n"
+        f"operation_mode: {operation_mode}\n"
+        "target_duration: 24s total (8s x 3 cuts)\n"
+        "policy: manual Gemini generation / no X publish\n\n"
+        + "\n\n".join(prompt_blocks)
+    )
+    max_len = 3900
+    if len(message) > max_len:
+        suffix = "\n\n...(truncated in Telegram)"
+        message = message[: max_len - len(suffix)] + suffix
+
+    if dry_run:
+        logger.info(
+            "[PRE-OP] DRY_RUN: skip Telegram send "
+            f"(chat_id={master_chat_id}, message_len={len(message)})"
+        )
+        logger.debug(f"[PRE-OP] payload preview:\n{message}")
+        return
+
+    result = _send_telegram_text(chat_id=master_chat_id, text=message)
+    logger.info(
+        f"[PRE-OP] prompt sent to Telegram: chat_id={result['chat_id']} "
+        f"message_id={result['message_id']}"
+    )
+
+
 def stage_publish_telegram():
     """STEP 8V-a: Publish to TG free + paid channels (runs AFTER master approval)."""
     logger.info("[8V-a] Telegram channels publish start")
@@ -516,6 +617,11 @@ def stage_publish_telegram():
 
 def stage_publish_x():
     """STEP 8V-b: Publish to X (Twitter) via chunked upload."""
+    operation_mode = os.environ.get("OPERATION_MODE", "manual_prompt").lower()
+    if operation_mode == "manual_prompt":
+        logger.warning("[8V-b] skipped: OPERATION_MODE=manual_prompt (no X publish policy)")
+        return
+
     logger.info("[8V-b] X video publish start")
 
     # TODO: from engine.publish.x_video_publisher import publish_video_to_x
@@ -567,6 +673,7 @@ STAGES = {
     "veo": stage_veo,
     "assembly": stage_assembly,
     "gate_notify": stage_gate_notify,
+    "manual_prompt_notify": stage_manual_prompt_notify,
     "publish_telegram": stage_publish_telegram,
     "publish_x": stage_publish_x,
     "publish_shorts": stage_publish_shorts,
