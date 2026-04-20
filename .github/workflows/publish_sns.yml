@@ -2,8 +2,8 @@ name: 🚀 Publish SNS
 
 on:
   schedule:
-    # KST 06:00 월/수 = UTC 21:00 일/화
-    - cron: '0 21 * * 0,2'
+    # KST 22:00 매일 = UTC 13:00 매일
+    - cron: '0 13 * * *'
   workflow_dispatch:
     inputs:
       episode_id:
@@ -192,10 +192,10 @@ jobs:
 
       - name: STEP 8 — Publish SNS
         run: |
-          # schedule 실행 시 channels=all 고정, workflow_dispatch 시 입력값 사용
+          # schedule 실행 시 channels=telegram 고정, workflow_dispatch 시 입력값 사용
           CHANNELS="${{ github.event.inputs.channels }}"
           if [ "${{ github.event_name }}" = "schedule" ]; then
-            CHANNELS="all"
+            CHANNELS="telegram"
           fi
           EID="${{ needs.pre-check.outputs.episode_id }}"
           if [ -n "$EID" ]; then
