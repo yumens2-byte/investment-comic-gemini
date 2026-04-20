@@ -156,3 +156,32 @@ def compose_final(
     size_mb = Path(output_path).stat().st_size / 1024 / 1024
     logger.info(f"[ffmpeg_composer] final done: {output_path} ({size_mb:.2f} MB)")
     return output_path
+
+def crop_bottom_banner(
+    input_mp4: str,
+    output_mp4: str,
+    crop_height: int = 150,
+    mode: str = "pad",   # "pad" | "scale"
+) -> str:
+    """
+    하단 banner 영역을 crop하여 제거.
+
+    Args:
+        input_mp4: 원본 mp4 (720×1280)
+        output_mp4: 출력 mp4 (720×1280)
+        crop_height: 하단에서 제거할 픽셀 높이 (기본 150px)
+        mode:
+            "pad"  — crop 후 검은 pad로 원본 높이 복원 (Phase V4 자막용)
+            "scale" — crop 후 원본 높이로 vertical stretch
+
+    Returns:
+        output_mp4 경로
+    """
+    if mode == "pad":
+        vf = f"crop=720:{1280 - crop_height}:0:0,pad=720:1280:(ow-iw)/2:0:black"
+    elif mode == "scale":
+        vf = f"crop=720:{1280 - crop_height}:0:0,scale=720:1280"
+    else:
+        raise ValueError(f"Unknown mode: {mode}")
+    # ffmpeg -i input -vf vf -c:a copy output
+    ...
