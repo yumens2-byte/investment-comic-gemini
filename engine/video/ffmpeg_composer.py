@@ -185,3 +185,22 @@ def crop_bottom_banner(
         raise ValueError(f"Unknown mode: {mode}")
     # ffmpeg -i input -vf vf -c:a copy output
     ...
+
+def concat_cuts_with_crop(
+    cut_paths: list,
+    output_path: str,
+    crop_height: int = 150,
+    mode: str = "pad",
+) -> str:
+    """
+    3컷 mp4를 crop 후 concat.
+
+    순서:
+      1. 각 cut별 crop_bottom_banner() 적용 → cut1_cropped, cut2_cropped, cut3_cropped
+      2. concat_cuts() 호출로 3개 crop 결과물 결합
+      3. 임시 crop 파일 cleanup
+
+    Returns:
+        최종 concat mp4 경로 (720×1280, 24초)
+    """
+    ...
