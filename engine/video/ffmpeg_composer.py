@@ -184,7 +184,6 @@ def crop_bottom_banner(
     else:
         raise ValueError(f"Unknown mode: {mode}")
     # ffmpeg -i input -vf vf -c:a copy output
-    ...
 
 def concat_cuts_with_crop(
     cut_paths: list,
@@ -203,4 +202,3 @@ def concat_cuts_with_crop(
     Returns:
         최종 concat mp4 경로 (720×1280, 24초)
     """
-    ...
