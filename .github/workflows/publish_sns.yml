@@ -34,6 +34,7 @@ jobs:
       episode_id:    ${{ steps.resolve.outputs.episode_id }}
       slides_run_id: ${{ steps.resolve.outputs.slides_run_id }}
     env:
+      DRY_RUN:      "false"
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
     steps:
@@ -78,6 +79,7 @@ jobs:
     runs-on: ubuntu-latest
     if: needs.pre-check.outputs.episode_id != ''
     env:
+      DRY_RUN:                    "false"
       SUPABASE_URL:               ${{ secrets.SUPABASE_URL }}
       SUPABASE_KEY:               ${{ secrets.SUPABASE_KEY }}
       TELEGRAM_BOT_TOKEN:         ${{ secrets.TELEGRAM_BOT_TOKEN }}
