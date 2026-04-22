@@ -2,8 +2,8 @@ name: 🚀 Publish SNS
 
 on:
   schedule:
-    # KST 월/수 06:00 = UTC 일/화 21:00
-    - cron: '0 21 * * 0,2'
+    # KST 월/수 06:00 = UTC 화/토
+    - cron: '0 21 * * 6,2,4'
   workflow_dispatch:
     inputs:
       episode_id:
