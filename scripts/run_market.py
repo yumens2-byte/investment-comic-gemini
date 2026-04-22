@@ -15,6 +15,15 @@ v2.0 변경사항 (2026-04-18):
     (NO_BATTLE / ALLIANCE / ONE_VS_ONE 3종 시나리오 + EndingTone 결정)
   - SCENARIO_V2_ENABLED=false (기본값): 기존 로직 100% 유지
   - SCENARIO_V2_ENABLED=true: v2.0 로직 적용
+
+v1.29.0 (2026-04-22 — Step 3-Story 보정):
+  - step_analysis(): SCENARIO_V2 분기 내부에 STEP 3-Story 블록 추가
+    → engine.character.* 엔진 활성화 (character_engine/story_state_manager/prompt_builder)
+    → ctx["guest_character_prompt"], ctx["_story_state"], ctx["_guest_characters"] 주입
+  - step_narrative(): generate_episode 호출에 guest_character_prompt 전달
+  - main(): persist 완료 후 _save_story_state() 호출로 다음 날 에피소드 상태 저장
+  - Feature flag: 기존 SCENARIO_V2_ENABLED에 편입 (별도 STEP3_STORY_ENABLED 없음)
+  - 후방 호환: SCENARIO_V2_ENABLED=false 시 ctx에 빈 값 주입, 기존 로직 그대로
 """
 
 from __future__ import annotations
@@ -324,6 +333,32 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
         # ── analysis_upsert (기존 시그니처 유지) ──────────────────────────────
         analysis_upsert(episode_date, event_type, battle_result.to_dict(), delta, arc_context)
 
+        # ── STEP 3-Story: 게스트 캐릭터 판단 (2026-04-22 보정) ─────────────────
+        # SCENARIO_V2_ENABLED=true 일 때만 실행. engine.character.* 엔진 활성화.
+        # 실패해도 파이프라인은 계속 (try/except로 격리).
+        _guest_prompt: str = ""
+        _story_state: dict = {}
+        _guest_characters: list = []
+        if _scenario_v2:
+            try:
+                from engine.character.character_engine import resolve_guest_characters
+                from engine.character.prompt_builder import build_guest_character_prompt
+                from engine.character.story_state_manager import load_story_state
+
+                _story_state = load_story_state(episode_date)
+                _guest_characters = resolve_guest_characters(curr_row, _story_state)
+                _guest_prompt = build_guest_character_prompt(
+                    curr_row, _story_state, _guest_characters
+                )
+                logger.info(
+                    "[Step 3-Story] 게스트 %d명: %s",
+                    len(_guest_characters),
+                    [f"{c}({r})" for c, r in _guest_characters] or ["없음"],
+                )
+            except Exception as _exc:
+                logger.warning("[Step 3-Story] 실패 (파이프라인 계속): %s", _exc)
+                _guest_prompt, _story_state, _guest_characters = "", {}, []
+
         # ── STEP 3-8: v2.0 필드 daily_analysis 별도 업데이트 ─────────────────
         if _scenario_v2:
             try:
@@ -353,6 +388,10 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
             "risk_level":    risk_level_v2,
             "ending_tone":   ending_tone_v2,
             "heroes":        heroes_v2,
+            # Step 3-Story 신규 필드 (2026-04-22 보정)
+            "guest_character_prompt": _guest_prompt,
+            "_story_state":           _story_state,
+            "_guest_characters":      _guest_characters,
         }
 
         # ── Hybrid 설계: ctx를 DB에 저장 (narrative/persist/image 독립 실행 대비) ──
@@ -392,6 +431,8 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
             scenario_type=ctx.get("scenario_type", "ONE_VS_ONE"),
             ending_tone=ctx.get("ending_tone", "TENSE"),
             heroes=ctx.get("heroes", [ctx["hero_id"]]),
+            # Step 3-Story 신규 파라미터 (2026-04-22 보정)
+            guest_character_prompt=ctx.get("guest_character_prompt", ""),
         )
         script_dict = script.model_dump()
 
@@ -632,6 +673,37 @@ def main() -> None:
                     )
                 sl.info("STEP_5", "[Hybrid] narrative_script_json DB 복원 완료")
             step_persist(episode_date, episode_id, ctx, script_dict, sl)
+
+            # ── Step 3-Story-Save: 에피소드 완료 후 story_state 저장 (2026-04-22 보정) ──
+            # SCENARIO_V2_ENABLED=true 이고 ctx에 _story_state 있을 때만 실행.
+            # 실패해도 파이프라인 계속 (다음 날 load_story_state가 DEFAULT 반환).
+            _scenario_v2_enabled = os.environ.get("SCENARIO_V2_ENABLED", "false").lower() == "true"
+            if _scenario_v2_enabled and ctx.get("_story_state"):
+                try:
+                    from engine.character.story_state_manager import (
+                        save_story_state,
+                        update_after_episode,
+                    )
+
+                    _delta = ctx.get("delta") or {}
+                    _vix = _delta.get("vix") or 0.0
+                    _outcome = (ctx.get("battle_result") or {}).get("outcome", "DRAW")
+                    _updated_state = update_after_episode(
+                        ctx["_story_state"],
+                        ctx.get("_guest_characters", []),
+                        _outcome,
+                        _vix,
+                    )
+                    save_story_state(episode_date, _updated_state)
+                    sl.info(
+                        "STEP_5",
+                        f"[Step 3-Story-Save] story_state 저장 완료 "
+                        f"(arc={_updated_state.get('arc_id')} "
+                        f"ep={_updated_state.get('arc_episode', 0)} "
+                        f"rift={_updated_state.get('world_state', {}).get('dimensional_rift_progress', 0)}%)",
+                    )
+                except Exception as _exc:
+                    logger.warning("[Step 3-Story-Save] 실패 (영향 없음): %s", _exc)
 
         if args.stage in ("all", "image"):
             if not ctx:
