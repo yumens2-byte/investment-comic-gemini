@@ -13,7 +13,7 @@ select = ["E", "F", "W", "I"]
 ignore = ["E501"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["engine"]
+known-first-party = ["engine", "scripts"]
 
 [tool.ruff.format]
 quote-style = "double"
