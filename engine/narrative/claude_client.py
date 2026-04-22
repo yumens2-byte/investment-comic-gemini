@@ -12,6 +12,12 @@ v2.0 변경사항 (2026-04-18):
 - generate_episode(): scenario_type, ending_tone, heroes 파라미터 추가 (기본값 포함)
 - render_user_prompt() 호출에 v2.0 파라미터 전달
 - _validate_canon(): NO_BATTLE 시 villain 패널이 없음을 확인하는 방어 로직 추가
+
+v2.1 변경사항 (2026-04-22 — Step 3-Story 보정):
+- generate_episode(): guest_character_prompt 파라미터 추가 (기본값 "").
+- render_user_prompt() 호출에 guest_character_prompt 전달.
+- fallback 경로에도 guest_character_prompt append 로직 추가 (Jinja2 변수 미지원 시).
+- 후방 호환: 기본값 ""으로 기존 동작 유지.
 """
 
 from __future__ import annotations
@@ -208,6 +214,8 @@ def generate_episode(
     scenario_type: str = "ONE_VS_ONE",
     ending_tone: str = "TENSE",
     heroes: list[str] | None = None,
+    # ── Step 3-Story 신규 파라미터 (2026-04-22 보정) ──────────────────────────
+    guest_character_prompt: str = "",
 ) -> EpisodeScript:
     """
     Claude API를 호출하여 EpisodeScript를 생성.
@@ -254,12 +262,14 @@ def generate_episode(
             scenario_type=scenario_type,
             ending_tone=ending_tone,
             heroes=heroes,
+            # Step 3-Story 추가 파라미터 (2026-04-22 보정)
+            guest_character_prompt=guest_character_prompt,
         )
     except TypeError:
-        # render_user_prompt()가 v2.0 파라미터를 수용하지 못할 경우 fallback:
-        # 기존 방식으로 호출 후 v2.0 컨텍스트를 문자열로 append.
+        # render_user_prompt()가 v2.0/Step 3-Story 파라미터를 수용하지 못할 경우 fallback:
+        # 기존 방식으로 호출 후 v2.0/게스트 컨텍스트를 문자열로 append.
         logger.warning(
-            "[claude] render_user_prompt()가 v2.0 파라미터를 수용하지 못함 — "
+            "[claude] render_user_prompt()가 신규 파라미터를 수용하지 못함 — "
             "기존 방식 fallback. prompt_tpl.py 업데이트를 권장합니다."
         )
         user_prompt = render_user_prompt(
@@ -289,6 +299,9 @@ def generate_episode(
                 f"\n⚠️ ALLIANCE: 2 heroes ({_heroes_str}) vs 1 villain. "
                 "Show alliance formation in panels 3-4.\n"
             )
+        # Step 3-Story: 게스트 캐릭터 블록도 append (2026-04-22 보정)
+        if guest_character_prompt:
+            user_prompt += f"\n\n{guest_character_prompt}\n"
 
     last_error: Exception | None = None
 
