@@ -16,6 +16,12 @@ v2.0 변경사항 (2026-04-18):
   - SCENARIO_V2_ENABLED=false (기본값): 기존 로직 100% 유지
   - SCENARIO_V2_ENABLED=true: v2.0 로직 적용
 
+v1.29.1 (2026-04-22 — episode_id 불일치 + 로그 통일):
+  - _make_episode_id(): 미발행 에피소드가 있으면 재사용 (별도 프로세스 실행 대응)
+  - step_analysis() Step 3-Story: logger.info/warning → logger_inst.info/warning
+    (run.log NDJSON 기록 보장, StepLogger 통일)
+  - main() Step 3-Story-Save: logger.warning → sl.warning 통일
+
 v1.29.0 (2026-04-22 — Step 3-Story 보정):
   - step_analysis(): SCENARIO_V2 분기 내부에 STEP 3-Story 블록 추가
     → engine.character.* 엔진 활성화 (character_engine/story_state_manager/prompt_builder)
@@ -75,21 +81,45 @@ def _latest_date(stage: str) -> str:
 
 
 def _make_episode_id(episode_date: str) -> str:
-    """에피소드 ID 생성: ICG-YYYY-MM-DD-001."""
+    """
+    에피소드 ID 생성/재사용 (ICG-YYYY-MM-DD-NNN).
+
+    Hybrid 멀티-스테이지 패턴 대응:
+      - 해당 날짜에 아직 published 되지 않은 에피소드가 있으면 → 해당 ID 재사용
+      - 없으면 → (last_no + 1) 로 신규 생성
+    이렇게 하지 않으면 image stage 등 후속 stage가 별도 프로세스로
+    실행될 때 +1 증가한 ID를 반환하여 episode_id 불일치가 발생함.
+
+    v1.29.1 (2026-04-22): episode_id 불일치 버그 수정.
+    """
     from engine.common.supabase_client import icg_table
 
     try:
         rows = (
             icg_table("episode_assets")
-            .select("episode_no")
+            .select("episode_no, status")
             .eq("episode_date", episode_date)
             .order("episode_no", desc=True)
             .limit(1)
             .execute()
         )
-        last_no = rows.data[0]["episode_no"] if rows.data else 0
-        no = (last_no or 0) + 1
-    except Exception:
+        if rows.data:
+            last_no     = rows.data[0]["episode_no"] or 0
+            last_status = rows.data[0].get("status") or ""
+            # 진행 중인 에피소드 (미발행) → 재사용
+            if last_status != "published":
+                episode_id = f"ICG-{episode_date}-{last_no:03d}"
+                logger.info(
+                    "[pipeline] 기존 episode_id 재사용: %s (status=%s)",
+                    episode_id, last_status,
+                )
+                return episode_id
+            # 마지막이 published → 새 번호 생성
+            no = last_no + 1
+        else:
+            no = 1
+    except Exception as _exc:
+        logger.warning("[pipeline] episode_id 조회 실패 (no=1 fallback): %s", _exc)
         no = 1
 
     return f"ICG-{episode_date}-{no:03d}"
@@ -350,14 +380,19 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                 _guest_prompt = build_guest_character_prompt(
                     curr_row, _story_state, _guest_characters
                 )
-                logger.info(
-                    "[Step 3-Story] 게스트 %d명: %s",
-                    len(_guest_characters),
-                    [f"{c}({r})" for c, r in _guest_characters] or ["없음"],
+                # sl 사용 → run.log NDJSON 기록 보장 (logger.info는 StepLogger 미기록)
+                _guest_names = [f"{c}({r})" for c, r in _guest_characters] or ["없음"]
+                logger_inst.info(
+                    "STEP_3",
+                    f"[Step 3-Story] 게스트 {len(_guest_characters)}명: {_guest_names}",
                 )
             except Exception as _exc:
-                logger.warning("[Step 3-Story] 실패 (파이프라인 계속): %s", _exc)
+                logger_inst.warning(
+                    "STEP_3",
+                    f"[Step 3-Story] 실패 (파이프라인 계속): {_exc}",
+                )
                 _guest_prompt, _story_state, _guest_characters = "", {}, []
+
 
         # ── STEP 3-8: v2.0 필드 daily_analysis 별도 업데이트 ─────────────────
         if _scenario_v2:
@@ -703,7 +738,10 @@ def main() -> None:
                         f"rift={_updated_state.get('world_state', {}).get('dimensional_rift_progress', 0)}%)",
                     )
                 except Exception as _exc:
-                    logger.warning("[Step 3-Story-Save] 실패 (영향 없음): %s", _exc)
+                    sl.warning(
+                        "STEP_5",
+                        f"[Step 3-Story-Save] 실패 (영향 없음): {_exc}",
+                    )
 
         if args.stage in ("all", "image"):
             if not ctx:
