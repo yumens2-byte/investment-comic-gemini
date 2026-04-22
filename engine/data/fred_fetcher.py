@@ -3,12 +3,15 @@ engine/data/fred_fetcher.py
 FRED (St. Louis Fed) API에서 거시경제 지표 수집.
 
 수집 지표:
-  DFF        — 연방기금금리 (Fed Funds Rate)
-  DGS10      — 미국 10년 국채 금리
-  VIXCLS     — VIX (CBOE Volatility Index)
-  DCOILWTICO — WTI 유가 (달러/배럴)
-  DTWEXBGS   — 달러 인덱스
+  DFF          — 연방기금금리 (Fed Funds Rate)
+  DGS10        — 미국 10년 국채 금리
+  VIXCLS       — VIX (CBOE Volatility Index)
+  DCOILWTICO   — WTI 유가 (달러/배럴)
+  DTWEXBGS     — 달러 인덱스
   BAMLH0A0HYM2 — HY 스프레드 (High Yield OAS)
+  T10Y2Y       — 수익률 곡선 (10Y - 2Y, %) → icg.daily_snapshots.yield_curve
+                 양수=정상, 음수=역전. SENTINEL_YIELD ARBITRATOR 판정 입력값.
+                 (2026-04-22 추가 — 기존 컬럼이 있었으나 수집 소스 누락이었음)
 """
 
 from __future__ import annotations
@@ -24,11 +27,12 @@ logger = logging.getLogger(__name__)
 # FRED 시리즈 ID 목록
 _SERIES: dict[str, str] = {
     "fed_funds_rate": "DFF",
-    "us10y": "DGS10",
-    "vix": "VIXCLS",
-    "oil_wti": "DCOILWTICO",
-    "dollar_index": "DTWEXBGS",
-    "hy_spread": "BAMLH0A0HYM2",
+    "us10y":          "DGS10",
+    "vix":            "VIXCLS",
+    "oil_wti":        "DCOILWTICO",
+    "dollar_index":   "DTWEXBGS",
+    "hy_spread":      "BAMLH0A0HYM2",
+    "yield_curve":    "T10Y2Y",   # 10Y-2Y Spread (%) — 2026-04-22 추가
 }
 
 
