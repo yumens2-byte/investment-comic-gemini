@@ -3,7 +3,7 @@ name: 🔄 Resume Episode
 on:
   schedule:
     # KST 05:00 월/수 = UTC 20:00 일/화/토
-    - cron: '0 20 * * 0,2,6'
+    - cron: '0 20 * * 6,2,4'
   workflow_dispatch:
     inputs:
       episode_id:
