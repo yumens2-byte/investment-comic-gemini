@@ -2,8 +2,8 @@ name: 📊 Run Market
 
 on:
   schedule:
-    # KST 01:30 월/수 = UTC 16:30 일/화
-    - cron: '30 16 * * 0,2'
+    # KST 01:30 월/수 = UTC 16:30 일/화/토
+    - cron: '30 16 * * 0,2,6'
   workflow_dispatch:
     inputs:
       target_date:
