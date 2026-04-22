@@ -8,6 +8,12 @@ v2.0 변경사항 (2026-04-18):
 - render_user_prompt(): scenario_type, ending_tone, heroes 파라미터 추가 (기본값 포함).
 - template.render()에 3개 변수 주입 → Notion 템플릿의 {{ scenario_type }} 등 치환 가능.
 - 후방 호환: 기본값으로 기존 ONE_VS_ONE 동작 유지.
+
+v2.1 변경사항 (2026-04-22 — Step 3-Story 보정):
+- render_user_prompt(): guest_character_prompt 파라미터 추가 (기본값 "").
+- template.render()에 guest_character_prompt 변수 주입 → Notion 템플릿의
+  {% if guest_character_prompt %}{{ guest_character_prompt }}{% endif %} 블록에서 치환.
+- 후방 호환: 기본값 ""으로 기존 동작 그대로 유지 (블록 자체가 스킵됨).
 """
 
 from __future__ import annotations
@@ -52,6 +58,8 @@ def render_user_prompt(
     scenario_type: str = "ONE_VS_ONE",
     ending_tone: str = "TENSE",
     heroes: list[str] | None = None,
+    # ── Step 3-Story 신규 파라미터 (2026-04-22 보정) ──────────────────────────
+    guest_character_prompt: str = "",
 ) -> str:
     """
     Notion에서 로드한 narrative_user 템플릿 렌더링.
@@ -106,6 +114,8 @@ def render_user_prompt(
         scenario_type=scenario_type,  # {{ scenario_type }} 치환
         ending_tone=ending_tone,      # {{ ending_tone }} 치환
         hero_ids=heroes,              # {{ hero_ids[0] }}, {{ hero_ids[1] }} 치환 (ALLIANCE 2명)
+        # ── Step 3-Story 신규 변수 (2026-04-22 보정) ──────────────────────────
+        guest_character_prompt=guest_character_prompt,  # {{ guest_character_prompt }} 치환
     )
 
 
