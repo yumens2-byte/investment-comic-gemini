@@ -1,4 +1,69 @@
-{# [SECURITY] This file has been moved to Notion. #}
-{# Content is loaded at runtime via engine.common.notion_loader.load_narrative_user_template() #}
-{# Notion Page ID: stored in NOTION_NARRATIVE_USER_ID environment variable #}
-{# Do NOT add template content here — this file is in a public repository. #}
+Generate an ICG episode script for the following market conditions.
+
+## Episode Context
+- Date: {{ date }}
+- Episode ID: {{ episode_id }}
+- Event Type: {{ event_type }}
+
+## Market Delta (전일 대비 변화)
+```json
+{{ delta | tojson(indent=2) }}
+```
+
+## Battle Calculation Result (IMMUTABLE — do NOT change outcome)
+```json
+{{ battle_result | tojson(indent=2) }}
+```
+
+## Battle Scenario (v2.0)
+{% if scenario_type == 'NO_BATTLE' %}
+⚠️ **NO_BATTLE — Hero solo narrative. DO NOT introduce any villain.**
+Hero: {{ hero_name }} ({{ hero_id }})
+Villain: NONE
+Outcome: **PEACEFUL_GROWTH** — THIS IS FIXED. Peaceful growth, internal reflection.
+{% elif scenario_type == 'ALLIANCE' %}
+⚠️ **ALLIANCE — 2 heroes vs 1 powerful villain.**
+Hero 1 (Main): {{ heroes[0] }}
+Hero 2 (Support): {{ heroes[1] }}
+Villain: {{ villain_name }} ({{ villain_id }})
+Outcome: **{{ battle_result.outcome }}** — THIS IS FIXED. Dramatize it, do not alter it.
+{% else %}
+⚠️ **ONE_VS_ONE — Hero vs villain 1:1 battle.**
+Hero: {{ hero_name }} ({{ hero_id }})
+Villain: {{ villain_name }} ({{ villain_id }})
+Outcome: **{{ battle_result.outcome }}** — THIS IS FIXED. Dramatize it, do not alter it.
+{% endif %}
+Ending Tone: **{{ ending_tone }}**
+{% if ending_tone == 'OPTIMISTIC' %}→ End with hope, growth, calm confidence. Forward-looking final dialogue.
+{% elif ending_tone == 'TENSE' %}→ End with uncertainty and unresolved tension. Suspense in final panel.
+{% elif ending_tone == 'OMINOUS' %}→ End with warning, foreboding, hint of next crisis. Sacrifice or cost implied.
+{% endif %}
+
+## Arc Context
+- Current tension level: {{ arc_context.tension }} / 100
+- Days since last battle: {{ arc_context.get('days_since_last', 0) }}
+- Yesterday's episode type: {{ arc_context.get('yesterday_type', 'NORMAL') }}
+
+## Available Characters
+Heroes:
+{% for cid, char in heroes.items() %}
+- {{ cid }}: {{ char.name_ko }} ({{ char.name_en }}) — base_power: {{ char.base_power }}
+{% endfor %}
+Villains:
+{% for cid, char in villains.items() %}
+- {{ cid }}: {{ char.name_ko }} ({{ char.name_en }}) — event: {{ char.event }}
+{% endfor %}
+
+## Instructions
+1. Generate exactly 8 panels (idx 1~8).
+2. Panel 8 MUST be panel_type="DISCLAIMER" with no characters.
+3. Panel 8 key_text should be: "⚠️ 투자 참고 정보"
+4. Panel 8 narration should be: "본 콘텐츠는 투자 참고 정보이며, 투자 권유가 아닙니다. 모든 투자 판단과 책임은 투자자 본인에게 있습니다."
+5. caption_x_final MUST contain: 본 콘텐츠는 투자 참고 정보이며, 투자 권유가 아닙니다
+6. Use market_ref field to embed real numbers from the delta (e.g., "WTI +7.8%", "VIX 24.1").
+7. Reflect the battle outcome honestly — if HERO_DEFEAT, the hero struggles; if HERO_VICTORY, hero prevails.
+8. For NO_BATTLE: panels 2-3 show market observation, panels 4-5 show hero's growth moment, panels 6-7 show positive outlook. No combat scenes.
+9. For ALLIANCE: panel 2-3 heroes realize the threat individually, panel 3-4 alliance formation (handshake/back-to-back), panel 5-6 coordinated attack, panel 7 reflects outcome (PYRRHIC_VICTORY = costly win with warning).
+10. Ending tone guide — OPTIMISTIC: serene confidence; TENSE: unresolved pressure; OMINOUS: foreboding sacrifice.
+
+Return ONLY the JSON. No other text.
