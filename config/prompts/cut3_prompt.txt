@@ -1,0 +1,18 @@
+# ICG Video Track — Cut 3 Prompt v1.0
+# Total duration: 8 seconds, 9:16 vertical, 1080p
+
+===PROMPT===
+Final segment of financial breaking news, vertical 9:16. The same Korean female anchor in the same navy suit and studio delivers a concise closing warning with calm authority. Start with medium close-up, then a subtle push-in to close framing over 8 seconds. Background screens show abstract downward/upward chart motion in cool blue tones with crimson accents, but absolutely NO text, NO letters, NO logos. A clean lower-third graphic shape may appear as a design element, but it must remain textless. The anchor maintains direct eye contact and controlled urgency, ending on a strong composed expression suitable for teaser ending. Professional broadcast lighting, high-detail face consistency, cinematic newsroom style.
+
+===CHARACTER_LOCK===
+ANCHOR IDENTITY: Korean female, late 20s
+HAIR: long straight black
+OUTFIT: navy blue business suit, white inner top
+EXPRESSION: serious, controlled urgency, confident ending
+SETTING: same professional dark blue news studio as cut 1 and cut 2
+DO NOT change anchor identity or wardrobe.
+DO NOT add other people.
+DO NOT add visible text in any UI elements.
+
+===NEGATIVE_PROMPT===
+no Marvel, no DC, no Disney, no Pixar, no Nintendo, no copyrighted characters, no copyrighted logos, no brand names, no visible words, no visible letters, no subtitle text, no captions, no headline text, no ticker text, no channel watermark, no network identifier, no anchor morphing, no gender/race/age change, no outfit changes, no cartoon style, no anime style, blurry, low quality, artifact noise, distorted face, deformed hands, extra fingers

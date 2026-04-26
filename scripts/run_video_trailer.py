@@ -215,9 +215,9 @@ def _get_episode_id(today: str) -> str:
     return f"icg-v-{today}-001"
 
 
-def _load_cut1_prompt() -> tuple[str, str]:
+def _load_cut_prompt(cut_no: int) -> tuple[str, str]:
     """
-    Load cut1 prompt from config/prompts/cut1_prompt.txt.
+    Load cut prompt from config/prompts/cut{n}_prompt.txt.
 
     File format (section-based):
         ===PROMPT===
@@ -235,9 +235,9 @@ def _load_cut1_prompt() -> tuple[str, str]:
     """
     from pathlib import Path
 
-    prompt_path = Path("config/prompts/cut1_prompt.txt")
+    prompt_path = Path(f"config/prompts/cut{cut_no}_prompt.txt")
     if not prompt_path.exists():
-        raise FileNotFoundError(f"Cut1 prompt file not found: {prompt_path}")
+        raise FileNotFoundError(f"Cut{cut_no} prompt file not found: {prompt_path}")
 
     text = prompt_path.read_text(encoding="utf-8")
     sections = {}
@@ -260,13 +260,18 @@ def _load_cut1_prompt() -> tuple[str, str]:
     negative = sections.get("NEGATIVE_PROMPT", "")
 
     if not main_prompt:
-        raise ValueError("PROMPT section missing or empty in cut1_prompt.txt")
+        raise ValueError(f"PROMPT section missing or empty in cut{cut_no}_prompt.txt")
 
     full_prompt = main_prompt
     if character_lock:
         full_prompt = f"{main_prompt}\n\n[CHARACTER LOCK]\n{character_lock}"
 
     return full_prompt, negative
+
+
+def _load_cut1_prompt() -> tuple[str, str]:
+    """Backward-compatible wrapper for existing cut1 call sites."""
+    return _load_cut_prompt(1)
 
 
 def _create_dummy_mp4(output_path: str) -> int:
@@ -510,6 +515,7 @@ def _send_telegram_text(chat_id: str, text: str) -> dict:
     }
 
 
+
 def stage_manual_prompt_notify():
     """
     PRE-OP stage: Send Veo prompt to Telegram for manual generation in Gemini chat.
@@ -525,7 +531,7 @@ def stage_manual_prompt_notify():
     if not master_chat_id:
         raise RuntimeError("MASTER_CHAT_ID (or TELEGRAM_FREE_CHANNEL_ID fallback) env not set")
 
-    full_prompt, negative_prompt = _load_cut1_prompt()
+
     today_kst = datetime.now(ZoneInfo("Asia/Seoul")).date().isoformat()
     episode_id = _get_episode_id(today_kst)
     operation_mode = os.environ.get("OPERATION_MODE", "manual_prompt").lower()
@@ -535,29 +541,17 @@ def stage_manual_prompt_notify():
         "🎬 ICG VIDEO PRE-OP MODE\n"
         f"episode_id: {episode_id}\n"
         f"operation_mode: {operation_mode}\n"
-        "policy: manual Gemini generation / no X publish\n\n"
-        "[PROMPT]\n"
-        f"{full_prompt}\n\n"
-        "[NEGATIVE_PROMPT]\n"
-        f"{negative_prompt}"
-    )
-    max_len = 3900
-    if len(message) > max_len:
-        message = message[: max_len - 24] + "\n\n...(truncated in Telegram)"
+
 
     if dry_run:
         logger.info(
             "[PRE-OP] DRY_RUN: skip Telegram send "
-            f"(chat_id={master_chat_id}, message_len={len(message)})"
+
         )
         logger.debug(f"[PRE-OP] payload preview:\n{message}")
         return
 
-    result = _send_telegram_text(chat_id=master_chat_id, text=message)
-    logger.info(
-        f"[PRE-OP] prompt sent to Telegram: chat_id={result['chat_id']} "
-        f"message_id={result['message_id']}"
-    )
+
 
 
 def stage_publish_telegram():

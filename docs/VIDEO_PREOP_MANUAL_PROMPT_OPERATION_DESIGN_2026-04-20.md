@@ -34,19 +34,16 @@
 - `manual_prompt_notify` stage를 `scripts/run_video_trailer.py`에 추가
 
 동작:
+
 1. `config/prompts/cut1_prompt.txt`에서 `PROMPT`, `CHARACTER_LOCK`, `NEGATIVE_PROMPT` 로드
 2. `episode_id` 생성
 3. 텔레그램 메시지 조립
    - 운영 모드
    - 정책(no X publish)
-   - prompt/negative_prompt 본문
 4. `MASTER_CHAT_ID`로 Bot API `sendMessage` 전송
 
 예외/안전장치:
 - `DRY_RUN=true`면 실제 전송 없이 payload preview 로그만 남김
-- 메시지 길이 3900자 초과 시 텔레그램 한도 전에 안전 절단
-- `MASTER_CHAT_ID` 없으면 `TELEGRAM_FREE_CHANNEL_ID` fallback
-
 ## 3-2. X 게시 차단
 - `stage_publish_x`에서 `OPERATION_MODE=manual_prompt`면 즉시 skip/warn 처리
 - 정책 위반 방지용 이중 가드(워크플로우 단계 + 런너 단계)
