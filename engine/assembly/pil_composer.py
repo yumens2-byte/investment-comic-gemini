@@ -240,7 +240,7 @@ def _compose_disclaimer_slide(output_path: Path, narration: str) -> Path:
         "투자 권유가 아닙니다.\n\n"
         "모든 투자 판단과 책임은\n"
         "투자자 본인에게 있습니다.\n\n"
-        "ICG Investment Comic Gemini"
+        "EDT Investment Comic"
     )
     disc_font = _get_font(36)
     wrapped = textwrap.fill(DISCLAIMER_TEXT, width=22)
