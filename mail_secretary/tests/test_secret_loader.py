@@ -1,5 +1,4 @@
 import pytest
-
 from app.common.errors import SecretNotFoundError
 from app.config.secret_loader import load_required_secrets
 

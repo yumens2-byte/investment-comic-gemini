@@ -3,7 +3,6 @@ from typing import Callable, Dict
 
 from app.common.errors import SecretNotFoundError
 
-
 REQUIRED_SECRETS = [
     "GMAIL_CLIENT_ID",
     "GMAIL_CLIENT_SECRET",

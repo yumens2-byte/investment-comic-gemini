@@ -1,7 +1,6 @@
 import re
 from dataclasses import dataclass
 
-
 PII_PATTERNS = {
     "resident_id": re.compile(r"\b\d{6}-\d{7}\b"),
     "phone": re.compile(r"\b01[0-9]-?\d{3,4}-?\d{4}\b"),
