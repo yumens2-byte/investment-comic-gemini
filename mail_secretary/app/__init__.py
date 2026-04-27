@@ -1,0 +1,1 @@
+"""Mail secretary application package."""
