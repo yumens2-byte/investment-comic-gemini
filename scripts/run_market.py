@@ -309,7 +309,7 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
             _ep_v3 = (
                 os.environ.get("EPISODE_TYPE_V3_ENABLED", "false").lower() == "true"
             )
-            # After (ARC_STATE_V3 없으면 스킵)
+            # ARC_STATE_V3 데이터 없으면 episode_type_engine 스킵 (arc_day=0 오판정 방지)
             if _ep_v3 and _arc_state_loaded is not None:
                 try:
                     from engine.narrative.episode_type_engine import (
