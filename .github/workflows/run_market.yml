@@ -23,6 +23,12 @@ on:
         required: false
         default: 'false'
 
+      # [inputs 블록 — scenario_v2 아래]
+      episode_type_v3:
+        description: 'Episode Type v3 활성화 (9종 타입 / false=기존 3종 로직)'
+        required: false
+        default: 'false'
+
 permissions:
   contents: read
   actions: write
@@ -57,6 +63,7 @@ jobs:
       DRY_RUN: 'false'
       FORCE_RUN: ${{ github.event.inputs.force || 'false' }}
       SCENARIO_V2_ENABLED: ${{ github.event.inputs.scenario_v2 || 'false' }}
+      EPISODE_TYPE_V3_ENABLED: ${{ github.event.inputs.episode_type_v3 || 'false' }}
       PYTHONPATH: .
 
     steps:
