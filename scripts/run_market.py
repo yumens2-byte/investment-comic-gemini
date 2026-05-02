@@ -1,27 +1,4 @@
 """
-run_market_arc_v3_patch_v3.py
-run_market.py -- ARC_STATE_V3 연동 패치 명세 (ruff PASS 버전)
- 
-기준: run_market.py v1.29.1 / ruff line-length=100
-수정: 2026-05-02
- 
-[v2 -> v3 변경]
-  W293 x5: 빈 줄 trailing whitespace 제거
-  I001 x2: import 이름 알파벳 정렬
-    - build_arc_context, load_arc_state  (b < l)
-    - save_arc_state, snapshot_to_daily_analysis, update_after_episode  (s < s < u)
-    
-run_market_arc_v3_patch_v2.py
-run_market.py — ARC_STATE_V3 연동 정확한 패치 명세
- 
-기준 소스: 마스터 제공 run_market.py (v1.29.1 / 2026-04-22)
-수정일: 2026-05-02
- 
-[v1 대비 수정 사항]
-  - PATCH 1: arc_context 위치가 step_analysis() 내부임을 반영
-  - PATCH 2: _arc_state, curr_row를 ctx에 포함 (main() 접근 보장)
-  - PATCH 3: main() persist 블록 내 arc_state 갱신/저장 위치 정확 지정
-  
 scripts/run_market.py
 ICG 파이프라인 메인 진입점 — STEP 2~6.
 
@@ -33,22 +10,29 @@ ICG 파이프라인 메인 진입점 — STEP 2~6.
   python -m scripts.run_market --stage persist
   python -m scripts.run_market --stage image
 
+v3.0 변경사항 (2026-05-02):
+  - step_analysis(): ARC_STATE_V3_ENABLED flag 기반 arc_context 동적 로드
+    (하드코딩 tension:40 제거, Supabase icg.arc_state 실시간 반영)
+  - ctx에 _arc_state, _snapshot_row 추가 (main() arc_state 갱신 전달용)
+  - main() persist 블록: arc_state 갱신/저장 로직 추가
+  - ARC_STATE_V3_ENABLED=false(기본): 기존 로직 100% 유지
+
 v2.0 변경사항 (2026-04-18):
-  - step_analysis(): SCENARIO_V2_ENABLED flag 기반 Scenario × Outcome 분기 추가
+  - step_analysis(): SCENARIO_V2_ENABLED flag 기반 Scenario x Outcome 분기 추가
     (NO_BATTLE / ALLIANCE / ONE_VS_ONE 3종 시나리오 + EndingTone 결정)
   - SCENARIO_V2_ENABLED=false (기본값): 기존 로직 100% 유지
   - SCENARIO_V2_ENABLED=true: v2.0 로직 적용
 
 v1.29.1 (2026-04-22 — episode_id 불일치 + 로그 통일):
   - _make_episode_id(): 미발행 에피소드가 있으면 재사용 (별도 프로세스 실행 대응)
-  - step_analysis() Step 3-Story: logger.info/warning → logger_inst.info/warning
+  - step_analysis() Step 3-Story: logger.info/warning -> logger_inst.info/warning
     (run.log NDJSON 기록 보장, StepLogger 통일)
-  - main() Step 3-Story-Save: logger.warning → sl.warning 통일
+  - main() Step 3-Story-Save: logger.warning -> sl.warning 통일
 
 v1.29.0 (2026-04-22 — Step 3-Story 보정):
   - step_analysis(): SCENARIO_V2 분기 내부에 STEP 3-Story 블록 추가
-    → engine.character.* 엔진 활성화 (character_engine/story_state_manager/prompt_builder)
-    → ctx["guest_character_prompt"], ctx["_story_state"], ctx["_guest_characters"] 주입
+    -> engine.character.* 엔진 활성화 (character_engine/story_state_manager/prompt_builder)
+    -> ctx["guest_character_prompt"], ctx["_story_state"], ctx["_guest_characters"] 주입
   - step_narrative(): generate_episode 호출에 guest_character_prompt 전달
   - main(): persist 완료 후 _save_story_state() 호출로 다음 날 에피소드 상태 저장
   - Feature flag: 기존 SCENARIO_V2_ENABLED에 편입 (별도 STEP3_STORY_ENABLED 없음)
@@ -82,7 +66,7 @@ def _latest_date(stage: str) -> str:
     날짜 미입력 시 기준 날짜 결정.
     - stage=all/data: 오늘 날짜 (신규 수집)
     - stage=analysis/narrative/persist/image: Supabase 최신 daily_snapshots 날짜
-      → 없으면 오늘 날짜 fallback.
+      -> 없으면 오늘 날짜 fallback.
     """
     if stage in ("all", "data"):
         return _today()
@@ -108,8 +92,8 @@ def _make_episode_id(episode_date: str) -> str:
     에피소드 ID 생성/재사용 (ICG-YYYY-MM-DD-NNN).
 
     Hybrid 멀티-스테이지 패턴 대응:
-      - 해당 날짜에 아직 published 되지 않은 에피소드가 있으면 → 해당 ID 재사용
-      - 없으면 → (last_no + 1) 로 신규 생성
+      - 해당 날짜에 아직 published 되지 않은 에피소드가 있으면 -> 해당 ID 재사용
+      - 없으면 -> (last_no + 1) 로 신규 생성
     이렇게 하지 않으면 image stage 등 후속 stage가 별도 프로세스로
     실행될 때 +1 증가한 ID를 반환하여 episode_id 불일치가 발생함.
 
@@ -127,17 +111,16 @@ def _make_episode_id(episode_date: str) -> str:
             .execute()
         )
         if rows.data:
-            last_no     = rows.data[0]["episode_no"] or 0
+            last_no = rows.data[0]["episode_no"] or 0
             last_status = rows.data[0].get("status") or ""
-            # 진행 중인 에피소드 (미발행) → 재사용
             if last_status != "published":
                 episode_id = f"ICG-{episode_date}-{last_no:03d}"
                 logger.info(
                     "[pipeline] 기존 episode_id 재사용: %s (status=%s)",
-                    episode_id, last_status,
+                    episode_id,
+                    last_status,
                 )
                 return episode_id
-            # 마지막이 published → 새 번호 생성
             no = last_no + 1
         else:
             no = 1
@@ -172,7 +155,7 @@ def _load_recent_scenarios(episode_date: str, limit: int = 7) -> list[str]:
 
 
 def step_data(episode_date: str, logger_inst) -> None:
-    """STEP 2: 시장 데이터 수집 → icg.daily_snapshots."""
+    """STEP 2: 시장 데이터 수집 -> icg.daily_snapshots."""
     ts = logger_inst.step_start("STEP_2", "데이터 수집")
     try:
         from engine.data import (
@@ -198,7 +181,11 @@ def step_data(episode_date: str, logger_inst) -> None:
 
 
 def step_analysis(episode_date: str, logger_inst) -> dict:
-    """STEP 3: 분석 + Battle → icg.daily_analysis. context dict 반환.
+    """STEP 3: 분석 + Battle -> icg.daily_analysis. context dict 반환.
+
+    v3.0 (ARC_STATE_V3_ENABLED=true):
+        arc_context를 Supabase icg.arc_state에서 동적 로드.
+        ctx에 _arc_state, _snapshot_row 추가.
 
     v2.0 (SCENARIO_V2_ENABLED=true):
         3-1. 기존 1:1 캐릭터 선정 (기반값)
@@ -231,10 +218,13 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
 
         delta = compute(curr_row, prev_row)
 
-        # ── ARC_STATE_V3: arc_context 동적 로드 ─────────────────────────────
+        # -- ARC_STATE_V3: arc_context 동적 로드 -----------------------------------
         _arc_v3 = os.environ.get("ARC_STATE_V3_ENABLED", "false").lower() == "true"
         if _arc_v3:
-            from engine.arc.arc_state_engine import load_arc_state, build_arc_context as _build_arc_ctx
+            from engine.arc.arc_state_engine import (
+                build_arc_context as _build_arc_ctx,
+                load_arc_state,
+            )
             _arc_state_loaded = load_arc_state()
             arc_context = _build_arc_ctx(_arc_state_loaded)
             logger.info(
@@ -246,56 +236,39 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                 arc_context["crowd_momentum"],
             )
         else:
-         _arc_state_loaded = None
-         # -- ARC_STATE_V3: arc_context 동적 로드 -----------------------------------
-         _arc_v3 = os.environ.get("ARC_STATE_V3_ENABLED", "false").lower() == "true"
-         if _arc_v3:
-             from engine.arc.arc_state_engine import (
-                 build_arc_context as _build_arc_ctx,
-                 load_arc_state,
-             )
-             _arc_state_loaded = load_arc_state()
-             arc_context = _build_arc_ctx(_arc_state_loaded)
-             logger.info(
-                 "[Step 3-ARC_V3] arc_context 로드 "
-                 "(tension=%d arc_day=%d sig=%d crowd=%d)",
-                 arc_context["tension"],
-                 arc_context["days_since_last"],
-                 arc_context["villain_signature"],
-                 arc_context["crowd_momentum"],
-             )
-         else:
-             _arc_state_loaded = None
-             arc_context = {"tension": 40, "days_since_last": 0, "yesterday_type": "NORMAL"}
-  
-         event_type = classify(delta, arc_context)
+            _arc_state_loaded = None
+            arc_context = {"tension": 40, "days_since_last": 0, "yesterday_type": "NORMAL"}
 
-        # ── STEP 3-1: 기존 1:1 캐릭터 선정 (기반값, v2.0 분기 전) ─────────────
+        event_type = classify(delta, arc_context)
+
+        # -- STEP 3-1: 기존 1:1 캐릭터 선정 (기반값, v2.0 분기 전) -----------------
         hero_id_base, villain_id_base = select_characters_for_event(event_type, delta)
 
-        # ── SCENARIO_V2 Feature Flag 확인 ─────────────────────────────────────
+        # -- SCENARIO_V2 Feature Flag 확인 -----------------------------------------
         _scenario_v2 = os.environ.get("SCENARIO_V2_ENABLED", "false").lower() == "true"
 
         # v2.0 작업 변수 초기값 (flag OFF 시 기존 로직 그대로)
-        risk_level_v2    = "MEDIUM"
+        risk_level_v2 = "MEDIUM"
         scenario_type_v2 = "ONE_VS_ONE"
-        ending_tone_v2   = "TENSE"
+        ending_tone_v2 = "TENSE"
         heroes_v2: list[str] = [hero_id_base]
-        hero_id   = hero_id_base
+        hero_id = hero_id_base
         villain_id = villain_id_base
 
         if _scenario_v2:
-            # ── STEP 3-2: risk_level 산출 (delta 기반 자체 계산) ──────────────
+            # -- STEP 3-2: risk_level 산출 (delta 기반 자체 계산) ------------------
             from engine.narrative.scenario_selector import compute_risk_level_from_delta
+
             risk_level_v2 = compute_risk_level_from_delta(delta)
             logger.info("[Step 3-2] risk_level=%s", risk_level_v2)
 
-            # ── STEP 3-3: scenario 결정 ────────────────────────────────────────
+            # -- STEP 3-3: scenario 결정 -------------------------------------------
             from engine.narrative.scenario_selector import select_scenario
+
             scenario_type_v2 = select_scenario(risk_level_v2, event_type)
             logger.info("[Step 3-3] scenario=%s", scenario_type_v2)
 
-            # ── STEP 3-3b: 스토리라인 중복 완화 (최근 시나리오 연속 반복 방지) ──
+            # -- STEP 3-3b: 스토리라인 중복 완화 (최근 시나리오 연속 반복 방지) -----
             from engine.narrative.storyline_guard import choose_scenario_with_diversity
 
             recent_scenarios = _load_recent_scenarios(episode_date, limit=7)
@@ -313,27 +286,28 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                 diversity_reason,
             )
 
-            # ── STEP 3-4: 캐릭터 재선정 (scenario별 분기) ─────────────────────
+            # -- STEP 3-4: 캐릭터 재선정 (scenario별 분기) -------------------------
             if scenario_type_v2 == "NO_BATTLE":
                 from engine.narrative.character_selector import select_for_no_battle
+
                 hero_id, _no_villain = select_for_no_battle(delta)
-                villain_id = villain_id_base  # analysis_upsert용 유지 (None 방어)
-                heroes_v2  = [hero_id]
+                villain_id = villain_id_base
+                heroes_v2 = [hero_id]
                 logger.info("[Step 3-4] NO_BATTLE hero=%s", hero_id)
 
             elif scenario_type_v2 == "ALLIANCE":
                 from engine.narrative.character_selector import select_for_alliance
+
                 heroes_v2, villain_id = select_for_alliance(event_type, delta, villain_id_base)
                 hero_id = heroes_v2[0]
                 logger.info("[Step 3-4] ALLIANCE heroes=%s villain=%s", heroes_v2, villain_id)
 
             else:
-                # ONE_VS_ONE — 기존 캐릭터 그대로
-                hero_id    = hero_id_base
+                hero_id = hero_id_base
                 villain_id = villain_id_base
-                heroes_v2  = [hero_id]
+                heroes_v2 = [hero_id]
 
-        # ── characters.yaml base_power 로드 (공통) ─────────────────────────────
+        # -- characters.yaml base_power 로드 (공통) --------------------------------
         canon = yaml.safe_load(Path("config/characters.yaml").read_text(encoding="utf-8"))
         try:
             from engine.common.notion_loader import load_battle_constants
@@ -346,18 +320,18 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                 villain_id, canon["villains"].get(villain_id, {}).get("base_power", 72)
             )
         except Exception:
-            hero_base    = canon["heroes"].get(hero_id, {}).get("base_power", 75)
+            hero_base = canon["heroes"].get(hero_id, {}).get("base_power", 75)
             villain_base = canon["villains"].get(villain_id, {}).get("base_power", 72)
 
         market_ctx = get_market_context_for_battle(delta, curr_row)
 
-        # ── STEP 3-5: battle 계산 (scenario별 분기) ───────────────────────────
+        # -- STEP 3-5: battle 계산 (scenario별 분기) -------------------------------
         if _scenario_v2 and scenario_type_v2 == "NO_BATTLE":
-            # 전투 없음 — 더미 BattleResult 생성 (analysis_upsert 시그니처 유지)
             from engine.narrative.battle_calc import BattleResult
+
             battle_result = BattleResult(
                 hero_id=hero_id,
-                villain_id=villain_id,   # 기존 villain_id_base 유지
+                villain_id=villain_id,
                 hero_power=0,
                 villain_power=0,
                 balance=0,
@@ -365,16 +339,16 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                 hero_power_breakdown={},
                 villain_power_breakdown={},
             )
-            logger.info("[Step 3-5] NO_BATTLE → PEACEFUL_GROWTH (전투 스킵)")
+            logger.info("[Step 3-5] NO_BATTLE -> PEACEFUL_GROWTH (전투 스킵)")
 
         elif _scenario_v2 and scenario_type_v2 == "ALLIANCE":
             from engine.narrative.battle_calc import battle_alliance
 
-            # 각 히어로 base_power 수집
             hero_bases: list[int] = []
             for h_id in heroes_v2:
                 try:
                     from engine.common.notion_loader import load_battle_constants as _lbc
+
                     _bp = _lbc().get("CHARACTER_BASE_POWER", {})
                     hero_bases.append(
                         _bp.get(h_id, canon["heroes"].get(h_id, {}).get("base_power", 75))
@@ -392,11 +366,11 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
             )
             logger.info(
                 "[Step 3-5] ALLIANCE balance=%d outcome=%s",
-                battle_result.balance, battle_result.outcome,
+                battle_result.balance,
+                battle_result.outcome,
             )
 
         else:
-            # ONE_VS_ONE — 기존 로직 그대로
             battle_result = battle(
                 hero_id=hero_id,
                 hero_base=hero_base,
@@ -406,9 +380,10 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                 arc_context=arc_context,
             )
 
-        # ── STEP 3-6/7: outcome + ending_tone 결정 ────────────────────────────
+        # -- STEP 3-6/7: outcome + ending_tone 결정 --------------------------------
         if _scenario_v2:
             from engine.narrative.scenario_selector import select_ending_tone
+
             ending_tone_v2 = select_ending_tone(
                 scenario=scenario_type_v2,
                 outcome=battle_result.outcome,
@@ -416,15 +391,14 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
             )
             logger.info(
                 "[Step 3-6/7] outcome=%s ending_tone=%s",
-                battle_result.outcome, ending_tone_v2,
+                battle_result.outcome,
+                ending_tone_v2,
             )
 
-        # ── analysis_upsert (기존 시그니처 유지) ──────────────────────────────
+        # -- analysis_upsert (기존 시그니처 유지) ----------------------------------
         analysis_upsert(episode_date, event_type, battle_result.to_dict(), delta, arc_context)
 
-        # ── STEP 3-Story: 게스트 캐릭터 판단 (2026-04-22 보정) ─────────────────
-        # SCENARIO_V2_ENABLED=true 일 때만 실행. engine.character.* 엔진 활성화.
-        # 실패해도 파이프라인은 계속 (try/except로 격리).
+        # -- STEP 3-Story: 게스트 캐릭터 판단 (2026-04-22 보정) --------------------
         _guest_prompt: str = ""
         _story_state: dict = {}
         _guest_characters: list = []
@@ -439,7 +413,6 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                 _guest_prompt = build_guest_character_prompt(
                     curr_row, _story_state, _guest_characters
                 )
-                # sl 사용 → run.log NDJSON 기록 보장 (logger.info는 StepLogger 미기록)
                 _guest_names = [f"{c}({r})" for c, r in _guest_characters] or ["없음"]
                 logger_inst.info(
                     "STEP_3",
@@ -452,54 +425,59 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                 )
                 _guest_prompt, _story_state, _guest_characters = "", {}, []
 
-
-        # ── STEP 3-8: v2.0 필드 daily_analysis 별도 업데이트 ─────────────────
+        # -- STEP 3-8: v2.0 필드 daily_analysis 별도 업데이트 ---------------------
         if _scenario_v2:
             try:
                 from engine.common.supabase_client import icg_table
-                icg_table("daily_analysis").update({
-                    "scenario_type": scenario_type_v2,
-                    "ending_tone":   ending_tone_v2,
-                }).eq("analysis_date", episode_date).execute()
+
+                icg_table("daily_analysis").update(
+                    {
+                        "scenario_type": scenario_type_v2,
+                        "ending_tone": ending_tone_v2,
+                    }
+                ).eq("analysis_date", episode_date).execute()
                 logger.info(
                     "[Step 3-8] daily_analysis v2.0 업데이트 완료 "
                     "(scenario=%s tone=%s)",
-                    scenario_type_v2, ending_tone_v2,
+                    scenario_type_v2,
+                    ending_tone_v2,
                 )
             except Exception as _exc:
                 logger.warning("[Step 3-8] v2.0 필드 DB 업데이트 실패 (진행): %s", _exc)
 
-        # ── ctx 조립 ────────────────────────────────────────────────────────────
+        # -- ctx 조립 -------------------------------------------------------------
         ctx = {
-            "event_type":   event_type,
-            "delta":        delta,
+            "event_type": event_type,
+            "delta": delta,
             "battle_result": battle_result.to_dict(),
-            "hero_id":      hero_id,
-            "villain_id":   villain_id,
-            "arc_context":  arc_context,
+            "hero_id": hero_id,
+            "villain_id": villain_id,
+            "arc_context": arc_context,
             # v2.0 신규 필드 (SCENARIO_V2_ENABLED=false 시 기본값 유지)
             "scenario_type": scenario_type_v2,
-            "risk_level":    risk_level_v2,
-            "ending_tone":   ending_tone_v2,
-            "heroes":        heroes_v2,
-             # Step 3-Story 신규 필드 (2026-04-22 보정)
+            "risk_level": risk_level_v2,
+            "ending_tone": ending_tone_v2,
+            "heroes": heroes_v2,
+            # Step 3-Story 신규 필드 (2026-04-22 보정)
             "guest_character_prompt": _guest_prompt,
-            "_story_state":           _story_state,
-            "_guest_characters":      _guest_characters,
+            "_story_state": _story_state,
+            "_guest_characters": _guest_characters,
             # ARC_STATE_V3 신규 필드 (2026-05-02)
-            "_arc_state":    _arc_state_loaded,
+            "_arc_state": _arc_state_loaded,
             "_snapshot_row": curr_row,
         }
 
-        # ── Hybrid 설계: ctx를 DB에 저장 (narrative/persist/image 독립 실행 대비) ──
+        # -- Hybrid 설계: ctx를 DB에 저장 (narrative/persist/image 독립 실행 대비) -
         try:
             from engine.persist.asset_writer import save_analysis_ctx
+
             save_analysis_ctx(episode_date, event_type, ctx)
         except Exception as _exc:
             logger.warning("[step_analysis] ctx DB 저장 실패 (진행): %s", _exc)
 
         logger_inst.step_done(
-            "STEP_3", ts,
+            "STEP_3",
+            ts,
             f"event={event_type} scenario={scenario_type_v2} "
             f"outcome={battle_result.outcome} tone={ending_tone_v2}",
         )
@@ -510,7 +488,7 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
 
 
 def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -> dict:
-    """STEP 4: Claude 스토리 생성 → EpisodeScript."""
+    """STEP 4: Claude 스토리 생성 -> EpisodeScript."""
     ts = logger_inst.step_start("STEP_4", "Claude 내러티브 생성")
     try:
         from engine.narrative.claude_client import generate_episode
@@ -524,16 +502,13 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
             hero_id=ctx["hero_id"],
             villain_id=ctx["villain_id"],
             arc_context=ctx["arc_context"],
-            # v2.0 신규 파라미터 (기존 generate_episode가 **kwargs 수용 시 자동 전달)
             scenario_type=ctx.get("scenario_type", "ONE_VS_ONE"),
             ending_tone=ctx.get("ending_tone", "TENSE"),
             heroes=ctx.get("heroes", [ctx["hero_id"]]),
-            # Step 3-Story 신규 파라미터 (2026-04-22 보정)
             guest_character_prompt=ctx.get("guest_character_prompt", ""),
         )
         script_dict = script.model_dump()
 
-        # 에피소드 JSON 파일 저장 (로그 아카이브)
         ep_dir = Path("output") / "episodes" / episode_date
         ep_dir.mkdir(parents=True, exist_ok=True)
         ep_json_path = ep_dir / f"{episode_id}_script.json"
@@ -570,9 +545,8 @@ def step_persist(
                 "script_json": script_dict,
                 "battle_json": ctx["battle_result"],
                 "status": "narrative_done",
-                # v2.0 신규 필드 (episode_assets에 컬럼 추가됨)
                 "scenario_type": ctx.get("scenario_type", "ONE_VS_ONE"),
-                "heroes_json":   ctx.get("heroes", [ctx["hero_id"]]),
+                "heroes_json": ctx.get("heroes", [ctx["hero_id"]]),
             },
         )
 
@@ -620,7 +594,6 @@ def step_image(
 
         panel_paths, total_cost = gemini_generate(panels_input, output_dir)
 
-        # episode_assets 업데이트 — patch 사용 (기존 script_json 등 보존)
         from engine.persist.asset_writer import patch as asset_patch
 
         panels_json = [
@@ -636,12 +609,10 @@ def step_image(
                 ],
                 "gemini_cost_usd": total_cost,
                 "status": "image_generated",
-                # GitHub Actions run_id → resume_episode.yml 아티팩트 다운로드용
                 "artifact_run_id": os.environ.get("GITHUB_RUN_ID"),
             },
         )
 
-        # 이미지 경로 로그 출력
         success_paths = [str(p) for p in panel_paths if p]
         fallback_count = sum(1 for p in panel_paths if not p)
         for i, p in enumerate(panel_paths, 1):
@@ -650,7 +621,6 @@ def step_image(
             else:
                 logger_inst.info("STEP_6", f"  P{i}: [text_card fallback]")
 
-        # 이미지 경로 목록 파일 저장
         ep_dir = Path("output") / "episodes" / episode_date
         ep_dir.mkdir(parents=True, exist_ok=True)
         img_log_path = ep_dir / f"{episode_id}_images.json"
@@ -687,7 +657,6 @@ def main() -> None:
 
     episode_date = args.date or _latest_date(args.stage)
 
-    # StepLogger 초기화
     from engine.common.logger import StepLogger, get_run_id
 
     run_id = get_run_id(episode_date)
@@ -695,10 +664,11 @@ def main() -> None:
     sl = StepLogger(run_id=run_id, episode_date=episode_date, output_dir=output_dir)
 
     _scenario_v2_log = os.environ.get("SCENARIO_V2_ENABLED", "false")
+    _arc_v3_log = os.environ.get("ARC_STATE_V3_ENABLED", "false")
     sl.info(
         "PIPELINE",
         f"ICG 파이프라인 시작 run_id={run_id} date={episode_date} "
-        f"stage={args.stage} SCENARIO_V2={_scenario_v2_log}",
+        f"stage={args.stage} SCENARIO_V2={_scenario_v2_log} ARC_V3={_arc_v3_log}",
     )
 
     try:
@@ -712,7 +682,7 @@ def main() -> None:
         if args.stage in ("all", "analysis"):
             ctx = step_analysis(episode_date, sl)
 
-        # ── 중복 발행 방어 (Layer 3) ─────────────────────────────────────
+        # -- 중복 발행 방어 (Layer 3) ---------------------------------------------
         if args.stage in ("all", "narrative", "persist", "image"):
             _force = os.environ.get("FORCE_RUN", "false").lower() == "true"
             try:
@@ -722,7 +692,7 @@ def main() -> None:
                 if _cur == "published" and not _force:
                     sl.error(
                         "PIPELINE",
-                        f"🛑 이미 published 상태 — episode_date={episode_date} 재생성 차단. "
+                        f"이미 published 상태 — episode_date={episode_date} 재생성 차단. "
                         "강제 재생성이 필요하면 FORCE_RUN=true 설정 후 재실행.",
                     )
                     sys.exit(1)
@@ -733,8 +703,8 @@ def main() -> None:
 
         if args.stage in ("all", "narrative"):
             if not ctx:
-                # ── Hybrid: 단독 실행 시 DB에서 ctx 복원 ────────────────
                 from engine.persist.asset_writer import load_analysis_ctx
+
                 ctx = load_analysis_ctx(episode_date)
                 if not ctx:
                     raise RuntimeError(
@@ -744,9 +714,9 @@ def main() -> None:
                 sl.info("STEP_4", f"[Hybrid] ctx DB 복원 완료 event_type={ctx.get('event_type')}")
             script_dict = step_narrative(episode_date, episode_id, ctx, sl)
 
-            # ── Hybrid: script_dict를 DB에 저장 (persist/image 독립 실행 대비) ──
             try:
                 from engine.persist.asset_writer import save_narrative_script
+
                 save_narrative_script(episode_date, script_dict)
             except Exception as _exc:
                 logger.warning("[step_narrative] script DB 저장 실패 (진행): %s", _exc)
@@ -754,6 +724,7 @@ def main() -> None:
         if args.stage in ("all", "persist"):
             if not ctx:
                 from engine.persist.asset_writer import load_analysis_ctx
+
                 ctx = load_analysis_ctx(episode_date)
                 if not ctx:
                     raise RuntimeError(
@@ -762,6 +733,7 @@ def main() -> None:
                     )
             if not script_dict:
                 from engine.persist.asset_writer import load_narrative_script
+
                 script_dict = load_narrative_script(episode_date)
                 if not script_dict:
                     raise RuntimeError(
@@ -771,10 +743,10 @@ def main() -> None:
                 sl.info("STEP_5", "[Hybrid] narrative_script_json DB 복원 완료")
             step_persist(episode_date, episode_id, ctx, script_dict, sl)
 
-            # ── Step 3-Story-Save: 에피소드 완료 후 story_state 저장 (2026-04-22 보정) ──
-            # SCENARIO_V2_ENABLED=true 이고 ctx에 _story_state 있을 때만 실행.
-            # 실패해도 파이프라인 계속 (다음 날 load_story_state가 DEFAULT 반환).
-            _scenario_v2_enabled = os.environ.get("SCENARIO_V2_ENABLED", "false").lower() == "true"
+            # -- Step 3-Story-Save: story_state 저장 (2026-04-22 보정) -------------
+            _scenario_v2_enabled = (
+                os.environ.get("SCENARIO_V2_ENABLED", "false").lower() == "true"
+            )
             if _scenario_v2_enabled and ctx.get("_story_state"):
                 try:
                     from engine.character.story_state_manager import (
@@ -804,9 +776,11 @@ def main() -> None:
                         "STEP_5",
                         f"[Step 3-Story-Save] 실패 (영향 없음): {_exc}",
                     )
-                 
-             # -- ARC_STATE_V3: 에피소드 완료 후 arc_state 갱신/저장 (2026-05-02) --
-            _arc_v3_enabled = os.environ.get("ARC_STATE_V3_ENABLED", "false").lower() == "true"
+
+            # -- ARC_STATE_V3: 에피소드 완료 후 arc_state 갱신/저장 (2026-05-02) --
+            _arc_v3_enabled = (
+                os.environ.get("ARC_STATE_V3_ENABLED", "false").lower() == "true"
+            )
             if _arc_v3_enabled and ctx.get("_arc_state") is not None:
                 try:
                     from engine.arc.arc_state_engine import (
@@ -814,13 +788,15 @@ def main() -> None:
                         snapshot_to_daily_analysis as _arc_snap,
                         update_after_episode as _arc_update,
                     )
- 
+
                     _outcome_v3 = (ctx.get("battle_result") or {}).get("outcome", "DRAW")
-                    _ep_type_v3 = ctx.get("episode_type_v3") or ctx.get("scenario_type", "ONE_VS_ONE")
+                    _ep_type_v3 = ctx.get("episode_type_v3") or ctx.get(
+                        "scenario_type", "ONE_VS_ONE"
+                    )
                     _snap_row = ctx.get("_snapshot_row") or {}
                     _new_villain = ctx.get("_new_villain_id")
                     _open_hook_v3 = (script_dict or {}).get("next_hook")
- 
+
                     _updated_arc = _arc_update(
                         state=ctx["_arc_state"],
                         outcome=_outcome_v3,
@@ -843,11 +819,15 @@ def main() -> None:
                         f"sig={_updated_arc['villain_signature']})",
                     )
                 except Exception as _arc_exc:
-                    sl.warning("STEP_5", f"[ARC_V3] arc_state 갱신 실패 (영향 없음): {_arc_exc}")
+                    sl.warning(
+                        "STEP_5",
+                        f"[ARC_V3] arc_state 갱신 실패 (영향 없음): {_arc_exc}",
+                    )
 
         if args.stage in ("all", "image"):
             if not ctx:
                 from engine.persist.asset_writer import load_analysis_ctx
+
                 ctx = load_analysis_ctx(episode_date)
                 if not ctx:
                     raise RuntimeError(
@@ -856,6 +836,7 @@ def main() -> None:
                     )
             if not script_dict:
                 from engine.persist.asset_writer import load_narrative_script
+
                 script_dict = load_narrative_script(episode_date)
                 if not script_dict:
                     raise RuntimeError(
