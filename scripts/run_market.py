@@ -1,4 +1,16 @@
 """
+
+run_market_arc_v3_patch_v2.py
+run_market.py — ARC_STATE_V3 연동 정확한 패치 명세
+ 
+기준 소스: 마스터 제공 run_market.py (v1.29.1 / 2026-04-22)
+수정일: 2026-05-02
+ 
+[v1 대비 수정 사항]
+  - PATCH 1: arc_context 위치가 step_analysis() 내부임을 반영
+  - PATCH 2: _arc_state, curr_row를 ctx에 포함 (main() 접근 보장)
+  - PATCH 3: main() persist 블록 내 arc_state 갱신/저장 위치 정확 지정
+  
 scripts/run_market.py
 ICG 파이프라인 메인 진입점 — STEP 2~6.
 
@@ -208,7 +220,24 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
 
         delta = compute(curr_row, prev_row)
 
-        arc_context = {"tension": 40, "days_since_last": 0, "yesterday_type": "NORMAL"}
+        # ── ARC_STATE_V3: arc_context 동적 로드 ─────────────────────────────
+        _arc_v3 = os.environ.get("ARC_STATE_V3_ENABLED", "false").lower() == "true"
+        if _arc_v3:
+            from engine.arc.arc_state_engine import load_arc_state, build_arc_context as _build_arc_ctx
+            _arc_state_loaded = load_arc_state()
+            arc_context = _build_arc_ctx(_arc_state_loaded)
+            logger.info(
+                "[Step 3-ARC_V3] arc_context 로드 "
+                "(tension=%d arc_day=%d sig=%d crowd=%d)",
+                arc_context["tension"],
+                arc_context["days_since_last"],
+                arc_context["villain_signature"],
+                arc_context["crowd_momentum"],
+            )
+        else:
+            _arc_state_loaded = None
+            arc_context = {"tension": 40, "days_since_last": 0, "yesterday_type": "NORMAL"}
+ 
         event_type = classify(delta, arc_context)
 
         # ── STEP 3-1: 기존 1:1 캐릭터 선정 (기반값, v2.0 분기 전) ─────────────
@@ -427,6 +456,9 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
             "guest_character_prompt": _guest_prompt,
             "_story_state":           _story_state,
             "_guest_characters":      _guest_characters,
+            # ── ARC_STATE_V3 신규 필드 (2026-05-02) ─────────────────────
+            "_arc_state":     _arc_state_loaded,   # main() persist 블록에서 사용
+            "_snapshot_row":  curr_row,            # update_after_episode snapshot 파라미터
         }
 
         # ── Hybrid 설계: ctx를 DB에 저장 (narrative/persist/image 독립 실행 대비) ──
@@ -742,6 +774,46 @@ def main() -> None:
                         "STEP_5",
                         f"[Step 3-Story-Save] 실패 (영향 없음): {_exc}",
                     )
+
+            # ── ARC_STATE_V3: 에피소드 완료 후 arc_state 갱신/저장 (2026-05-02) ──
+            _arc_v3_enabled = os.environ.get("ARC_STATE_V3_ENABLED", "false").lower() == "true"
+            if _arc_v3_enabled and ctx.get("_arc_state") is not None:
+                try:
+                    from engine.arc.arc_state_engine import (
+                        update_after_episode as _arc_update,
+                        save_arc_state as _arc_save,
+                        snapshot_to_daily_analysis as _arc_snap,
+                    )
+ 
+                    _outcome_v3    = (ctx.get("battle_result") or {}).get("outcome", "DRAW")
+                    _ep_type_v3    = ctx.get("episode_type_v3") or ctx.get("scenario_type", "ONE_VS_ONE")
+                    _snap_row      = ctx.get("_snapshot_row") or {}
+                    _new_villain   = ctx.get("_new_villain_id")   # EMERGENCE 감지 시 설정
+                    _open_hook_v3  = (script_dict or {}).get("next_hook")
+ 
+                    _updated_arc = _arc_update(
+                        state        = ctx["_arc_state"],
+                        outcome      = _outcome_v3,
+                        episode_type = _ep_type_v3,
+                        snapshot     = _snap_row,
+                        new_villain  = _new_villain,
+                        open_hook    = _open_hook_v3,
+                    )
+                    _arc_save(_updated_arc)
+                    _arc_snap(
+                        episode_date    = episode_date,
+                        state           = _updated_arc,
+                        episode_type_v3 = _ep_type_v3,
+                    )
+                    sl.info(
+                        "STEP_5",
+                        f"[ARC_V3] arc_state 갱신 완료 "
+                        f"(arc_day={_updated_arc['arc_day']} "
+                        f"tension={_updated_arc['arc_tension']} "
+                        f"sig={_updated_arc['villain_signature']})",
+                    )
+                except Exception as _arc_exc:
+                    sl.warning("STEP_5", f"[ARC_V3] arc_state 갱신 실패 (영향 없음): {_arc_exc}")
 
         if args.stage in ("all", "image"):
             if not ctx:
