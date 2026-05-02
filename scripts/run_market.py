@@ -309,7 +309,8 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
             _ep_v3 = (
                 os.environ.get("EPISODE_TYPE_V3_ENABLED", "false").lower() == "true"
             )
-            if _ep_v3:
+            # After (ARC_STATE_V3 없으면 스킵)
+            if _ep_v3 and _arc_state_loaded is not None:
                 try:
                     from engine.narrative.episode_type_engine import (
                         determine_episode_type as _det_ep_type,
