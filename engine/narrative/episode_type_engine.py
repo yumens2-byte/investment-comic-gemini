@@ -350,7 +350,9 @@ def _step2_new_villain(
 
 
 def _step3_arc_day_base(arc_day: int) -> str:
-    """STEP 3: Arc Day 기반 기본 타입 결정."""
+    """STEP 3: Arc Day 기반 기본 타입 결정. arc_day <= 0은 초기 상태로 BATTLE 처리."""
+    if arc_day <= 0:
+        return "BATTLE"
     mapping: dict[int, str] = {
         1:  "BATTLE",
         2:  "BATTLE_PLUS",
@@ -476,8 +478,8 @@ def _check_conflict_conditions(
 # ── 유틸리티 ─────────────────────────────────────────────────────────────────
 
 def get_act_phase(arc_day: int) -> str:
-    """arc_day → Act 1/2/3 판정."""
-    if arc_day in _ACT_1_RANGE:
+    """arc_day → Act 1/2/3 판정. arc_day <= 0은 초기 상태로 ACT_1 처리."""
+    if arc_day <= 0 or arc_day in _ACT_1_RANGE:
         return "ACT_1"
     if arc_day in _ACT_2_RANGE:
         return "ACT_2"
