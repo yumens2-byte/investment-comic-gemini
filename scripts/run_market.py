@@ -148,6 +148,36 @@ def _load_recent_scenarios(episode_date: str, limit: int = 7) -> list[str]:
         return []
 
 
+def _load_recent_outcomes(episode_date: str, limit: int = 3) -> list[str]:
+    """
+    최근 에피소드 battle_json.outcome 목록 조회.
+
+    episode_type_engine CONFLICT 3-AND 조건 판정용.
+    실패 시 빈 리스트 반환 (파이프라인 중단 안 함).
+    """
+    try:
+        from engine.common.supabase_client import icg_table
+
+        rows = (
+            icg_table("episode_assets")
+            .select("battle_json")
+            .lt("episode_date", episode_date)
+            .order("episode_date", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        outcomes = []
+        for r in rows.data or []:
+            bj = r.get("battle_json") or {}
+            outcome = bj.get("outcome") or ""
+            if outcome:
+                outcomes.append(str(outcome))
+        return outcomes
+    except Exception as exc:
+        logger.warning("[step_analysis] 최근 outcome 조회 실패 (진행): %s", exc)
+        return []
+
+
 def step_data(episode_date: str, logger_inst) -> None:
     """STEP 2: 시장 데이터 수집 → icg.daily_snapshots."""
     ts = logger_inst.step_start("STEP_2", "데이터 수집")
@@ -242,6 +272,9 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
         heroes_v2: list[str] = [hero_id_base]
         hero_id   = hero_id_base
         villain_id = villain_id_base
+        # ARC_STATE_V3 + EPISODE_TYPE_V3 초기값 (2026-05-02)
+        _episode_type_v3: str | None = None
+        _form_bonus_v3: int = 0
 
         if _scenario_v2:
             # ── STEP 3-2: risk_level 산출 (delta 기반 자체 계산) ──────────────
@@ -272,7 +305,44 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                 diversity_reason,
             )
 
-            # ── STEP 3-4: 캐릭터 재선정 (scenario별 분기) ─────────────────────
+            # -- STEP 3-3c: EPISODE_TYPE_V3 결정 (2026-05-02) ----------------
+            _ep_v3 = (
+                os.environ.get("EPISODE_TYPE_V3_ENABLED", "false").lower() == "true"
+            )
+            if _ep_v3:
+                try:
+                    from engine.narrative.episode_type_engine import (
+                        determine_episode_type as _det_ep_type,
+                    )
+
+                    _prev_villain = (_arc_state_loaded or {}).get("active_villain", "")
+                    _villain_changed = (
+                        _prev_villain != "" and _prev_villain != villain_id_base
+                    )
+                    _recent_outcomes = _load_recent_outcomes(episode_date, limit=3)
+                    _ep_result = _det_ep_type(
+                        arc_state=_arc_state_loaded or {},
+                        delta=delta,
+                        risk_level=risk_level_v2,
+                        recent_outcomes=_recent_outcomes,
+                        villain_changed=_villain_changed,
+                    )
+                    _episode_type_v3 = _ep_result.episode_type
+                    _form_bonus_v3 = _ep_result.form_bonus
+                    # scenario_type_v2를 역변환값으로 덮어씀 (기존 분기 호환)
+                    scenario_type_v2 = _ep_result.scenario_type
+                    logger.info(
+                        "[Step 3-3c] episode_type_v3=%s scenario=%s form_bonus=%d",
+                        _episode_type_v3,
+                        scenario_type_v2,
+                        _form_bonus_v3,
+                    )
+                except Exception as _ep_exc:
+                    logger.warning(
+                        "[Step 3-3c] episode_type_v3 판정 실패 (진행): %s", _ep_exc
+                    )
+
+            # -- STEP 3-4: 캐릭터 재선정 (scenario별 분기) --------------------
             if scenario_type_v2 == "NO_BATTLE":
                 from engine.narrative.character_selector import select_for_no_battle
                 hero_id, _no_villain = select_for_no_battle(delta)
@@ -356,6 +426,9 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
 
         else:
             # ONE_VS_ONE — 기존 로직 그대로
+            # ARC_STATE_V3: form_bonus를 arc_context에 주입 (battle_calc T3 연동 준비)
+            if _form_bonus_v3:
+                arc_context = {**arc_context, "form_bonus": _form_bonus_v3}
             battle_result = battle(
                 hero_id=hero_id,
                 hero_base=hero_base,
@@ -416,10 +489,15 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
         if _scenario_v2:
             try:
                 from engine.common.supabase_client import icg_table
-                icg_table("daily_analysis").update({
+                _da_payload: dict = {
                     "scenario_type": scenario_type_v2,
                     "ending_tone":   ending_tone_v2,
-                }).eq("analysis_date", episode_date).execute()
+                }
+                if _episode_type_v3:
+                    _da_payload["episode_type_v3"] = _episode_type_v3
+                icg_table("daily_analysis").update(
+                    _da_payload
+                ).eq("analysis_date", episode_date).execute()
                 logger.info(
                     "[Step 3-8] daily_analysis v2.0 업데이트 완료 "
                     "(scenario=%s tone=%s)",
@@ -446,8 +524,11 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
             "_story_state":           _story_state,
             "_guest_characters":      _guest_characters,
             # ARC_STATE_V3 신규 필드 (2026-05-02)
-            "_arc_state":    _arc_state_loaded,
-            "_snapshot_row": curr_row,
+            "_arc_state":      _arc_state_loaded,
+            "_snapshot_row":   curr_row,
+            # EPISODE_TYPE_V3 신규 필드 (2026-05-02)
+            "episode_type_v3": _episode_type_v3,
+            "form_bonus":      _form_bonus_v3,
         }
 
         # ── Hybrid 설계: ctx를 DB에 저장 (narrative/persist/image 독립 실행 대비) ──
