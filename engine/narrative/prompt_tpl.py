@@ -27,9 +27,19 @@ _CANON_PATH = Path("config/characters.yaml")
 
 
 def _load_canon() -> dict:
-    from engine.common.notion_loader import load_characters_canon
+    """Load canon from Notion first, fallback to local YAML for tests/dev."""
+    try:
+        from engine.common.notion_loader import load_characters_canon
 
-    return load_characters_canon()
+        return load_characters_canon()
+    except Exception:
+        import yaml
+
+        if not _CANON_PATH.exists():
+            return {"heroes": {}, "villains": {}}
+        return yaml.safe_load(_CANON_PATH.read_text(encoding="utf-8")) or {
+            "heroes": {}, "villains": {}
+        }
 
 
 def _make_jinja_env_from_string(template_str: str) -> Environment:
@@ -87,7 +97,10 @@ def render_user_prompt(
     if heroes is None:
         heroes = [hero_id]
 
-    template_str = load_narrative_user_template()
+    try:
+        template_str = load_narrative_user_template()
+    except Exception:
+        template_str = Path("config/prompts/narrative_user.j2").read_text(encoding="utf-8")
     canon = _load_canon()
     heroes_canon = canon.get("heroes", {})
     villains = canon.get("villains", {})
