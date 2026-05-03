@@ -96,22 +96,33 @@ jobs:
             --stage analysis \
             ${{ github.event.inputs.target_date && format('--date {0}', github.event.inputs.target_date) || '' }}
 
+
+      - name: STEP 3.5 — Major Event Gate (for cost control)
+        id: major_gate
+        if: ${{ github.event_name == 'schedule' && (github.event.inputs.stage == '' || github.event.inputs.stage == 'all') }}
+        run: |
+          TARGET_DATE="${{ github.event.inputs.target_date }}"
+          if [ -z "$TARGET_DATE" ]; then
+            TARGET_DATE=$(TZ=Asia/Seoul date +%F)
+          fi
+          python -m scripts.check_major_event_gate --date "$TARGET_DATE" >> "$GITHUB_OUTPUT"
+
       - name: STEP 4 — Narrative (Claude)
-        if: ${{ github.event.inputs.stage == '' || github.event.inputs.stage == 'all' || github.event.inputs.stage == 'narrative' }}
+        if: ${{ github.event.inputs.stage == 'narrative' || (github.event.inputs.stage == '' || github.event.inputs.stage == 'all') && (github.event_name != 'schedule' || steps.major_gate.outputs.should_run_expensive == 'true') }}
         run: |
           python -m scripts.run_market \
             --stage narrative \
             ${{ github.event.inputs.target_date && format('--date {0}', github.event.inputs.target_date) || '' }}
 
       - name: STEP 5 — Persist
-        if: ${{ github.event.inputs.stage == '' || github.event.inputs.stage == 'all' || github.event.inputs.stage == 'persist' }}
+        if: ${{ github.event.inputs.stage == 'persist' || (github.event.inputs.stage == '' || github.event.inputs.stage == 'all') && (github.event_name != 'schedule' || steps.major_gate.outputs.should_run_expensive == 'true') }}
         run: |
           python -m scripts.run_market \
             --stage persist \
             ${{ github.event.inputs.target_date && format('--date {0}', github.event.inputs.target_date) || '' }}
 
       - name: STEP 6 — Image Generation (Gemini)
-        if: ${{ github.event.inputs.stage == '' || github.event.inputs.stage == 'all' || github.event.inputs.stage == 'image' }}
+        if: ${{ github.event.inputs.stage == 'image' || (github.event.inputs.stage == '' || github.event.inputs.stage == 'all') && (github.event_name != 'schedule' || steps.major_gate.outputs.should_run_expensive == 'true') }}
         run: |
           python -m scripts.run_market \
             --stage image \
