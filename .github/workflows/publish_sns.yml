@@ -80,6 +80,7 @@ jobs:
     if: needs.pre-check.outputs.episode_id != ''
     env:
       DRY_RUN:                    "false"
+      PUBLISH_NON_MAJOR : ${{ secrets.PUBLISH_NON_MAJOR }}
       SUPABASE_URL:               ${{ secrets.SUPABASE_URL }}
       SUPABASE_KEY:               ${{ secrets.SUPABASE_KEY }}
       TELEGRAM_BOT_TOKEN:         ${{ secrets.TELEGRAM_BOT_TOKEN }}
