@@ -24,6 +24,55 @@ logging.basicConfig(
 logger = logging.getLogger("icg.run_publish")
 
 
+MAJOR_EVENT_TYPES = frozenset({
+    "BATTLE",
+    "SHOCK",
+    "AFTERMATH",
+    "EMERGENCE",
+    "SEASON_FINALE",
+    "BATTLE_PLUS",
+    "BATTLE_PLUS_FORM2",
+    "BATTLE_PLUS_FORM3",
+})
+
+
+def is_major_event(event_type: str) -> bool:
+    return (event_type or "").upper() in MAJOR_EVENT_TYPES
+
+
+def validate_major_event_types() -> tuple[set[str], set[str]]:
+    """Return (unknown_major_types, missing_recommended_major_types)."""
+    supported_types: set[str] = {
+        "BATTLE",
+        "SHOCK",
+        "AFTERMATH",
+        "INTEL",
+        "NORMAL",
+        "FLASHBACK",
+        "TACTICAL",
+        "BATTLE_PLUS",
+        "BATTLE_PLUS_FORM2",
+        "BATTLE_PLUS_FORM3",
+        "STALEMATE",
+        "CONFLICT",
+        "EMERGENCE",
+        "SEASON_FINALE",
+    }
+    recommended_major_types = {
+        "BATTLE",
+        "SHOCK",
+        "AFTERMATH",
+        "BATTLE_PLUS",
+        "BATTLE_PLUS_FORM2",
+        "BATTLE_PLUS_FORM3",
+        "EMERGENCE",
+        "SEASON_FINALE",
+    }
+    unknown = MAJOR_EVENT_TYPES - supported_types
+    missing = recommended_major_types - MAJOR_EVENT_TYPES
+    return unknown, missing
+
+
 def _parse_date(episode_id: str) -> str:
     m = re.match(r"ICG-(\d{4}-\d{2}-\d{2})-\d{3}", episode_id)
     if not m:
@@ -96,6 +145,23 @@ def main() -> None:
     event_type = row.get("event_type", "NORMAL")
     script_dict = row.get("script_json", {})
     episode_id = args.episode or f"ICG-{episode_date}-001"
+
+    unknown_major, missing_major = validate_major_event_types()
+    if unknown_major:
+        sl.warning("STEP_8", f"major_event_types에 미지원 타입 존재: {sorted(unknown_major)}")
+    if missing_major:
+        sl.warning("STEP_8", f"권장 메이저 타입 누락: {sorted(missing_major)}")
+
+    force_non_major = os.environ.get("PUBLISH_NON_MAJOR", "false").lower() == "true"
+    if not is_major_event(event_type) and not force_non_major:
+        msg = (
+            f"⏭️ 발행 스킵 — episode={episode_id} event_type={event_type}는 비-메이저 이벤트입니다. "
+            "굵직한 이벤트(BATTLE/SHOCK/AFTERMATH 등)만 자동 발행합니다. "
+            "비-메이저 발행이 필요하면 PUBLISH_NON_MAJOR=true 후 재실행하세요."
+        )
+        sl.info("STEP_8", msg)
+        logger.info(msg)
+        return
 
     # ── 중복 발행 방어 (Layer 1) ─────────────────────────────────────────
     # 1) 이미 published 상태면 차단 (FORCE_REPUBLISH=true 환경변수로만 우회)
