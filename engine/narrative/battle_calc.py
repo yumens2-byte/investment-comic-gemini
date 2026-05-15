@@ -12,12 +12,23 @@ v2.0 변경사항 (2026-04-18):
 - Outcome에 PEACEFUL_GROWTH (NO_BATTLE 전용), PYRRHIC_VICTORY (ALLIANCE 전용) 추가
 - battle_alliance() 함수 추가 — hero 2명 연합 vs villain 1명 강적
 - resolve_alliance_outcome() 함수 추가 — ALLIANCE 전용 판정 (HERO_TACTICAL_VICTORY → PYRRHIC_VICTORY 재지정)
+
+v2.3 변경사항 (2026-05-14, Phase 2.3):
+- crowd_momentum_modifier() — RULE CM-01 (G08, EDT 04 v2.12)
+- villain_signature_bonus() — RULE VS-01~05 (G09, EDT 04 v2.10)
+- emergence_information_deficit() — RULE EMR-01 (G09)
+- emergence_outcome_demotion() — RULE EMR-02 (G09)
+- 모두 Feature Flag로 가드 (기본값 OFF, 후방 호환)
 """
 
 from __future__ import annotations
 
+import logging
+import os
 from dataclasses import dataclass
 from typing import Literal
+
+logger = logging.getLogger(__name__)
 
 Outcome = Literal[
     "HERO_VICTORY",           # balance >= 30
@@ -29,6 +40,28 @@ Outcome = Literal[
     "PEACEFUL_GROWTH",        # v2.0 — NO_BATTLE 전용, balance 없음
     "PYRRHIC_VICTORY",        # v2.0 — ALLIANCE 전용, balance 10~29
 ]
+
+# ── Phase 2.3 신규 상수 (G08, G09) ─────────────────────────────────────────
+
+# RULE CM-01: crowd_momentum Modifier 변환비 + 상한
+# ICG는 crowd_momentum 범위 -20~+20 (F&G 기반) → EDT (-10~+10)의 2배 범위
+# EDT 공식: modifier = cm / 2, 상한 ±5
+# ICG 적용: modifier = round(cm / 4), 상한 ±5 (EDT와 동일한 효과 크기 유지)
+_CROWD_MOMENTUM_DIVISOR = 4
+_CROWD_MOMENTUM_MAX_ABS = 5
+
+# RULE VS-01: Villain Signature Bonus by Level
+# ICG의 villain_signature는 int (1/2/3)이므로 Level별 Power Bonus 매핑
+_VILLAIN_SIGNATURE_BONUS_TABLE: dict[int, int] = {
+    1: 0,    # Dormant/Normal
+    2: 8,    # Active/Escalating
+    3: 18,   # Critical/Strengthened
+}
+
+# RULE EMR-01: EMERGENCE Information Deficit
+_EMERGENCE_DEFICIT_DAY_1 = -10
+_EMERGENCE_DEFICIT_DAY_2 = -5
+
 
 # 빌런 Canon 이름 목록 (RULE 06)
 CANON_VILLAIN_NAMES: set[str] = {
@@ -438,4 +471,224 @@ def battle_alliance(
         outcome=outcome,
         hero_power_breakdown=combined_hero_breakdown,
         villain_power_breakdown=villain_breakdown,
+    )
+
+# ════════════════════════════════════════════════════════════════════════════
+# Phase 2.3 신규 Modifier 함수 (G08, G09)
+# 기존 battle() / battle_alliance() 결과를 보강.
+# Feature Flag로 가드 — 미활성 시 0 반환 (배틀 결과 변경 없음).
+# ════════════════════════════════════════════════════════════════════════════
+
+
+def crowd_momentum_modifier(crowd_momentum: int) -> int:
+    """
+    RULE CM-01 — crowd_momentum을 Hero Power 보정값으로 변환.
+
+    EDT 04 v2.12 공식 (ICG 범위 -20~+20 적응):
+        modifier = round(crowd_momentum / 4)
+        clamp: -5 ~ +5
+
+    Feature Flag: CROWD_MODIFIER_ENABLED
+
+    Args:
+        crowd_momentum: 현재 arc_state.crowd_momentum (-20 ~ +20)
+
+    Returns:
+        Hero Power에 더할 정수 (-5 ~ +5). 미활성 시 0.
+    """
+    if os.environ.get("CROWD_MODIFIER_ENABLED", "false").lower() != "true":
+        return 0
+    raw = round(crowd_momentum / _CROWD_MOMENTUM_DIVISOR)
+    return max(-_CROWD_MOMENTUM_MAX_ABS, min(_CROWD_MOMENTUM_MAX_ABS, raw))
+
+
+def villain_signature_bonus(villain_signature: int) -> int:
+    """
+    RULE VS-01 — villain_signature Level → Villain Power Bonus.
+
+    매핑 (EDT 02 v2.19 기반):
+        Lv.1 (Normal/Dormant):    +0
+        Lv.2 (Active/Escalating): +8
+        Lv.3 (Critical):          +18
+
+    Feature Flag: VILLAIN_SIGNATURE_BONUS_ENABLED
+
+    Args:
+        villain_signature: arc_state.villain_signature (1/2/3)
+
+    Returns:
+        Villain Power에 더할 정수. 미활성 시 0.
+    """
+    if os.environ.get("VILLAIN_SIGNATURE_BONUS_ENABLED", "false").lower() != "true":
+        return 0
+    return _VILLAIN_SIGNATURE_BONUS_TABLE.get(int(villain_signature or 1), 0)
+
+
+def emergence_information_deficit(arc_context: dict, episode_type: str) -> int:
+    """
+    RULE EMR-01 — EMERGENCE Information Deficit.
+
+    EMERGENCE 에피소드 또는 직후 1 EP 잔류 기간에 Hero Power 감산.
+        EMERGENCE 당일:        -10
+        emergence_deficit_days >= 2: -10
+        emergence_deficit_days == 1: -5
+        그 외:                  0
+
+    Feature Flag: EMERGENCE_DEFICIT_ENABLED
+
+    Args:
+        arc_context:  build_arc_context() 결과 (emergence_deficit_days 포함)
+        episode_type: 이번 에피소드 타입
+
+    Returns:
+        Hero Power에 더할 음수 또는 0. 미활성 시 0.
+    """
+    if os.environ.get("EMERGENCE_DEFICIT_ENABLED", "false").lower() != "true":
+        return 0
+    if episode_type == "EMERGENCE":
+        return _EMERGENCE_DEFICIT_DAY_1
+    days = arc_context.get("emergence_deficit_days") or 0
+    if days >= 2:
+        return _EMERGENCE_DEFICIT_DAY_1
+    if days == 1:
+        return _EMERGENCE_DEFICIT_DAY_2
+    return 0
+
+
+def emergence_outcome_demotion(balance: int, episode_type: str) -> tuple[int, str]:
+    """
+    RULE EMR-02 — EMERGENCE 타입 OUTCOME 격하 (1단계).
+
+    Arc 첫날 완벽 승리는 서사 현실감 저하 → 1단계 격하.
+        Balance >= +30   → HERO_TACTICAL_VICTORY
+        Balance +10~+29  → DRAW
+        Balance -4~+9    → HERO_DEFEAT
+        그 이하          → 유지
+
+    Args:
+        balance:      battle balance
+        episode_type: 에피소드 타입
+
+    Returns:
+        (보정된 balance, 격하 사유).
+        EMERGENCE 아니거나 Feature Flag OFF면 (원본 balance, "")
+    """
+    if os.environ.get("EMERGENCE_DEFICIT_ENABLED", "false").lower() != "true":
+        return balance, ""
+    if episode_type != "EMERGENCE":
+        return balance, ""
+
+    if balance >= 30:
+        # HERO_VICTORY → HERO_TACTICAL_VICTORY (balance 29로 격하)
+        return 29, "EMR-02: Victory → Tactical (EMERGENCE 첫날)"
+    if balance >= 10:
+        # HERO_TACTICAL_VICTORY → DRAW (balance 9로 격하)
+        return 9, "EMR-02: Tactical → Draw (EMERGENCE 첫날)"
+    if balance >= -4:
+        # DRAW → HERO_DEFEAT (balance -11로 격하)
+        return -11, "EMR-02: Draw → Defeat (EMERGENCE 첫날)"
+    return balance, ""
+
+
+def apply_v23_modifiers(
+    result: BattleResult,
+    arc_context: dict,
+    episode_type: str,
+) -> BattleResult:
+    """
+    기존 battle() / battle_alliance() 결과에 Phase 2.3 Modifier 3종을 후처리 적용.
+
+    적용 순서 (EDT 04 v2.12 STEP 4~8 준용):
+        STEP 4 (G09):   Villain Signature Bonus → Villain Power
+        STEP 4 (G09):   EMERGENCE Information Deficit → Hero Power
+        STEP 4.5 (G08): crowd_momentum Modifier → Hero Power
+        STEP 5:         Battle Balance = Hero - Villain
+        STEP 8:         EMERGENCE OUTCOME Demotion → Outcome 재산출
+
+    Feature Flag 모두 OFF 시 입력 result를 그대로 반환.
+
+    Args:
+        result:       battle() 또는 battle_alliance() 결과
+        arc_context:  build_arc_context() 결과
+        episode_type: 결정된 에피소드 타입 (EMERGENCE 등)
+
+    Returns:
+        보정된 BattleResult (불변 객체이므로 새 인스턴스).
+    """
+    # 모든 Flag OFF면 입력 그대로
+    if (
+        os.environ.get("CROWD_MODIFIER_ENABLED", "false").lower() != "true"
+        and os.environ.get("VILLAIN_SIGNATURE_BONUS_ENABLED", "false").lower() != "true"
+        and os.environ.get("EMERGENCE_DEFICIT_ENABLED", "false").lower() != "true"
+    ):
+        return result
+
+    new_hero_power = result.hero_power
+    new_villain_power = result.villain_power
+    new_hero_bd = dict(result.hero_power_breakdown)
+    new_villain_bd = dict(result.villain_power_breakdown)
+
+    # ── G09: Villain Signature Bonus ─────────────────────────────────────
+    vs_bonus = villain_signature_bonus(arc_context.get("villain_signature", 1) or 1)
+    if vs_bonus:
+        new_villain_power += vs_bonus
+        new_villain_bd["villain_signature"] = vs_bonus
+        logger.info(
+            "[BattleCalc v2.3] STEP 4 — Villain Signature Bonus +%d "
+            "(Lv.%d)", vs_bonus, arc_context.get("villain_signature", 1) or 1,
+        )
+
+    # ── G09: EMERGENCE Information Deficit ───────────────────────────────
+    deficit = emergence_information_deficit(arc_context, episode_type)
+    if deficit:
+        new_hero_power += deficit
+        new_hero_bd["emergence_deficit"] = deficit
+        logger.info(
+            "[BattleCalc v2.3] STEP 4 — EMERGENCE Information Deficit %d", deficit,
+        )
+
+    # ── G08: crowd_momentum Modifier ─────────────────────────────────────
+    cm_mod = crowd_momentum_modifier(arc_context.get("crowd_momentum", 0) or 0)
+    if cm_mod:
+        new_hero_power += cm_mod
+        new_hero_bd["crowd_momentum"] = cm_mod
+        logger.info(
+            "[BattleCalc v2.3] STEP 4.5 — crowd_momentum Modifier %+d "
+            "(arc.crowd=%d)",
+            cm_mod, arc_context.get("crowd_momentum", 0) or 0,
+        )
+
+    # ── STEP 5: Balance 재산출 ───────────────────────────────────────────
+    new_balance = new_hero_power - new_villain_power
+
+    # ── STEP 8: EMERGENCE OUTCOME Demotion ───────────────────────────────
+    demoted_balance, demote_reason = emergence_outcome_demotion(
+        new_balance, episode_type
+    )
+    if demote_reason:
+        new_balance = demoted_balance
+        new_hero_bd["emergence_demotion"] = demote_reason
+        logger.info("[BattleCalc v2.3] STEP 8 — %s", demote_reason)
+
+    # ── Outcome 재판정 ───────────────────────────────────────────────────
+    # ALLIANCE 시나리오 보존: 입력 outcome이 PYRRHIC이면 resolve_alliance_outcome 사용
+    if result.outcome in ("PYRRHIC_VICTORY",) or (
+        result.hero_power_breakdown.get("alliance_decay") is not None
+    ):
+        new_outcome = resolve_alliance_outcome(new_balance)
+    elif result.outcome == "PEACEFUL_GROWTH":
+        # NO_BATTLE은 Modifier 적용 안 함 (PEACEFUL_GROWTH 유지)
+        new_outcome = "PEACEFUL_GROWTH"
+    else:
+        new_outcome = resolve_outcome(new_balance)
+
+    return BattleResult(
+        hero_id=result.hero_id,
+        villain_id=result.villain_id,
+        hero_power=new_hero_power,
+        villain_power=new_villain_power,
+        balance=new_balance,
+        outcome=new_outcome,
+        hero_power_breakdown=new_hero_bd,
+        villain_power_breakdown=new_villain_bd,
     )

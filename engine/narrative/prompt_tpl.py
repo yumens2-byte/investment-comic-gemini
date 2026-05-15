@@ -70,6 +70,12 @@ def render_user_prompt(
     heroes: list[str] | None = None,
     # ── Step 3-Story 신규 파라미터 (2026-04-22 보정) ──────────────────────────
     guest_character_prompt: str = "",
+    # ── Phase 2.3 신규 파라미터 (G02 BS_PR_RULES) ─────────────────────────────
+    narrative_depth_enabled: bool = False,
+    pair_tension_enabled: bool = False,
+    triggered_pair: str | None = None,
+    hero_belief: dict | None = None,
+    villain_belief: dict | None = None,
 ) -> str:
     """
     Notion에서 로드한 narrative_user 템플릿 렌더링.
@@ -87,6 +93,12 @@ def render_user_prompt(
         ending_tone:   v2.0 — "OPTIMISTIC" | "TENSE" | "OMINOUS" (기본: TENSE).
         heroes:        v2.0 — 히어로 ID 리스트. ALLIANCE=2개, 그 외=1개.
                        None이면 [hero_id] 사용.
+        guest_character_prompt: 게스트 캐릭터 프롬프트 블록.
+        narrative_depth_enabled: v2.3 — Belief Sheet 블록 출력 여부.
+        pair_tension_enabled:    v2.3 — Pair Relationship 블록 출력 여부.
+        triggered_pair:          v2.3 — STEP 1.5-B에서 triggered된 페어 ID.
+        hero_belief:             v2.3 — 주 히어로 belief 6요소 dict.
+        villain_belief:          v2.3 — 빌런 belief 6요소 dict (Oil Shock은 4요소).
 
     Returns:
         렌더링된 사용자 프롬프트 문자열.
@@ -107,6 +119,14 @@ def render_user_prompt(
     hero_entry = heroes_canon.get(hero_id, {})
     villain_entry = villains.get(villain_id, {})
 
+    # ── Phase 2.3: characters.yaml의 belief 블록 자동 로드 ────────────────────
+    # 명시적으로 hero_belief/villain_belief가 전달되지 않으면 canon에서 추출
+    if narrative_depth_enabled:
+        if hero_belief is None:
+            hero_belief = hero_entry.get("belief") or {}
+        if villain_belief is None:
+            villain_belief = villain_entry.get("belief") or {}
+
     env = _make_jinja_env_from_string(template_str)
     template = env.get_template("narrative_user.j2")
 
@@ -121,14 +141,18 @@ def render_user_prompt(
         villain_id=villain_id,
         villain_name=villain_entry.get("name_ko", villain_id),
         arc_context=arc_context,
-        heroes=heroes_canon,          # 기존: 캐릭터 전체 dict ({% for cid, char in heroes.items() %} 루프용)
+        heroes=heroes_canon,
         villains=villains,
-        # ── v2.0 신규 변수 ────────────────────────────────────────────────────
-        scenario_type=scenario_type,  # {{ scenario_type }} 치환
-        ending_tone=ending_tone,      # {{ ending_tone }} 치환
-        hero_ids=heroes,              # {{ hero_ids[0] }}, {{ hero_ids[1] }} 치환 (ALLIANCE 2명)
-        # ── Step 3-Story 신규 변수 (2026-04-22 보정) ──────────────────────────
-        guest_character_prompt=guest_character_prompt,  # {{ guest_character_prompt }} 치환
+        scenario_type=scenario_type,
+        ending_tone=ending_tone,
+        hero_ids=heroes,
+        guest_character_prompt=guest_character_prompt,
+        # ── Phase 2.3 신규 변수 ──
+        narrative_depth_enabled=narrative_depth_enabled,
+        pair_tension_enabled=pair_tension_enabled,
+        triggered_pair=triggered_pair,
+        hero_belief=hero_belief,
+        villain_belief=villain_belief,
     )
 
 

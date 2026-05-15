@@ -197,6 +197,11 @@ def update_after_episode(
     snapshot: dict[str, Any],
     new_villain: str | None = None,
     open_hook: str | None = None,
+    # ── Phase 2.3 신규 (모두 기본값 — 후방 호환) ──
+    hero_ids: list[str] | None = None,
+    form_triggered: int = 0,
+    zero_block_appeared: bool = False,
+    villain_defeated: bool = False,
 ) -> dict[str, Any]:
     """
     에피소드 완료 후 arc_state 갱신.
@@ -269,7 +274,9 @@ def update_after_episode(
     fg = snapshot.get("fear_greed")
     if fg is not None:
         s["crowd_momentum"] = _calc_crowd_momentum(int(fg))
-    # else: 전날 값 유지
+    else:
+        # F&G 부재 시: 자동 감쇠 (RULE CM-02 — G08)
+        s["crowd_momentum"] = attenuate_crowd_momentum(s.get("crowd_momentum") or 0)
 
     # ── dimensional_rift_progress 갱신 (ICG 독자 세계관) ────────────────────
     vix = float(snapshot.get("vix") or 0)
@@ -298,15 +305,35 @@ def update_after_episode(
     if open_hook:
         s["open_hook"] = open_hook
 
+    # ── Phase 2.3: PAIR_TENSION 갱신 (Feature Flag 가드) ─────────────────────
+    if is_pair_tension_enabled():
+        s = update_pair_tension(
+            state=s,
+            outcome=outcome,
+            episode_type=episode_type,
+            hero_ids=hero_ids or [],
+            form_triggered=form_triggered,
+            zero_block_appeared=zero_block_appeared,
+            villain_defeated=villain_defeated,
+        )
+
+    # ── Phase 2.3: EMERGENCE Information Deficit days 갱신 ──────────────────
+    # RULE EMR-01 — Feature Flag 무관 트래킹 (저장만, 적용은 modifier 함수에서)
+    s = update_emergence_deficit(s, episode_type)
+
     logger.info(
         "[ArcStateEngine] 갱신 완료 — "
-        "arc_day=%d tension=%d momentum=%d sig=%d crowd=%d rift=%d%%",
+        "arc_day=%d tension=%d momentum=%d sig=%d crowd=%d rift=%d%% "
+        "pair=%s edt_pressure=%.2f deficit_days=%d",
         s.get("arc_day", 0),
         s.get("arc_tension", 30),
         s.get("hero_momentum", 50),
         s.get("villain_signature", 1),
         s.get("crowd_momentum", 0),
         s.get("dimensional_rift_progress", 0),
+        s.get("pair_tension", {}),
+        s.get("edt_pressure", 0.0),
+        s.get("emergence_deficit_days", 0),
     )
     return s
 
@@ -335,6 +362,10 @@ def build_arc_context(state: dict[str, Any]) -> dict[str, Any]:
         "dimensional_rift":  state.get("dimensional_rift_progress", 0),
         "form2_available":   state.get("form2_available", False),
         "form3_activated":   state.get("form3_activated", False),
+        # ── Phase 2.3 (PAIR + EMERGENCE) ──
+        "pair_tension":         state.get("pair_tension", {"PAIR_A": 0, "PAIR_B": 0, "PAIR_C": 0}),
+        "edt_pressure":         state.get("edt_pressure", 0.0),
+        "emergence_deficit_days": state.get("emergence_deficit_days", 0),
     }
 
 
@@ -432,6 +463,11 @@ def _default_arc_state() -> dict[str, Any]:
         "dimensional_rift_progress": 0,
         "volatility_fields_active": False,
         "open_hook":                None,
+        # ── v2.2 신규 (PAIR_TENSION_ENABLED 시 사용) ──
+        "pair_tension":             {"PAIR_A": 0, "PAIR_B": 0, "PAIR_C": 0},
+        "edt_pressure":             0.0,
+        # ── EMERGENCE Information Deficit (RULE EMR-01) ──
+        "emergence_deficit_days":   0,
     }
 
 
@@ -440,3 +476,315 @@ def _default_arc_state() -> dict[str, Any]:
 def is_enabled() -> bool:
     """ARC_STATE_V3_ENABLED 환경변수 확인."""
     return os.environ.get("ARC_STATE_V3_ENABLED", "false").lower() == "true"
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Phase 2.3 신규 — PAIR_TENSION + edt_pressure (G03)
+# Feature Flag: PAIR_TENSION_ENABLED
+# 설계 기반: EDT ARC_STATE_SCHEMA v2.2 / 05 v2.11 RULE PR-*
+# ════════════════════════════════════════════════════════════════════════════
+
+# ── PAIR 가중치 (edt_pressure 자동 재계산용) ───────────────────────────────
+_PAIR_WEIGHT: dict[str, float] = {
+    "PAIR_A": 1.0,   # EDT ↔ Leverage  (통제 vs 야성)
+    "PAIR_B": 0.5,   # Iron Nuna ↔ Futures Girl (방어 vs 신호)
+    "PAIR_C": 0.3,   # Gold Bond ↔ Zero Block (질서 vs 혼돈)
+}
+
+# ── 캐릭터 → 페어 매핑 (관련 페어 판정용) ─────────────────────────────────
+_CHAR_TO_PAIR: dict[str, str] = {
+    "CHAR_HERO_001": "PAIR_A",   # EDT (SOLO HUB이지만 PAIR_A 한 축)
+    "CHAR_HERO_003": "PAIR_A",   # Leverage Muscle Man
+    "CHAR_HERO_002": "PAIR_B",   # Iron Securities Nuna
+    "CHAR_HERO_004": "PAIR_B",   # Exposure Futures Girl
+    "CHAR_HERO_005": "PAIR_C",   # Gold Bond Muscle
+    # CHAR_ANTI_HERO_001 (Zero Block) → PAIR_C 짝, ICG 미정의 시 비활성
+}
+
+# ── PAIR 증감량 (RULE PR-03/04/05/06) ──────────────────────────────────────
+_PAIR_DELTA_DRAW         = 5
+_PAIR_DELTA_DEFEAT       = 10
+_PAIR_DELTA_FORM2        = 20   # PAIR_A 전용, 1회성
+_PAIR_DELTA_ZERO_BLOCK   = 30   # PAIR_C 전용
+_PAIR_DELTA_CONFLICT     = -30  # 해당 페어만
+_PAIR_DELTA_AFTERMATH    = -10  # 모든 페어
+_PAIR_DELTA_VILLAIN_DEFEATED = -15  # 모든 페어
+
+# ── PR-01/07 임계값 ─────────────────────────────────────────────────────────
+PAIR_TENSION_TRIGGER_THRESHOLD = 70    # CONFLICT 가중 발동
+EDT_PRESSURE_FORM3_BONUS_THRESHOLD = 150.0  # PR-07 Form3 가중
+
+# ── PR-01 동률 우선순위 ─────────────────────────────────────────────────────
+_PAIR_PRIORITY_ORDER = ["PAIR_A", "PAIR_B", "PAIR_C"]
+
+
+def is_pair_tension_enabled() -> bool:
+    """PAIR_TENSION_ENABLED 환경변수 확인."""
+    return os.environ.get("PAIR_TENSION_ENABLED", "false").lower() == "true"
+
+
+def clamp_pair_value(value: int | float) -> int:
+    """페어 텐션 값 0~100 클램프."""
+    return max(0, min(100, int(value)))
+
+
+def calc_edt_pressure(pair_tension: dict[str, int]) -> float:
+    """
+    edt_pressure 자동 재계산.
+    공식: PAIR_A * 1.0 + PAIR_B * 0.5 + PAIR_C * 0.3
+    최대값: 100 + 50 + 30 = 180.0
+    """
+    if not isinstance(pair_tension, dict):
+        return 0.0
+    total = 0.0
+    for pair_id, weight in _PAIR_WEIGHT.items():
+        val = pair_tension.get(pair_id, 0) or 0
+        total += float(val) * weight
+    return round(total, 2)
+
+
+def get_pair_for_character(char_id: str) -> str | None:
+    """캐릭터 ID → 소속 페어 (없으면 None)."""
+    return _CHAR_TO_PAIR.get(char_id)
+
+
+def get_relevant_pair(hero_ids: list[str]) -> str | None:
+    """
+    에피소드에 등장한 히어로들로부터 '관련 페어' 결정.
+    페어 양 캐릭터가 모두 등장한 경우에만 해당 페어 반환.
+
+    Returns:
+        페어 ID ("PAIR_A" 등) 또는 None.
+    """
+    pair_member_count: dict[str, int] = {}
+    for h_id in hero_ids:
+        p = _CHAR_TO_PAIR.get(h_id)
+        if p:
+            pair_member_count[p] = pair_member_count.get(p, 0) + 1
+    # 양 캐릭터 모두 등장(>=2)한 페어 우선
+    for p in _PAIR_PRIORITY_ORDER:
+        if pair_member_count.get(p, 0) >= 2:
+            return p
+    return None
+
+
+def update_pair_tension(
+    state: dict[str, Any],
+    outcome: str,
+    episode_type: str,
+    hero_ids: list[str],
+    form_triggered: int = 0,
+    zero_block_appeared: bool = False,
+    villain_defeated: bool = False,
+) -> dict[str, Any]:
+    """
+    에피소드 결과에 따라 pair_tension 갱신.
+
+    RULE PR-03: 자동 증가 (Draw/Defeat/Form2/Zero Block 등장)
+    RULE PR-04: CONFLICT 발행 후 해당 페어 -30
+    RULE PR-05: AFTERMATH 발행 후 모든 페어 -10
+    RULE PR-06: 빌런 격퇴 시 모든 페어 -15
+
+    Args:
+        state:               현재 arc_state
+        outcome:             OUTCOME 문자열
+        episode_type:        에피소드 타입 (CONFLICT/AFTERMATH/...)
+        hero_ids:            등장 히어로 ID 리스트
+        form_triggered:      2 또는 3 (Form 발동 단계), 0이면 미발동
+        zero_block_appeared: Zero Block 등장 여부
+        villain_defeated:    빌런 Arc 종결 여부
+
+    Returns:
+        갱신된 arc_state (deep copy)
+    """
+    import copy
+    s = copy.deepcopy(state)
+    pt = s.get("pair_tension") or {"PAIR_A": 0, "PAIR_B": 0, "PAIR_C": 0}
+    # JSON 직렬화/역직렬화 안전성 확보
+    pt = {k: int(pt.get(k, 0) or 0) for k in ("PAIR_A", "PAIR_B", "PAIR_C")}
+
+    relevant_pair = get_relevant_pair(hero_ids)
+
+    # ── PR-04: CONFLICT 발행 후 해당 페어 -30 ────────────────────────────
+    if episode_type == "CONFLICT":
+        target_pair = _select_highest_pair_over_threshold(pt) or relevant_pair
+        if target_pair:
+            pt[target_pair] = clamp_pair_value(pt[target_pair] + _PAIR_DELTA_CONFLICT)
+            logger.info(
+                "[ArcStateEngine] RULE PR-04: CONFLICT 종결 → %s -30 (현재 %d)",
+                target_pair, pt[target_pair],
+            )
+
+    # ── PR-05: AFTERMATH 발행 후 모든 페어 -10 ───────────────────────────
+    elif episode_type == "AFTERMATH":
+        for p in pt:
+            pt[p] = clamp_pair_value(pt[p] + _PAIR_DELTA_AFTERMATH)
+        logger.info("[ArcStateEngine] RULE PR-05: AFTERMATH → 모든 페어 -10")
+
+    # ── PR-06 [6-1]: 빌런 격퇴 시 모든 페어 -15 ──────────────────────────
+    if villain_defeated:
+        for p in pt:
+            pt[p] = clamp_pair_value(pt[p] + _PAIR_DELTA_VILLAIN_DEFEATED)
+        logger.info("[ArcStateEngine] RULE PR-06: 빌런 격퇴 → 모든 페어 -15")
+
+    # ── PR-03: 자동 증가 (관련 페어가 식별된 경우만) ─────────────────────
+    if relevant_pair and episode_type not in ("CONFLICT", "AFTERMATH"):
+        if outcome == "DRAW":
+            pt[relevant_pair] = clamp_pair_value(pt[relevant_pair] + _PAIR_DELTA_DRAW)
+            logger.info(
+                "[ArcStateEngine] RULE PR-03: Draw → %s +5", relevant_pair,
+            )
+        elif outcome in ("HERO_DEFEAT", "VILLAIN_TEMP_VICTORY"):
+            pt[relevant_pair] = clamp_pair_value(pt[relevant_pair] + _PAIR_DELTA_DEFEAT)
+            logger.info(
+                "[ArcStateEngine] RULE PR-03: Defeat → %s +10", relevant_pair,
+            )
+
+    # ── PR-03: Form 2 발동 → PAIR_A +20 (1회성, Arc 내 중복은 호출자 책임) ──
+    if form_triggered == 2:
+        pt["PAIR_A"] = clamp_pair_value(pt["PAIR_A"] + _PAIR_DELTA_FORM2)
+        logger.info("[ArcStateEngine] RULE PR-03: Form 2 발동 → PAIR_A +20")
+
+    # ── PR-03: Zero Block 등장 → PAIR_C +30 (다음 EP부터 산입은 PR-06 [6-2]) ──
+    if zero_block_appeared:
+        pt["PAIR_C"] = clamp_pair_value(pt["PAIR_C"] + _PAIR_DELTA_ZERO_BLOCK)
+        s["zero_block_just_appeared"] = True  # STEP 1.5-B에서 트리거 제외 플래그
+        logger.info("[ArcStateEngine] RULE PR-03: Zero Block 등장 → PAIR_C +30")
+    else:
+        s["zero_block_just_appeared"] = False
+
+    # ── edt_pressure 자동 재계산 ─────────────────────────────────────────
+    s["pair_tension"] = pt
+    s["edt_pressure"] = calc_edt_pressure(pt)
+    logger.info(
+        "[ArcStateEngine] pair_tension=%s edt_pressure=%.2f",
+        pt, s["edt_pressure"],
+    )
+    return s
+
+
+def _select_highest_pair_over_threshold(
+    pair_tension: dict[str, int],
+    threshold: int = PAIR_TENSION_TRIGGER_THRESHOLD,
+) -> str | None:
+    """
+    임계값 이상인 페어 중 최고 텐션 페어 반환.
+    동률 시 A > B > C 우선순위.
+    """
+    candidates: list[tuple[str, int]] = []
+    for p in _PAIR_PRIORITY_ORDER:
+        v = pair_tension.get(p, 0) or 0
+        if v >= threshold:
+            candidates.append((p, v))
+    if not candidates:
+        return None
+    # 최고값 → 동률 시 우선순위 순서
+    candidates.sort(key=lambda x: (-x[1], _PAIR_PRIORITY_ORDER.index(x[0])))
+    return candidates[0][0]
+
+
+def check_pair_tension_trigger(state: dict[str, Any]) -> tuple[bool, str | None]:
+    """
+    STEP 1.5-B 페어 텐션 체크.
+
+    Returns:
+        (pair_tension_trigger_flag, triggered_pair)
+    """
+    pt = state.get("pair_tension") or {}
+    pt = {k: int(pt.get(k, 0) or 0) for k in ("PAIR_A", "PAIR_B", "PAIR_C")}
+
+    # Zero Block 당일 PAIR_C 제외 (RULE PR-06 [6-2])
+    if state.get("zero_block_just_appeared"):
+        eval_pt = {**pt, "PAIR_C": 0}
+    else:
+        eval_pt = pt
+
+    triggered = _select_highest_pair_over_threshold(eval_pt)
+    return (triggered is not None), triggered
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Phase 2.3 신규 — crowd_momentum 감쇠 + EMERGENCE deficit (G08, G09)
+# ════════════════════════════════════════════════════════════════════════════
+
+def attenuate_crowd_momentum(crowd_momentum: int, step: int = 2) -> int:
+    """
+    RULE CM-02 — crowd_momentum 자동 감쇠.
+
+    원리: 매 에피소드마다 abs(값) - step (최소 0).
+    부호는 유지. ICG 범위 -20~+20 보존.
+
+    Args:
+        crowd_momentum: 현재 값 (-20 ~ +20)
+        step:           감쇠량 (기본 2)
+
+    Returns:
+        감쇠된 값.
+    """
+    if crowd_momentum > 0:
+        return max(0, crowd_momentum - step)
+    if crowd_momentum < 0:
+        return min(0, crowd_momentum + step)
+    return 0
+
+
+def update_emergence_deficit(
+    state: dict[str, Any],
+    episode_type: str,
+) -> dict[str, Any]:
+    """
+    RULE EMR-01 — EMERGENCE Information Deficit days 갱신.
+
+    EMERGENCE 에피소드 발행 시: deficit_days = 2 (이번 EP 포함 → 다음 EP 1, 그 다음 0)
+    매 에피소드 후: deficit_days -= 1 (최소 0)
+
+    Args:
+        state:        현재 arc_state
+        episode_type: 이번 에피소드 타입
+
+    Returns:
+        갱신된 state (deep copy)
+    """
+    import copy
+    s = copy.deepcopy(state)
+    days = s.get("emergence_deficit_days") or 0
+
+    if episode_type == "EMERGENCE":
+        s["emergence_deficit_days"] = 2
+        logger.info("[ArcStateEngine] RULE EMR-01: EMERGENCE 발행 → deficit_days=2")
+    else:
+        s["emergence_deficit_days"] = max(0, days - 1)
+        if days > 0:
+            logger.info(
+                "[ArcStateEngine] RULE EMR-01: deficit_days %d → %d",
+                days, s["emergence_deficit_days"],
+            )
+    return s
+
+
+def get_emergence_deficit_modifier(state: dict[str, Any], episode_type: str) -> int:
+    """
+    RULE EMR-01 — EMERGENCE Information Deficit 적용값 산출.
+
+    Hero Total Power 감산용 modifier 반환:
+        EMERGENCE 에피소드 당일:  -10
+        deficit_days == 1:        -5  (직후 1 EP 잔류)
+        그 외:                      0
+
+    Args:
+        state:        현재 arc_state (deficit_days 갱신 *전* 상태)
+        episode_type: 이번 에피소드 타입
+
+    Returns:
+        Hero Power에 더할 modifier (음수 또는 0).
+    """
+    if not os.environ.get("EMERGENCE_DEFICIT_ENABLED", "false").lower() == "true":
+        return 0
+    if episode_type == "EMERGENCE":
+        return -10
+    days = state.get("emergence_deficit_days") or 0
+    if days >= 2:
+        return -10
+    if days == 1:
+        return -5
+    return 0

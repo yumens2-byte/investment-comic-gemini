@@ -216,6 +216,10 @@ def generate_episode(
     heroes: list[str] | None = None,
     # ── Step 3-Story 신규 파라미터 (2026-04-22 보정) ──────────────────────────
     guest_character_prompt: str = "",
+    # ── Phase 2.3 신규 파라미터 (G02) ─────────────────────────────────────────
+    narrative_depth_enabled: bool | None = None,
+    pair_tension_enabled: bool | None = None,
+    triggered_pair: str | None = None,
 ) -> EpisodeScript:
     """
     Claude API를 호출하여 EpisodeScript를 생성.
@@ -242,12 +246,21 @@ def generate_episode(
     if heroes is None:
         heroes = [hero_id]
 
+    # ── Phase 2.3: Feature Flag 자동 감지 (명시값 우선) ─────────────────────
+    import os as _os
+    if narrative_depth_enabled is None:
+        narrative_depth_enabled = (
+            _os.environ.get("NARRATIVE_DEPTH_ENABLED", "false").lower() == "true"
+        )
+    if pair_tension_enabled is None:
+        pair_tension_enabled = (
+            _os.environ.get("PAIR_TENSION_ENABLED", "false").lower() == "true"
+        )
+
     client = Anthropic()
     system_prompt = load_system_prompt()
 
-    # ── render_user_prompt() 호출 — v2.0 파라미터 추가 ──────────────────────
-    # render_user_prompt()가 **kwargs 또는 v2.0 파라미터를 수용하는 경우 직접 전달.
-    # 그렇지 않으면 기존 파라미터만 전달하고 v2.0 정보를 user_prompt에 append.
+    # ── render_user_prompt() 호출 — v2.0 + v2.3 파라미터 ────────────────────
     try:
         user_prompt = render_user_prompt(
             date=date,
@@ -258,16 +271,17 @@ def generate_episode(
             hero_id=hero_id,
             villain_id=villain_id,
             arc_context=arc_context,
-            # v2.0 추가 파라미터
             scenario_type=scenario_type,
             ending_tone=ending_tone,
             heroes=heroes,
-            # Step 3-Story 추가 파라미터 (2026-04-22 보정)
             guest_character_prompt=guest_character_prompt,
+            # Phase 2.3 추가 파라미터
+            narrative_depth_enabled=narrative_depth_enabled,
+            pair_tension_enabled=pair_tension_enabled,
+            triggered_pair=triggered_pair,
         )
     except TypeError:
-        # render_user_prompt()가 v2.0/Step 3-Story 파라미터를 수용하지 못할 경우 fallback:
-        # 기존 방식으로 호출 후 v2.0/게스트 컨텍스트를 문자열로 append.
+        # render_user_prompt()가 신규 파라미터를 수용하지 못할 경우 fallback:
         logger.warning(
             "[claude] render_user_prompt()가 신규 파라미터를 수용하지 못함 — "
             "기존 방식 fallback. prompt_tpl.py 업데이트를 권장합니다."
@@ -282,7 +296,6 @@ def generate_episode(
             villain_id=villain_id,
             arc_context=arc_context,
         )
-        # v2.0 컨텍스트를 직접 append
         _heroes_str = ", ".join(heroes)
         user_prompt += (
             f"\n\n## [v2.0 Scenario Override]\n"
@@ -299,7 +312,6 @@ def generate_episode(
                 f"\n⚠️ ALLIANCE: 2 heroes ({_heroes_str}) vs 1 villain. "
                 "Show alliance formation in panels 3-4.\n"
             )
-        # Step 3-Story: 게스트 캐릭터 블록도 append (2026-04-22 보정)
         if guest_character_prompt:
             user_prompt += f"\n\n{guest_character_prompt}\n"
 

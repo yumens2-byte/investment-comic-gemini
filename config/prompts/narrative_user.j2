@@ -44,6 +44,56 @@ Ending Tone: **{{ ending_tone }}**
 - Days since last battle: {{ arc_context.get('days_since_last', 0) }}
 - Yesterday's episode type: {{ arc_context.get('yesterday_type', 'NORMAL') }}
 
+{% if narrative_depth_enabled and (hero_belief or villain_belief) %}
+## Character Belief Sheet (RULE BS-01~05)
+{% if hero_belief %}
+### Hero: {{ hero_name }}
+- want:          {{ hero_belief.want }}
+- need:          {{ hero_belief.need }}
+- fear:          {{ hero_belief.fear }}
+- lie:           {{ hero_belief.lie }}
+- truth:         {{ hero_belief.truth }}
+- contradiction: {{ hero_belief.contradiction }}
+{% endif %}
+{% if villain_belief %}
+### Villain: {{ villain_name }}
+{% if villain_belief.natural_disaster %}
+- phenomenon:  {{ villain_belief.phenomenon }}
+- attenuation: {{ villain_belief.attenuation }}
+- revelation:  {{ villain_belief.revelation }}
+- paradox:     {{ villain_belief.paradox }}
+- ⚠️ Natural disaster entity — NO dialogue, NO will-based traits. Phenomenon description only.
+{% else %}
+- want:          {{ villain_belief.want }}
+- lie:           {{ villain_belief.lie }}
+- truth:         {{ villain_belief.truth }}
+- contradiction: {{ villain_belief.contradiction }}
+- defeat_visual: {{ villain_belief.defeat_visual }}
+{% endif %}
+{% endif %}
+
+### Belief 굴절 규칙 (Phase 2.3)
+- BS-01: hero_momentum <= 30 시 Phase 2(CLASH) 또는 Phase 3(CRISIS POINT)에 hero의 lie 또는 fear 노출 1줄 강제.
+- BS-02: Form 2/3 발동 에피소드면 Phase 4 또는 Phase 5에 hero의 truth 깨달음 묘사 강제 (lie의 대치 명제).
+- BS-03: AFTERMATH 타입이면 hero의 contradiction 1줄을 내면 독백으로 노출 (Phase 5 후반 또는 NEXT HOOK 직전).
+- BS-04: Hero Victory + Form 2/3 동시 충족 시 villain.defeat_visual 시각화 묘사 강제.
+- BS-05: FLASHBACK 타입이면 캐릭터의 lie 또는 truth 형성 과정 묘사 강제.
+{% endif %}
+
+{% if pair_tension_enabled and arc_context.pair_tension %}
+## Pair Relationship Tension (RULE PR-01~07)
+- PAIR_A (EDT ↔ Leverage):  {{ arc_context.pair_tension.PAIR_A }} / 100
+- PAIR_B (Iron Nuna ↔ Futures Girl): {{ arc_context.pair_tension.PAIR_B }} / 100
+- PAIR_C (Gold Bond ↔ Zero Block): {{ arc_context.pair_tension.PAIR_C }} / 100
+- edt_pressure (auto): {{ arc_context.edt_pressure }} / 180
+{% if triggered_pair %}
+- ⚠️ Triggered Pair: **{{ triggered_pair }}** (tension >= 70, CONFLICT 가중 발동)
+{% endif %}
+
+### Pair 굴절 규칙
+- PR-02: pair_tension >= 50 페어의 양 캐릭터가 같은 패널에 등장 시 Phase 2 또는 Phase 3에 충돌 다이얼로그 1줄 강제. 페어 양쪽 belief의 lie 충돌 지점을 다이얼로그로 표현.
+{% endif %}
+
 ## Available Characters
 Heroes:
 {% for cid, char in heroes.items() %}
@@ -65,5 +115,9 @@ Villains:
 8. For NO_BATTLE: panels 2-3 show market observation, panels 4-5 show hero's growth moment, panels 6-7 show positive outlook. No combat scenes.
 9. For ALLIANCE: panel 2-3 heroes realize the threat individually, panel 3-4 alliance formation (handshake/back-to-back), panel 5-6 coordinated attack, panel 7 reflects outcome (PYRRHIC_VICTORY = costly win with warning).
 10. Ending tone guide — OPTIMISTIC: serene confidence; TENSE: unresolved pressure; OMINOUS: foreboding sacrifice.
+
+{% if guest_character_prompt %}
+{{ guest_character_prompt }}
+{% endif %}
 
 Return ONLY the JSON. No other text.

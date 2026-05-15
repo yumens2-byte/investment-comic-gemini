@@ -98,6 +98,9 @@ class EpisodeTypeResult:
     form_bonus: int = 0                   # Form 2/3 보너스 (battle_calc 전달용)
     recommended_heroes: list[str] = field(default_factory=list)
     slide_count: int = 8
+    # ── v1.5 신규 ──
+    triggered_pair: str | None = None     # STEP 1.5-B 결과 (PR-01 가중 출처)
+    pair_trigger_flag: bool = False
 
 
 # ── 슬라이드 수 테이블 ─────────────────────────────────────────────────────────
@@ -186,6 +189,9 @@ def determine_episode_type(
     # ── STEP 1.5: Act 필터 (경고만, 강제 없음) ────────────────────────────────
     act_warning = _step1_5_act_filter(arc_day, act_phase, dss_score)
 
+    # ── STEP 1.5-B: 페어 텐션 체크 (v1.5 신설, Feature Flag 가드) ────────────
+    pair_trigger_flag, triggered_pair = _step1_5_b_pair_tension(arc_state)
+
     # ── STEP 2: 새 빌런 등장 체크 (arc_day == 1) ──────────────────────────────
     result = _step2_new_villain(arc_day, act_warning, act_phase)
     if result:
@@ -194,7 +200,7 @@ def determine_episode_type(
     # ── STEP 3: Arc Day 기반 기본값 ───────────────────────────────────────────
     base_type = _step3_arc_day_base(arc_day)
 
-    # ── STEP 4: DSS + REVERSAL + CONFLICT 보정 ────────────────────────────────
+    # ── STEP 4: DSS + REVERSAL + CONFLICT 보정 (PR-01 가중 통합) ──────────────
     corrected_type = _step4_dss_correction(
         base_type=base_type,
         dss_score=dss_score,
@@ -203,6 +209,8 @@ def determine_episode_type(
         reversal_state=reversal_state,
         recent_outcomes=recent_outcomes,
         act_phase=act_phase,
+        pair_trigger_flag=pair_trigger_flag,    # v1.5 PR-01 조건 B
+        triggered_pair=triggered_pair,
     )
 
     # ── STEP 3-F: Form 2/3 트리거 (BATTLE_PLUS 타입 시) ──────────────────────
@@ -222,6 +230,8 @@ def determine_episode_type(
         arc_day=arc_day,
         act_warning=act_warning,
         form_bonus=form_bonus,
+        triggered_pair=triggered_pair,
+        pair_trigger_flag=pair_trigger_flag,
     )
 
 
@@ -331,6 +341,35 @@ def _step1_5_act_filter(arc_day: int, act_phase: str, dss_score: int) -> str:
     return ""
 
 
+def _step1_5_b_pair_tension(arc_state: dict) -> tuple[bool, str | None]:
+    """
+    STEP 1.5-B (v1.5 신설): 페어 텐션 체크 — RULE PR-01 작동 위치.
+
+    Feature Flag: PAIR_TENSION_ENABLED
+    미활성 시: (False, None) 반환 → STEP 4-B 조건 B 비활성.
+
+    Returns:
+        (pair_tension_trigger_flag, triggered_pair)
+    """
+    if os.environ.get("PAIR_TENSION_ENABLED", "false").lower() != "true":
+        return False, None
+    try:
+        from engine.arc.arc_state_engine import check_pair_tension_trigger
+        flag, triggered = check_pair_tension_trigger(arc_state)
+        if flag:
+            logger.info(
+                "[EpisodeTypeEngine] STEP 1.5-B: pair_tension trigger = %s "
+                "(pair_tension=%s)",
+                triggered, arc_state.get("pair_tension"),
+            )
+        return flag, triggered
+    except Exception as exc:
+        logger.warning(
+            "[EpisodeTypeEngine] STEP 1.5-B 실패 (진행): %s", exc,
+        )
+        return False, None
+
+
 def _step2_new_villain(
     arc_day: int,
     act_warning: str,
@@ -374,11 +413,18 @@ def _step4_dss_correction(
     reversal_state: str,
     recent_outcomes: list[str],
     act_phase: str,
+    pair_trigger_flag: bool = False,
+    triggered_pair: str | None = None,
 ) -> str:
     """
     STEP 4: DSS + REVERSAL + CONFLICT 보정.
 
-    EDT 15 v1.3 STEP 4 확장 로직 이식.
+    EDT 15 v1.5 STEP 4 통합 (Phase 2.3):
+        Step 4-A: DSS 기반 EPIC 보정 (기존)
+        Step 4-B: CONFLICT 가중 — 조건 A (Draw 누적) OR 조건 B (PR-01 pair_tension)
+        Step 4-C: REVERSAL 보정
+
+    가중 중복 금지: 조건 A/B 동시 충족도 최대 1회만 CONFLICT 격상.
     """
     corrected = base_type
 
@@ -388,7 +434,7 @@ def _step4_dss_correction(
     elif dss_score <= 15 and arc_day in (1, 2):
         corrected = "STALEMATE"
 
-    # ── 4-B: REVERSAL 가중 ────────────────────────────────────────────────────
+    # ── 4-C: REVERSAL 가중 ────────────────────────────────────────────────────
     if reversal_state == "REVERSAL_UP":
         if corrected in ("BATTLE", "BATTLE_PLUS", "STALEMATE"):
             corrected = "TACTICAL"
@@ -398,19 +444,29 @@ def _step4_dss_correction(
             corrected = "BATTLE"
             logger.info("[EpisodeTypeEngine] STEP 4-B: REVERSAL_DOWN → BATTLE 보정")
 
-    # ── 4-C: CONFLICT 가중 ────────────────────────────────────────────────────
-    if _check_conflict_conditions(arc_day, arc_tension, recent_outcomes, act_phase):
-        # REVERSAL_DOWN과 동시 충돌 처리
-        if reversal_state == "REVERSAL_DOWN":
-            if arc_tension >= 70:
-                corrected = "BATTLE"
-                logger.info("[EpisodeTypeEngine] STEP 4-C: REVERSAL_DOWN+CONFLICT 충돌 → tension>=70 BATTLE 우선")
-            else:
-                corrected = "CONFLICT"
-                logger.info("[EpisodeTypeEngine] STEP 4-C: REVERSAL_DOWN+CONFLICT 충돌 → tension<70 CONFLICT 우선")
+    # ── 4-B: CONFLICT 가중 (v1.5 — 조건 A 또는 조건 B) ───────────────────────
+    cond_a = _check_conflict_conditions(arc_day, arc_tension, recent_outcomes, act_phase)
+    cond_b = pair_trigger_flag  # v1.5 STEP 1.5-B 산출값
+
+    if cond_a or cond_b:
+        # REVERSAL_DOWN과 동시 충돌 처리 (기존 우선순위 유지)
+        if reversal_state == "REVERSAL_DOWN" and arc_tension >= 70:
+            corrected = "BATTLE"
+            logger.info(
+                "[EpisodeTypeEngine] STEP 4-C: REVERSAL_DOWN+CONFLICT 충돌 "
+                "→ tension>=70 BATTLE 우선"
+            )
         else:
             corrected = "CONFLICT"
-            logger.info("[EpisodeTypeEngine] STEP 4-C: CONFLICT 3-AND 충족 → CONFLICT")
+            sources = []
+            if cond_a:
+                sources.append("조건A(Draw누적)")
+            if cond_b:
+                sources.append(f"조건B(PR-01:{triggered_pair})")
+            logger.info(
+                "[EpisodeTypeEngine] STEP 4-C: CONFLICT 가중 발동 (%s)",
+                "+".join(sources),
+            )
 
     return corrected
 
@@ -530,12 +586,14 @@ def _make_result(
     arc_day: int,
     act_warning: str = "",
     form_bonus: int = 0,
+    triggered_pair: str | None = None,
+    pair_trigger_flag: bool = False,
 ) -> EpisodeTypeResult:
     """EpisodeTypeResult 생성 헬퍼."""
     act_phase = get_act_phase(arc_day)
     logger.info(
-        "[EpisodeTypeEngine] 결정: %s (step=%s act=%s)",
-        episode_type, step, act_phase,
+        "[EpisodeTypeEngine] 결정: %s (step=%s act=%s pair=%s)",
+        episode_type, step, act_phase, triggered_pair,
     )
     return EpisodeTypeResult(
         episode_type=episode_type,
@@ -546,6 +604,8 @@ def _make_result(
         act_warning=act_warning,
         form_bonus=form_bonus,
         slide_count=_SLIDE_COUNT.get(episode_type, 8),
+        triggered_pair=triggered_pair,
+        pair_trigger_flag=pair_trigger_flag,
     )
 
 
