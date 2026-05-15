@@ -329,7 +329,15 @@ def build_panel_prompt(
         f"PANEL TYPE: {panel_type}",
         f"CAMERA: {camera}",
         f"SETTING: {setting}",
-        f"ACTION: {action}",
+        "",
+        "== DYNAMIC ACTION (MUST BE DEPICTED) ==",
+        f"{action}",
+        "REQUIREMENT: Render this exact action as the visual focal point.",
+        "Characters MUST be shown performing this action with clear motion, body language, and intent — NOT in a static standing pose.",
+        "Use dynamic poses, mid-action limbs, motion blur where appropriate, and expressive faces.",
+        "The character reference (REF) images define appearance ONLY (costume, face, weapon design), NOT pose or stance.",
+        "== END DYNAMIC ACTION ==",
+        "",
         f"SCENE TONE: {tone_hint}",
         "",
     ]
@@ -350,17 +358,18 @@ def build_panel_prompt(
     # 캐릭터 위치 + 외형 명세
     if characters:
         lines += [
-            "CHARACTERS (position only):",
+            "CHARACTERS (position only — pose follows DYNAMIC ACTION above):",
             char_desc,
             "",
         ]
         if char_design_block:
             lines += [
-                "== CHARACTER DESIGN SPECS — STRICT, DO NOT DEVIATE ==",
+                "== CHARACTER DESIGN SPECS — APPEARANCE ONLY (NOT pose) ==",
                 char_design_block,
                 "== END CHARACTER DESIGN SPECS ==",
-                "CRITICAL: ALL characters MUST match EXACTLY as described above in EVERY panel.",
-                "No design variations allowed between panels. Same costume, same weapon, same identifier.",
+                "CRITICAL SCOPE: These specs lock APPEARANCE (costume, face features, weapon design, color palette, identifying marks) across all panels.",
+                "Same costume, same weapon, same identifier — but pose, stance, and action MUST follow the DYNAMIC ACTION block above.",
+                "Do NOT inherit standing/neutral poses from REF images — those are appearance references only.",
                 "",
             ]
 

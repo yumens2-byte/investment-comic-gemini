@@ -23,10 +23,14 @@ Villain: NONE
 Outcome: **PEACEFUL_GROWTH** — THIS IS FIXED. Peaceful growth, internal reflection.
 {% elif scenario_type == 'ALLIANCE' %}
 ⚠️ **ALLIANCE — 2 heroes vs 1 powerful villain.**
-Hero 1 (Main): {{ heroes[0] }}
-Hero 2 (Support): {{ heroes[1] }}
+Hero 1 (Main lead): {{ heroes[0] }}
+Hero 2 (Allied sidekick): {{ heroes[1] }}
 Villain: {{ villain_name }} ({{ villain_id }})
 Outcome: **{{ battle_result.outcome }}** — THIS IS FIXED. Dramatize it, do not alter it.
+
+⚠️ **CRITICAL SCHEMA CONSTRAINT**: Both heroes' `role` field in every panel MUST be exactly the string `"hero"`. NEVER use `"support"`, `"sidekick"`, `"main"`, `"lead"`, or any other value. Only `"hero"`, `"villain"`, or `"npc"` are valid `role` values. The sidekick/lead distinction is conveyed by `position` (LEFT/CENTER/RIGHT) and panel composition, not by `role`.
+
+⚠️ **CHARACTER ID CONSTRAINT**: Use EXACTLY the two `char_id` values listed above for the two heroes. Do NOT substitute with other heroes from the Available Characters list, even if narratively appealing. The scenario engine has already selected the optimal pairing based on market data.
 {% else %}
 ⚠️ **ONE_VS_ONE — Hero vs villain 1:1 battle.**
 Hero: {{ hero_name }} ({{ hero_id }})
