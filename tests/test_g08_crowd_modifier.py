@@ -14,7 +14,6 @@ import pytest
 from engine.arc.arc_state_engine import attenuate_crowd_momentum
 from engine.narrative.battle_calc import crowd_momentum_modifier
 
-
 # ── Feature Flag OFF: 항상 0 ─────────────────────────────────────────────────
 
 @pytest.mark.parametrize("cm", [-20, -10, -5, 0, 5, 10, 20])

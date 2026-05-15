@@ -15,7 +15,6 @@ import pytest
 
 from engine.narrative.prompt_tpl import render_user_prompt
 
-
 # ── 공통 fixture (최소한의 렌더 입력) ─────────────────────────────────────────
 
 @pytest.fixture

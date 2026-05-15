@@ -13,13 +13,10 @@ Phase 2.3 G03 — pair_tension / edt_pressure / get_relevant_pair / 동률 선�
 """
 from __future__ import annotations
 
-import os
-
 import pytest
 
 from engine.arc.arc_state_engine import (
     EDT_PRESSURE_FORM3_BONUS_THRESHOLD,
-    PAIR_TENSION_TRIGGER_THRESHOLD,
     _select_highest_pair_over_threshold,
     calc_edt_pressure,
     check_pair_tension_trigger,
@@ -29,7 +26,6 @@ from engine.arc.arc_state_engine import (
     is_pair_tension_enabled,
     update_pair_tension,
 )
-
 
 # ── calc_edt_pressure 공식 ────────────────────────────────────────────────────
 

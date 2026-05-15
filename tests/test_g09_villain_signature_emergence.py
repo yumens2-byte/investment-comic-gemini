@@ -29,7 +29,6 @@ from engine.narrative.battle_calc import (
     villain_signature_bonus,
 )
 
-
 # ════════════════════════════════════════════════════════════════════════════
 # Villain Signature Bonus
 # ════════════════════════════════════════════════════════════════════════════

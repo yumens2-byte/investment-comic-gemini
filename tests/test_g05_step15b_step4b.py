@@ -11,14 +11,11 @@ Phase 2.3 G05 — STEP 1.5-B (pair_tension trigger) + STEP 4-B (PR-01 가중) �
 """
 from __future__ import annotations
 
-import pytest
-
 from engine.narrative.episode_type_engine import (
     _step1_5_b_pair_tension,
     _step4_dss_correction,
     determine_episode_type,
 )
-
 
 # ── _step1_5_b_pair_tension Feature Flag ─────────────────────────────────────
 

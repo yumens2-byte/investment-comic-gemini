@@ -21,7 +21,6 @@ from engine.narrative.battle_calc import BattleResult, apply_v23_modifiers
 from engine.narrative.episode_type_engine import determine_episode_type
 from engine.narrative.prompt_tpl import render_user_prompt
 
-
 # ── Feature Flag 전체 ON fixture ──────────────────────────────────────────────
 
 @pytest.fixture(autouse=True)
