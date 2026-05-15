@@ -84,7 +84,7 @@ jobs:
       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
       SUPABASE_SCHEMA: icg
       NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
-      NOTION_TRACKER_DS: '485ba577-0512-45fd-9445-b9e86c53d88b'
+      NOTION_TRACKER_DS: '4c08a06f-c1cc-4600-bec4-fb3d018139ff'   # ICG Episode Tracker DB ID (이전 값 485ba577-...은 data source/collection ID로 잘못 입력되어 있었음)
       DRY_RUN: 'false'
       FORCE_RUN: ${{ github.event.inputs.force || 'false' }}
       SCENARIO_V2_ENABLED: ${{ github.event.inputs.scenario_v2 || 'false' }}
