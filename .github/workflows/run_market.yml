@@ -29,6 +29,30 @@ on:
         required: false
         default: 'false'
 
+      # ── Phase 2.3 Feature Flags (2026-05-15) ──────────────────────────
+      # 미입력 시: Repository Variables(vars.*) → 'false' 순서로 fallback
+      # 운영 점진 ON은 Repository Variables에서 설정 권장
+      narrative_depth:
+        description: 'G01+G02 Belief Sheet (true/false/auto)'
+        required: false
+        default: 'auto'
+      pair_tension:
+        description: 'G03+G05 Pair Tension trigger (true/false/auto)'
+        required: false
+        default: 'auto'
+      crowd_modifier:
+        description: 'G08 Crowd Momentum modifier (true/false/auto)'
+        required: false
+        default: 'auto'
+      villain_signature_bonus:
+        description: 'G09 Villain Signature Bonus (true/false/auto)'
+        required: false
+        default: 'auto'
+      emergence_deficit:
+        description: 'G09 Emergence Information Deficit (true/false/auto)'
+        required: false
+        default: 'auto'
+
 permissions:
   contents: read
   actions: write
@@ -65,6 +89,15 @@ jobs:
       FORCE_RUN: ${{ github.event.inputs.force || 'false' }}
       SCENARIO_V2_ENABLED: ${{ github.event.inputs.scenario_v2 || 'false' }}
       EPISODE_TYPE_V3_ENABLED: ${{ github.event.inputs.episode_type_v3 || 'false' }}
+
+      # ── Phase 2.3 Feature Flags (하이브리드: inputs > vars > 'false') ──
+      # 'auto' 입력 시: vars 값 사용. 'true'/'false' 직접 입력 시: inputs 우선.
+      NARRATIVE_DEPTH_ENABLED: ${{ (github.event.inputs.narrative_depth != '' && github.event.inputs.narrative_depth != 'auto') && github.event.inputs.narrative_depth || vars.NARRATIVE_DEPTH_ENABLED || 'false' }}
+      PAIR_TENSION_ENABLED: ${{ (github.event.inputs.pair_tension != '' && github.event.inputs.pair_tension != 'auto') && github.event.inputs.pair_tension || vars.PAIR_TENSION_ENABLED || 'false' }}
+      CROWD_MODIFIER_ENABLED: ${{ (github.event.inputs.crowd_modifier != '' && github.event.inputs.crowd_modifier != 'auto') && github.event.inputs.crowd_modifier || vars.CROWD_MODIFIER_ENABLED || 'false' }}
+      VILLAIN_SIGNATURE_BONUS_ENABLED: ${{ (github.event.inputs.villain_signature_bonus != '' && github.event.inputs.villain_signature_bonus != 'auto') && github.event.inputs.villain_signature_bonus || vars.VILLAIN_SIGNATURE_BONUS_ENABLED || 'false' }}
+      EMERGENCE_DEFICIT_ENABLED: ${{ (github.event.inputs.emergence_deficit != '' && github.event.inputs.emergence_deficit != 'auto') && github.event.inputs.emergence_deficit || vars.EMERGENCE_DEFICIT_ENABLED || 'false' }}
+
       PYTHONPATH: .
 
     steps:
@@ -111,6 +144,12 @@ jobs:
       - name: STEP 4 — Narrative (Claude)
         if: ${{ github.event.inputs.stage == 'narrative' || (github.event.inputs.stage == '' || github.event.inputs.stage == 'all') && (github.event_name != 'schedule' || steps.major_gate.outputs.should_run_expensive == 'true') }}
         run: |
+          echo "🎛️  Phase 2.3 Feature Flags:"
+          echo "  NARRATIVE_DEPTH_ENABLED        = ${NARRATIVE_DEPTH_ENABLED}"
+          echo "  PAIR_TENSION_ENABLED           = ${PAIR_TENSION_ENABLED}"
+          echo "  CROWD_MODIFIER_ENABLED         = ${CROWD_MODIFIER_ENABLED}"
+          echo "  VILLAIN_SIGNATURE_BONUS_ENABLED = ${VILLAIN_SIGNATURE_BONUS_ENABLED}"
+          echo "  EMERGENCE_DEFICIT_ENABLED      = ${EMERGENCE_DEFICIT_ENABLED}"
           python -m scripts.run_market \
             --stage narrative \
             ${{ github.event.inputs.target_date && format('--date {0}', github.event.inputs.target_date) || '' }}
