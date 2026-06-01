@@ -671,6 +671,16 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
         )
         script_dict = script.model_dump()
 
+        from engine.narrative.story_quality import validate_story_grounding
+
+        grounding_warnings = validate_story_grounding(
+            script_dict,
+            ctx.get("narrative_context_pack"),
+            strict=_env_flag_enabled("NARRATIVE_CONTEXT_ENABLED"),
+        )
+        for warning in grounding_warnings:
+            logger_inst.warning("STEP_4", f"[StoryGrounding] {warning}")
+
         # 에피소드 JSON 파일 저장 (로그 아카이브)
         ep_dir = Path("output") / "episodes" / episode_date
         ep_dir.mkdir(parents=True, exist_ok=True)
