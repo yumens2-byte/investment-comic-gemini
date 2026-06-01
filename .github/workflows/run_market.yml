@@ -52,6 +52,14 @@ on:
         description: 'G09 Emergence Information Deficit (true/false/auto)'
         required: false
         default: 'auto'
+      narrative_context:
+        description: 'Pilot Narrative Context Pack (true/false/auto)'
+        required: false
+        default: 'auto'
+      story_planner:
+        description: 'Pilot StoryBeatPlan 2-pass planner (true/false/auto)'
+        required: false
+        default: 'auto'
 
 permissions:
   contents: read
@@ -97,6 +105,10 @@ jobs:
       CROWD_MODIFIER_ENABLED: ${{ (github.event.inputs.crowd_modifier != '' && github.event.inputs.crowd_modifier != 'auto') && github.event.inputs.crowd_modifier || vars.CROWD_MODIFIER_ENABLED || 'false' }}
       VILLAIN_SIGNATURE_BONUS_ENABLED: ${{ (github.event.inputs.villain_signature_bonus != '' && github.event.inputs.villain_signature_bonus != 'auto') && github.event.inputs.villain_signature_bonus || vars.VILLAIN_SIGNATURE_BONUS_ENABLED || 'false' }}
       EMERGENCE_DEFICIT_ENABLED: ${{ (github.event.inputs.emergence_deficit != '' && github.event.inputs.emergence_deficit != 'auto') && github.event.inputs.emergence_deficit || vars.EMERGENCE_DEFICIT_ENABLED || 'false' }}
+
+      # ── Narrative Context Pilot Flags (inputs > vars > 'false') ─────────
+      NARRATIVE_CONTEXT_ENABLED: ${{ (github.event.inputs.narrative_context != '' && github.event.inputs.narrative_context != 'auto') && github.event.inputs.narrative_context || vars.NARRATIVE_CONTEXT_ENABLED || 'false' }}
+      STORY_PLANNER_ENABLED: ${{ (github.event.inputs.story_planner != '' && github.event.inputs.story_planner != 'auto') && github.event.inputs.story_planner || vars.STORY_PLANNER_ENABLED || 'false' }}
 
       PYTHONPATH: .
 
@@ -144,12 +156,21 @@ jobs:
       - name: STEP 4 — Narrative (Claude)
         if: ${{ github.event.inputs.stage == 'narrative' || (github.event.inputs.stage == '' || github.event.inputs.stage == 'all') && (github.event_name != 'schedule' || steps.major_gate.outputs.should_run_expensive == 'true') }}
         run: |
+          flag_label() {
+            case "${1,,}" in
+              true) echo "ON" ;;
+              false) echo "OFF" ;;
+              *) echo "CUSTOM" ;;
+            esac
+          }
           echo "🎛️  Phase 2.3 Feature Flags:"
-          echo "  NARRATIVE_DEPTH_ENABLED        = ${NARRATIVE_DEPTH_ENABLED}"
-          echo "  PAIR_TENSION_ENABLED           = ${PAIR_TENSION_ENABLED}"
-          echo "  CROWD_MODIFIER_ENABLED         = ${CROWD_MODIFIER_ENABLED}"
-          echo "  VILLAIN_SIGNATURE_BONUS_ENABLED = ${VILLAIN_SIGNATURE_BONUS_ENABLED}"
-          echo "  EMERGENCE_DEFICIT_ENABLED      = ${EMERGENCE_DEFICIT_ENABLED}"
+          echo "  NARRATIVE_DEPTH_ENABLED         = $(flag_label "$NARRATIVE_DEPTH_ENABLED")"
+          echo "  PAIR_TENSION_ENABLED            = $(flag_label "$PAIR_TENSION_ENABLED")"
+          echo "  CROWD_MODIFIER_ENABLED          = $(flag_label "$CROWD_MODIFIER_ENABLED")"
+          echo "  VILLAIN_SIGNATURE_BONUS_ENABLED = $(flag_label "$VILLAIN_SIGNATURE_BONUS_ENABLED")"
+          echo "  EMERGENCE_DEFICIT_ENABLED       = $(flag_label "$EMERGENCE_DEFICIT_ENABLED")"
+          echo "  NARRATIVE_CONTEXT_ENABLED       = $(flag_label "$NARRATIVE_CONTEXT_ENABLED")"
+          echo "  STORY_PLANNER_ENABLED           = $(flag_label "$STORY_PLANNER_ENABLED")"
           python -m scripts.run_market \
             --stage narrative \
             ${{ github.event.inputs.target_date && format('--date {0}', github.event.inputs.target_date) || '' }}

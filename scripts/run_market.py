@@ -125,6 +125,49 @@ def _make_episode_id(episode_date: str) -> str:
     return f"ICG-{episode_date}-{no:03d}"
 
 
+def _env_flag_enabled(name: str) -> bool:
+    """Return True for boolean feature flags represented as strings."""
+    return os.environ.get(name, "false").strip().lower() == "true"
+
+
+def _validate_narrative_quality_inputs(ctx: dict) -> dict[str, int | bool]:
+    """Fail fast when enabled narrative-quality pilot inputs were lost between stages."""
+    narrative_enabled = _env_flag_enabled("NARRATIVE_CONTEXT_ENABLED")
+    planner_enabled = _env_flag_enabled("STORY_PLANNER_ENABLED")
+    context_pack = ctx.get("narrative_context_pack") or {}
+    story_plan = ctx.get("story_beat_plan") or {}
+
+    if narrative_enabled and not context_pack:
+        raise RuntimeError(
+            "NARRATIVE_CONTEXT_ENABLED=true 이지만 analysis_ctx_json에 "
+            "narrative_context_pack이 없습니다. analysis stage를 같은 flag로 재실행하세요."
+        )
+    if planner_enabled and not story_plan:
+        raise RuntimeError(
+            "STORY_PLANNER_ENABLED=true 이지만 analysis_ctx_json에 story_beat_plan이 없습니다. "
+            "analysis stage를 같은 flag로 재실행하세요."
+        )
+
+    evidence_count = len(context_pack.get("top_evidence") or [])
+    beat_count = len(story_plan.get("panel_beats") or [])
+    if narrative_enabled and evidence_count == 0:
+        raise RuntimeError(
+            "Narrative Context Pack은 생성됐지만 top_evidence가 0개입니다. "
+            "시장 데이터 품질을 확인하세요."
+        )
+    if planner_enabled and beat_count != 8:
+        raise RuntimeError(
+            f"Story Beat Plan panel_beats는 8개여야 합니다. 현재 {beat_count}개입니다."
+        )
+
+    return {
+        "narrative_enabled": narrative_enabled,
+        "planner_enabled": planner_enabled,
+        "evidence_count": evidence_count,
+        "beat_count": beat_count,
+    }
+
+
 def _load_recent_scenarios(episode_date: str, limit: int = 7) -> list[str]:
     """
     최근 에피소드 시나리오 타입 목록 조회.
@@ -532,6 +575,45 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
             "form_bonus":      _form_bonus_v3,
         }
 
+        # ── Narrative Context Pilot: 데이터/스토리 고도화 컨텍스트 생성 ─────────
+        if os.environ.get("NARRATIVE_CONTEXT_ENABLED", "false").lower() == "true":
+            try:
+                from engine.analysis.story_context_builder import (
+                    build_narrative_context_pack,
+                )
+
+                _context_pack = build_narrative_context_pack(
+                    delta=delta,
+                    battle_result=battle_result.to_dict(),
+                    event_type=event_type,
+                    scenario_type=scenario_type_v2,
+                    ending_tone=ending_tone_v2,
+                    arc_context=arc_context,
+                )
+                ctx["narrative_context_pack"] = _context_pack
+
+                if os.environ.get("STORY_PLANNER_ENABLED", "false").lower() == "true":
+                    from engine.narrative.story_planner import build_story_beat_plan
+
+                    ctx["story_beat_plan"] = build_story_beat_plan(
+                        narrative_context_pack=_context_pack,
+                        hero_id=hero_id,
+                        villain_id=villain_id,
+                        battle_result=battle_result.to_dict(),
+                        scenario_type=scenario_type_v2,
+                    ).model_dump()
+                logger_inst.info(
+                    "STEP_3",
+                    "[NarrativeContext] context_pack 생성 완료 "
+                    f"evidence={len(_context_pack.get('top_evidence', []))} "
+                    f"planner={'story_beat_plan' in ctx}",
+                )
+            except Exception as _ctx_exc:
+                logger_inst.warning(
+                    "STEP_3",
+                    f"[NarrativeContext] 생성 실패 (파이프라인 계속): {_ctx_exc}",
+                )
+
         # ── Hybrid 설계: ctx를 DB에 저장 (narrative/persist/image 독립 실행 대비) ──
         try:
             from engine.persist.asset_writer import save_analysis_ctx
@@ -556,6 +638,18 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
     try:
         from engine.narrative.claude_client import generate_episode
 
+        quality = _validate_narrative_quality_inputs(ctx)
+        logger_inst.info(
+            "STEP_4",
+            "[QualityGate] narrative_context=%s evidence=%d story_planner=%s beats=%d"
+            % (
+                quality["narrative_enabled"],
+                quality["evidence_count"],
+                quality["planner_enabled"],
+                quality["beat_count"],
+            ),
+        )
+
         script = generate_episode(
             date=episode_date,
             episode_id=episode_id,
@@ -571,6 +665,9 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
             heroes=ctx.get("heroes", [ctx["hero_id"]]),
             # Step 3-Story 신규 파라미터 (2026-04-22 보정)
             guest_character_prompt=ctx.get("guest_character_prompt", ""),
+            # Narrative Context Pilot (2026-06-01)
+            narrative_context_pack=ctx.get("narrative_context_pack"),
+            story_beat_plan=ctx.get("story_beat_plan"),
         )
         script_dict = script.model_dump()
 
