@@ -550,7 +550,7 @@ def stage_manual_prompt_notify():
             "[PRE-OP] DRY_RUN: skip Telegram send "
             f"(chat_id={master_chat_id}, message_len={len(message)})"
         )
-        logger.debug(f"[PRE-OP] payload preview:\n{message}")
+        logger.debug("[PRE-OP] payload preview:\n%s", message)
         return
 
     result = _send_telegram_text(chat_id=master_chat_id, text=message)
