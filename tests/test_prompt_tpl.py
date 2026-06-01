@@ -171,3 +171,57 @@ class TestRenderUserPromptEndingTone:
             ending_tone=tone,
         )
         assert tone in result
+
+
+class TestRenderUserPromptNarrativeContextPilot:
+    """Narrative context/story beat pilot prompt rendering."""
+
+    def test_narrative_context_pack_in_output(self):
+        result = render_user_prompt(
+            **_BASE_ARGS,
+            narrative_context_pack={
+                "market_cause": "Primary story driver: Debt Titan pressure.",
+                "battle_outcome": "HERO_DEFEAT",
+                "top_evidence": [
+                    {
+                        "id": "metric:DGS10",
+                        "kind": "metric",
+                        "value": "DGS10 4.9 (+8.9%)",
+                        "story_role": "Debt Titan pressure",
+                    }
+                ],
+                "prohibited_claims": ["Do not invent news."],
+            },
+        )
+
+        assert "Narrative Context Pack" in result
+        assert "metric:DGS10" in result
+        assert "Do not invent news" in result
+
+    def test_story_beat_plan_in_output(self):
+        beats = [
+            {
+                "panel_idx": idx,
+                "dramatic_function": "DISCLAIMER" if idx == 8 else "HOOK",
+                "market_evidence_ids": ["metric:VIX"],
+                "required_character": ["CHAR_HERO_001"],
+                "visual_symbol": "red volatility siren",
+                "dialogue_intent": "show pressure",
+            }
+            for idx in range(1, 9)
+        ]
+        result = render_user_prompt(
+            **_BASE_ARGS,
+            story_beat_plan={
+                "episode_thesis": "Use market evidence.",
+                "market_cause_summary": "VIX pressure.",
+                "villain_motivation": "Volatility pressure.",
+                "hero_inner_conflict": "Stay calm.",
+                "next_hook_seed": "CPI gate.",
+                "panel_beats": beats,
+            },
+        )
+
+        assert "Story Beat Plan" in result
+        assert "P8 DISCLAIMER" in result
+        assert "CPI gate" in result
