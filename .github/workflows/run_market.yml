@@ -140,12 +140,16 @@ jobs:
           test -f engine/narrative/story_planner.py
           test -f engine/narrative/story_quality.py
           python - <<'PY'
+          import re
           from pathlib import Path
 
           workflow = Path(".github/workflows/run_market.yml").read_text(encoding="utf-8")
           legacy_inputs = "github." + "event.inputs"
           if legacy_inputs in workflow:
               raise SystemExit("legacy workflow dispatch input reference remains in run_market.yml")
+          if len(re.findall(r"^      NARRATIVE_CONTEXT_ENABLED:", workflow, re.MULTILINE)) != 1:
+              raise SystemExit("Narrative context flag must be defined exactly once")
+          if len(re.findall(r"^      STORY_PLANNER_ENABLED:", workflow, re.MULTILINE)) != 1:
           narrative_context_key = "NARRATIVE_" + "CONTEXT_ENABLED:"
           story_planner_key = "STORY_" + "PLANNER_ENABLED:"
           if workflow.count(narrative_context_key) != 1:

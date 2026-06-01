@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import yaml
@@ -9,6 +10,16 @@ def _workflow_text() -> str:
     return WORKFLOW.read_text(encoding="utf-8")
 
 
+def _workflow_yaml() -> dict:
+    return yaml.safe_load(_workflow_text())
+
+
+def _count_job_env_key(text: str, key: str) -> int:
+    return len(re.findall(rf"^      {re.escape(key)}:", text, re.MULTILINE))
+
+
+def test_run_market_workflow_yaml_parses() -> None:
+    assert _workflow_yaml()
 def test_run_market_workflow_yaml_parses() -> None:
     assert yaml.safe_load(_workflow_text())
 
@@ -33,6 +44,14 @@ def test_run_market_workflow_uses_normalized_inputs_not_event_inputs() -> None:
 
 def test_run_market_workflow_has_single_pilot_flag_definitions() -> None:
     text = _workflow_text()
+    env = _workflow_yaml()["jobs"]["pipeline"]["env"]
+
+    assert _count_job_env_key(text, "NARRATIVE_CONTEXT_ENABLED") == 1
+    assert _count_job_env_key(text, "STORY_PLANNER_ENABLED") == 1
+    assert env["NARRATIVE_CONTEXT_ENABLED"].startswith("${{ (inputs.narrative_context")
+    assert env["STORY_PLANNER_ENABLED"].startswith("${{ (inputs.story_planner")
+    assert text.count("python -m scripts.run_market --stage narrative") == 1
+    assert "legacy workflow dispatch input reference remains" in text
 
     assert text.count("NARRATIVE_CONTEXT_ENABLED:") == 1
     assert text.count("STORY_PLANNER_ENABLED:") == 1
