@@ -532,6 +532,45 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
             "form_bonus":      _form_bonus_v3,
         }
 
+        # ── Narrative Context Pilot: 데이터/스토리 고도화 컨텍스트 생성 ─────────
+        if os.environ.get("NARRATIVE_CONTEXT_ENABLED", "false").lower() == "true":
+            try:
+                from engine.analysis.story_context_builder import (
+                    build_narrative_context_pack,
+                )
+
+                _context_pack = build_narrative_context_pack(
+                    delta=delta,
+                    battle_result=battle_result.to_dict(),
+                    event_type=event_type,
+                    scenario_type=scenario_type_v2,
+                    ending_tone=ending_tone_v2,
+                    arc_context=arc_context,
+                )
+                ctx["narrative_context_pack"] = _context_pack
+
+                if os.environ.get("STORY_PLANNER_ENABLED", "false").lower() == "true":
+                    from engine.narrative.story_planner import build_story_beat_plan
+
+                    ctx["story_beat_plan"] = build_story_beat_plan(
+                        narrative_context_pack=_context_pack,
+                        hero_id=hero_id,
+                        villain_id=villain_id,
+                        battle_result=battle_result.to_dict(),
+                        scenario_type=scenario_type_v2,
+                    ).model_dump()
+                logger_inst.info(
+                    "STEP_3",
+                    "[NarrativeContext] context_pack 생성 완료 "
+                    f"evidence={len(_context_pack.get('top_evidence', []))} "
+                    f"planner={'story_beat_plan' in ctx}",
+                )
+            except Exception as _ctx_exc:
+                logger_inst.warning(
+                    "STEP_3",
+                    f"[NarrativeContext] 생성 실패 (파이프라인 계속): {_ctx_exc}",
+                )
+
         # ── Hybrid 설계: ctx를 DB에 저장 (narrative/persist/image 독립 실행 대비) ──
         try:
             from engine.persist.asset_writer import save_analysis_ctx
@@ -571,6 +610,9 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
             heroes=ctx.get("heroes", [ctx["hero_id"]]),
             # Step 3-Story 신규 파라미터 (2026-04-22 보정)
             guest_character_prompt=ctx.get("guest_character_prompt", ""),
+            # Narrative Context Pilot (2026-06-01)
+            narrative_context_pack=ctx.get("narrative_context_pack"),
+            story_beat_plan=ctx.get("story_beat_plan"),
         )
         script_dict = script.model_dump()
 
