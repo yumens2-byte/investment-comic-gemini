@@ -38,3 +38,7 @@ def test_run_market_workflow_has_single_pilot_flag_definitions() -> None:
     assert text.count("STORY_PLANNER_ENABLED:") == 1
     assert text.count("python -m scripts.run_market --stage narrative") == 1
     assert "legacy workflow dispatch input reference remains" in text
+    assert "github.event.inputs" not in text
+    assert "RUN_STAGE: ${{ inputs.stage || 'all' }}" in text
+    assert "TARGET_DATE: ${{ inputs.target_date || '' }}" in text
+    assert "env.RUN_STAGE == 'all'" in text
