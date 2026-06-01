@@ -126,9 +126,7 @@ Ending Tone: **{{ ending_tone }}**
 {% for claim in narrative_context_pack.prohibited_claims %}
 - {{ claim }}
 {% endfor %}
-- market_ref must cite supplied evidence only: use metric names/numbers from Evidence Cards, or a supplied news/event card.
-- Do not mention algo-trading volume, algo cascade detection, abnormal trading spikes, or cascade collapse unless an Evidence Card explicitly says so. Algorithm Reaper can appear as a character, but not as a real market data claim.
-{% endif %}
+
 {% endif %}
 
 {% if story_beat_plan %}
