@@ -112,6 +112,10 @@ jobs:
       NARRATIVE_CONTEXT_ENABLED: ${{ (inputs.narrative_context != '' && inputs.narrative_context != 'auto') && inputs.narrative_context || vars.NARRATIVE_CONTEXT_ENABLED || 'false' }}
       STORY_PLANNER_ENABLED: ${{ (inputs.story_planner != '' && inputs.story_planner != 'auto') && inputs.story_planner || vars.STORY_PLANNER_ENABLED || 'false' }}
 
+      # ── Narrative Context Pilot Flags (inputs > vars > 'false') ─────────
+      NARRATIVE_CONTEXT_ENABLED: ${{ (github.event.inputs.narrative_context != '' && github.event.inputs.narrative_context != 'auto') && github.event.inputs.narrative_context || vars.NARRATIVE_CONTEXT_ENABLED || 'false' }}
+      STORY_PLANNER_ENABLED: ${{ (github.event.inputs.story_planner != '' && github.event.inputs.story_planner != 'auto') && github.event.inputs.story_planner || vars.STORY_PLANNER_ENABLED || 'false' }}
+
       PYTHONPATH: .
       ICG_ROLLOUT_VERSION: narrative-context-story-quality-v2
 
@@ -191,6 +195,16 @@ jobs:
           DATE_ARG=()
           if [ -n "${TARGET_DATE}" ]; then DATE_ARG=(--date "${TARGET_DATE}"); fi
           python -m scripts.run_market --stage narrative "${DATE_ARG[@]}"
+          echo "  NARRATIVE_DEPTH_ENABLED        = ${NARRATIVE_DEPTH_ENABLED}"
+          echo "  PAIR_TENSION_ENABLED           = ${PAIR_TENSION_ENABLED}"
+          echo "  CROWD_MODIFIER_ENABLED         = ${CROWD_MODIFIER_ENABLED}"
+          echo "  VILLAIN_SIGNATURE_BONUS_ENABLED = ${VILLAIN_SIGNATURE_BONUS_ENABLED}"
+          echo "  EMERGENCE_DEFICIT_ENABLED      = ${EMERGENCE_DEFICIT_ENABLED}"
+          echo "  NARRATIVE_CONTEXT_ENABLED      = ${NARRATIVE_CONTEXT_ENABLED}"
+          echo "  STORY_PLANNER_ENABLED          = ${STORY_PLANNER_ENABLED}"
+          python -m scripts.run_market \
+            --stage narrative \
+            ${{ github.event.inputs.target_date && format('--date {0}', github.event.inputs.target_date) || '' }
 
       - name: STEP 5 — Persist
         if: ${{ env.RUN_STAGE == 'persist' || env.RUN_STAGE == 'all' && (github.event_name != 'schedule' || steps.major_gate.outputs.should_run_expensive == 'true') }}
