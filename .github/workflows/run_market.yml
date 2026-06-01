@@ -116,6 +116,10 @@ jobs:
       NARRATIVE_CONTEXT_ENABLED: ${{ (github.event.inputs.narrative_context != '' && github.event.inputs.narrative_context != 'auto') && github.event.inputs.narrative_context || vars.NARRATIVE_CONTEXT_ENABLED || 'false' }}
       STORY_PLANNER_ENABLED: ${{ (github.event.inputs.story_planner != '' && github.event.inputs.story_planner != 'auto') && github.event.inputs.story_planner || vars.STORY_PLANNER_ENABLED || 'false' }}
 
+      # ── Narrative Context Pilot Flags (inputs > vars > 'false') ─────────
+      NARRATIVE_CONTEXT_ENABLED: ${{ (github.event.inputs.narrative_context != '' && github.event.inputs.narrative_context != 'auto') && github.event.inputs.narrative_context || vars.NARRATIVE_CONTEXT_ENABLED || 'false' }}
+      STORY_PLANNER_ENABLED: ${{ (github.event.inputs.story_planner != '' && github.event.inputs.story_planner != 'auto') && github.event.inputs.story_planner || vars.STORY_PLANNER_ENABLED || 'false' }}
+
       PYTHONPATH: .
       ICG_ROLLOUT_VERSION: narrative-context-story-quality-v2
 
@@ -184,7 +188,7 @@ jobs:
               *) echo "CUSTOM" ;;
             esac
           }
-          echo "🎛️  Phase 2.3 Feature Flags:"
+          echo "  Phase 2.3 Feature Flags:"
           echo "  NARRATIVE_DEPTH_ENABLED        = ${NARRATIVE_DEPTH_ENABLED}"
           echo "  PAIR_TENSION_ENABLED           = ${PAIR_TENSION_ENABLED}"
           echo "  CROWD_MODIFIER_ENABLED         = ${CROWD_MODIFIER_ENABLED}"
@@ -192,6 +196,7 @@ jobs:
           echo "  EMERGENCE_DEFICIT_ENABLED      = ${EMERGENCE_DEFICIT_ENABLED}"
           echo "  NARRATIVE_CONTEXT_ENABLED      = ${NARRATIVE_CONTEXT_ENABLED}"
           echo "  STORY_PLANNER_ENABLED          = ${STORY_PLANNER_ENABLED}"
+
           python -m scripts.run_market \
             --stage narrative \
             ${{ github.event.inputs.target_date && format('--date {0}', github.event.inputs.target_date) || '' }
