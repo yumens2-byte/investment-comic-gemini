@@ -98,6 +98,51 @@ Ending Tone: **{{ ending_tone }}**
 - PR-02: pair_tension >= 50 페어의 양 캐릭터가 같은 패널에 등장 시 Phase 2 또는 Phase 3에 충돌 다이얼로그 1줄 강제. 페어 양쪽 belief의 lie 충돌 지점을 다이얼로그로 표현.
 {% endif %}
 
+
+{% if narrative_context_pack %}
+## Narrative Context Pack (Pilot — DATA/STORY GROUNDING)
+- market_cause: {{ narrative_context_pack.market_cause }}
+- battle_outcome: {{ narrative_context_pack.battle_outcome }}
+{% if narrative_context_pack.top_evidence %}
+### Evidence Cards (use only these facts; do not invent data)
+{% for ev in narrative_context_pack.top_evidence %}
+- {{ ev.id }} | {{ ev.kind }} | {{ ev.get('value', ev.get('headline_summary', '')) }} | story_role={{ ev.story_role }}
+{% endfor %}
+{% endif %}
+{% if narrative_context_pack.foreshadow %}
+### Next Event Cards
+{% for hook in narrative_context_pack.foreshadow %}
+- {{ hook }}
+{% endfor %}
+{% endif %}
+{% if narrative_context_pack.scene_symbols %}
+### Scene Symbol Candidates
+{% for symbol in narrative_context_pack.scene_symbols %}
+- {{ symbol }}
+{% endfor %}
+{% endif %}
+{% if narrative_context_pack.prohibited_claims %}
+### Factuality Guardrails
+{% for claim in narrative_context_pack.prohibited_claims %}
+- {{ claim }}
+{% endfor %}
+- market_ref must cite supplied evidence only: use metric names/numbers from Evidence Cards, or a supplied news/event card.
+- Do not mention algo-trading volume, algo cascade detection, abnormal trading spikes, or cascade collapse unless an Evidence Card explicitly says so. Algorithm Reaper can appear as a character, but not as a real market data claim.
+{% endif %}
+{% endif %}
+
+{% if story_beat_plan %}
+## Story Beat Plan (Pilot — follow this 8-panel contract)
+- episode_thesis: {{ story_beat_plan.episode_thesis }}
+- market_cause_summary: {{ story_beat_plan.market_cause_summary }}
+- villain_motivation: {{ story_beat_plan.villain_motivation }}
+- hero_inner_conflict: {{ story_beat_plan.hero_inner_conflict }}
+- next_hook_seed: {{ story_beat_plan.next_hook_seed }}
+{% for beat in story_beat_plan.panel_beats %}
+P{{ beat.panel_idx }} {{ beat.dramatic_function }} — evidence={{ beat.market_evidence_ids | join(', ') }}; characters={{ beat.required_character | join(', ') }}; visual={{ beat.visual_symbol }}; intent={{ beat.dialogue_intent }}
+{% endfor %}
+{% endif %}
+
 ## Available Characters
 Heroes:
 {% for cid, char in heroes.items() %}

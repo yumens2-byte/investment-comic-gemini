@@ -55,6 +55,66 @@ def _make_jinja_env_from_string(template_str: str) -> Environment:
     return env
 
 
+def _append_narrative_context_fallback(rendered: str, context_pack: dict | None) -> str:
+    """Append pilot context if a runtime Notion template has not been updated yet."""
+    if not context_pack or "Narrative Context Pack" in rendered:
+        return rendered
+
+    lines = [
+        "",
+        "## Narrative Context Pack (Pilot — DATA/STORY GROUNDING)",
+        f"- market_cause: {context_pack.get('market_cause', '')}",
+        f"- battle_outcome: {context_pack.get('battle_outcome', '')}",
+    ]
+    top_evidence = context_pack.get("top_evidence") or []
+    if top_evidence:
+        lines.append("### Evidence Cards (use only these facts; do not invent data)")
+        for ev in top_evidence:
+            value = ev.get("value") or ev.get("headline_summary") or ""
+            lines.append(
+                f"- {ev.get('id', '')} | {ev.get('kind', '')} | {value} | "
+                f"story_role={ev.get('story_role', '')}"
+            )
+    foreshadow = context_pack.get("foreshadow") or []
+    if foreshadow:
+        lines.append("### Next Event Cards")
+        lines.extend(f"- {hook}" for hook in foreshadow)
+    scene_symbols = context_pack.get("scene_symbols") or []
+    if scene_symbols:
+        lines.append("### Scene Symbol Candidates")
+        lines.extend(f"- {symbol}" for symbol in scene_symbols)
+    prohibited_claims = context_pack.get("prohibited_claims") or []
+    if prohibited_claims:
+        lines.append("### Factuality Guardrails")
+        lines.extend(f"- {claim}" for claim in prohibited_claims)
+    return rendered + "\n" + "\n".join(lines)
+
+
+def _append_story_beat_plan_fallback(rendered: str, story_beat_plan: dict | None) -> str:
+    """Append pilot beat plan if a runtime Notion template has not been updated yet."""
+    if not story_beat_plan or "Story Beat Plan" in rendered:
+        return rendered
+
+    lines = [
+        "",
+        "## Story Beat Plan (Pilot — follow this 8-panel contract)",
+        f"- episode_thesis: {story_beat_plan.get('episode_thesis', '')}",
+        f"- market_cause_summary: {story_beat_plan.get('market_cause_summary', '')}",
+        f"- villain_motivation: {story_beat_plan.get('villain_motivation', '')}",
+        f"- hero_inner_conflict: {story_beat_plan.get('hero_inner_conflict', '')}",
+        f"- next_hook_seed: {story_beat_plan.get('next_hook_seed', '')}",
+    ]
+    for beat in story_beat_plan.get("panel_beats") or []:
+        evidence = ", ".join(beat.get("market_evidence_ids") or [])
+        characters = ", ".join(beat.get("required_character") or [])
+        lines.append(
+            f"P{beat.get('panel_idx')} {beat.get('dramatic_function')} — "
+            f"evidence={evidence}; characters={characters}; "
+            f"visual={beat.get('visual_symbol', '')}; intent={beat.get('dialogue_intent', '')}"
+        )
+    return rendered + "\n" + "\n".join(lines)
+
+
 def render_user_prompt(
     date: str,
     episode_id: str,
@@ -76,6 +136,9 @@ def render_user_prompt(
     triggered_pair: str | None = None,
     hero_belief: dict | None = None,
     villain_belief: dict | None = None,
+    # ── Narrative enrichment pilot (2026-06-01) ───────────────────────────────
+    narrative_context_pack: dict | None = None,
+    story_beat_plan: dict | None = None,
 ) -> str:
     """
     Notion에서 로드한 narrative_user 템플릿 렌더링.
@@ -99,6 +162,8 @@ def render_user_prompt(
         triggered_pair:          v2.3 — STEP 1.5-B에서 triggered된 페어 ID.
         hero_belief:             v2.3 — 주 히어로 belief 6요소 dict.
         villain_belief:          v2.3 — 빌런 belief 6요소 dict (Oil Shock은 4요소).
+        narrative_context_pack:  파일럿 — 시장/뉴스/이벤트 압축 컨텍스트.
+        story_beat_plan:         파일럿 — 8컷 서사 설계도.
 
     Returns:
         렌더링된 사용자 프롬프트 문자열.
@@ -130,7 +195,7 @@ def render_user_prompt(
     env = _make_jinja_env_from_string(template_str)
     template = env.get_template("narrative_user.j2")
 
-    return template.render(
+    rendered = template.render(
         date=date,
         episode_id=episode_id,
         event_type=event_type,
@@ -153,7 +218,12 @@ def render_user_prompt(
         triggered_pair=triggered_pair,
         hero_belief=hero_belief,
         villain_belief=villain_belief,
+        narrative_context_pack=narrative_context_pack or {},
+        story_beat_plan=story_beat_plan or {},
     )
+    rendered = _append_narrative_context_fallback(rendered, narrative_context_pack)
+    rendered = _append_story_beat_plan_fallback(rendered, story_beat_plan)
+    return rendered
 
 
 def load_system_prompt() -> str:
