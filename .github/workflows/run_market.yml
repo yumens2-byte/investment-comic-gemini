@@ -66,7 +66,7 @@ permissions:
   actions: write
 
 concurrency:
-  group: icg-${{ github.event.inputs.target_date || 'today' }}
+  group: icg-${{ inputs.target_date || 'today' }}
   cancel-in-progress: false
 
 jobs:
@@ -94,23 +94,30 @@ jobs:
       NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
       NOTION_TRACKER_DS: '4c08a06f-c1cc-4600-bec4-fb3d018139ff'   # ICG Episode Tracker DB ID (이전 값 485ba577-...은 data source/collection ID로 잘못 입력되어 있었음)
       DRY_RUN: 'false'
-      FORCE_RUN: ${{ github.event.inputs.force || 'false' }}
-      SCENARIO_V2_ENABLED: ${{ github.event.inputs.scenario_v2 || 'false' }}
-      EPISODE_TYPE_V3_ENABLED: ${{ github.event.inputs.episode_type_v3 || 'false' }}
+      TARGET_DATE: ${{ inputs.target_date || '' }}
+      RUN_STAGE: ${{ inputs.stage || 'all' }}
+      FORCE_RUN: ${{ inputs.force || 'false' }}
+      SCENARIO_V2_ENABLED: ${{ inputs.scenario_v2 || 'false' }}
+      EPISODE_TYPE_V3_ENABLED: ${{ inputs.episode_type_v3 || 'false' }}
 
       # ── Phase 2.3 Feature Flags (하이브리드: inputs > vars > 'false') ──
       # 'auto' 입력 시: vars 값 사용. 'true'/'false' 직접 입력 시: inputs 우선.
-      NARRATIVE_DEPTH_ENABLED: ${{ (github.event.inputs.narrative_depth != '' && github.event.inputs.narrative_depth != 'auto') && github.event.inputs.narrative_depth || vars.NARRATIVE_DEPTH_ENABLED || 'false' }}
-      PAIR_TENSION_ENABLED: ${{ (github.event.inputs.pair_tension != '' && github.event.inputs.pair_tension != 'auto') && github.event.inputs.pair_tension || vars.PAIR_TENSION_ENABLED || 'false' }}
-      CROWD_MODIFIER_ENABLED: ${{ (github.event.inputs.crowd_modifier != '' && github.event.inputs.crowd_modifier != 'auto') && github.event.inputs.crowd_modifier || vars.CROWD_MODIFIER_ENABLED || 'false' }}
-      VILLAIN_SIGNATURE_BONUS_ENABLED: ${{ (github.event.inputs.villain_signature_bonus != '' && github.event.inputs.villain_signature_bonus != 'auto') && github.event.inputs.villain_signature_bonus || vars.VILLAIN_SIGNATURE_BONUS_ENABLED || 'false' }}
-      EMERGENCE_DEFICIT_ENABLED: ${{ (github.event.inputs.emergence_deficit != '' && github.event.inputs.emergence_deficit != 'auto') && github.event.inputs.emergence_deficit || vars.EMERGENCE_DEFICIT_ENABLED || 'false' }}
+      NARRATIVE_DEPTH_ENABLED: ${{ (inputs.narrative_depth != '' && inputs.narrative_depth != 'auto') && inputs.narrative_depth || vars.NARRATIVE_DEPTH_ENABLED || 'false' }}
+      PAIR_TENSION_ENABLED: ${{ (inputs.pair_tension != '' && inputs.pair_tension != 'auto') && inputs.pair_tension || vars.PAIR_TENSION_ENABLED || 'false' }}
+      CROWD_MODIFIER_ENABLED: ${{ (inputs.crowd_modifier != '' && inputs.crowd_modifier != 'auto') && inputs.crowd_modifier || vars.CROWD_MODIFIER_ENABLED || 'false' }}
+      VILLAIN_SIGNATURE_BONUS_ENABLED: ${{ (inputs.villain_signature_bonus != '' && inputs.villain_signature_bonus != 'auto') && inputs.villain_signature_bonus || vars.VILLAIN_SIGNATURE_BONUS_ENABLED || 'false' }}
+      EMERGENCE_DEFICIT_ENABLED: ${{ (inputs.emergence_deficit != '' && inputs.emergence_deficit != 'auto') && inputs.emergence_deficit || vars.EMERGENCE_DEFICIT_ENABLED || 'false' }}
+
+      # ── Narrative Context Pilot Flags (inputs > vars > 'false') ─────────
+      NARRATIVE_CONTEXT_ENABLED: ${{ (inputs.narrative_context != '' && inputs.narrative_context != 'auto') && inputs.narrative_context || vars.NARRATIVE_CONTEXT_ENABLED || 'false' }}
+      STORY_PLANNER_ENABLED: ${{ (inputs.story_planner != '' && inputs.story_planner != 'auto') && inputs.story_planner || vars.STORY_PLANNER_ENABLED || 'false' }}
 
       # ── Narrative Context Pilot Flags (inputs > vars > 'false') ─────────
       NARRATIVE_CONTEXT_ENABLED: ${{ (github.event.inputs.narrative_context != '' && github.event.inputs.narrative_context != 'auto') && github.event.inputs.narrative_context || vars.NARRATIVE_CONTEXT_ENABLED || 'false' }}
       STORY_PLANNER_ENABLED: ${{ (github.event.inputs.story_planner != '' && github.event.inputs.story_planner != 'auto') && github.event.inputs.story_planner || vars.STORY_PLANNER_ENABLED || 'false' }}
 
       PYTHONPATH: .
+      ICG_ROLLOUT_VERSION: narrative-context-story-quality-v2
 
     steps:
       - name: Checkout
@@ -125,37 +132,58 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Rollout version check
+        run: |
+          echo "🔎 ICG_ROLLOUT_VERSION=${ICG_ROLLOUT_VERSION}"
+          echo "🔎 GITHUB_SHA=${GITHUB_SHA}"
+          test -f engine/analysis/story_context_builder.py
+          test -f engine/narrative/story_planner.py
+          test -f engine/narrative/story_quality.py
+          python - <<'PY'
+          from engine.analysis.story_context_builder import build_narrative_context_pack
+          from engine.narrative.story_planner import build_story_beat_plan
+          from engine.narrative.story_quality import validate_story_grounding
+          print("rollout modules import OK")
+          PY
+
       - name: Install CJK fonts (PIL 한국어 렌더링)
         run: sudo apt-get install -y fonts-noto-cjk --no-install-recommends -q
 
       - name: STEP 2 — Data Ingest
-        if: ${{ github.event.inputs.stage == '' || github.event.inputs.stage == 'all' || github.event.inputs.stage == 'data' }}
+        if: ${{ env.RUN_STAGE == 'all' || env.RUN_STAGE == 'data' }}
         run: |
-          python -m scripts.run_market \
-            --stage data \
-            ${{ github.event.inputs.target_date && format('--date {0}', github.event.inputs.target_date) || '' }}
+          DATE_ARG=()
+          if [ -n "${TARGET_DATE}" ]; then DATE_ARG=(--date "${TARGET_DATE}"); fi
+          python -m scripts.run_market --stage data "${DATE_ARG[@]}"
 
       - name: STEP 3 — Analysis
-        if: ${{ github.event.inputs.stage == '' || github.event.inputs.stage == 'all' || github.event.inputs.stage == 'analysis' }}
+        if: ${{ env.RUN_STAGE == 'all' || env.RUN_STAGE == 'analysis' }}
         run: |
-          python -m scripts.run_market \
-            --stage analysis \
-            ${{ github.event.inputs.target_date && format('--date {0}', github.event.inputs.target_date) || '' }}
+          DATE_ARG=()
+          if [ -n "${TARGET_DATE}" ]; then DATE_ARG=(--date "${TARGET_DATE}"); fi
+          python -m scripts.run_market --stage analysis "${DATE_ARG[@]}"
 
 
       - name: STEP 3.5 — Major Event Gate (for cost control)
         id: major_gate
-        if: ${{ github.event_name == 'schedule' && (github.event.inputs.stage == '' || github.event.inputs.stage == 'all') }}
+        if: ${{ github.event_name == 'schedule' && env.RUN_STAGE == 'all' }}
         run: |
-          TARGET_DATE="${{ github.event.inputs.target_date }}"
-          if [ -z "$TARGET_DATE" ]; then
-            TARGET_DATE=$(TZ=Asia/Seoul date +%F)
+          GATE_DATE="${TARGET_DATE}"
+          if [ -z "$GATE_DATE" ]; then
+            GATE_DATE=$(TZ=Asia/Seoul date +%F)
           fi
-          python -m scripts.check_major_event_gate --date "$TARGET_DATE" >> "$GITHUB_OUTPUT"
+          python -m scripts.check_major_event_gate --date "$GATE_DATE" >> "$GITHUB_OUTPUT"
 
       - name: STEP 4 — Narrative (Claude)
-        if: ${{ github.event.inputs.stage == 'narrative' || (github.event.inputs.stage == '' || github.event.inputs.stage == 'all') && (github.event_name != 'schedule' || steps.major_gate.outputs.should_run_expensive == 'true') }}
+        if: ${{ env.RUN_STAGE == 'narrative' || env.RUN_STAGE == 'all' && (github.event_name != 'schedule' || steps.major_gate.outputs.should_run_expensive == 'true') }}
         run: |
+          flag_label() {
+            case "${1,,}" in
+              true) echo "ON" ;;
+              false) echo "OFF" ;;
+              *) echo "CUSTOM" ;;
+            esac
+          }
           echo "🎛️  Phase 2.3 Feature Flags:"
           echo "  NARRATIVE_DEPTH_ENABLED        = ${NARRATIVE_DEPTH_ENABLED}"
           echo "  PAIR_TENSION_ENABLED           = ${PAIR_TENSION_ENABLED}"
@@ -166,21 +194,21 @@ jobs:
           echo "  STORY_PLANNER_ENABLED          = ${STORY_PLANNER_ENABLED}"
           python -m scripts.run_market \
             --stage narrative \
-            ${{ github.event.inputs.target_date && format('--date {0}', github.event.inputs.target_date) || '' }}
+            ${{ github.event.inputs.target_date && format('--date {0}', github.event.inputs.target_date) || '' }
 
       - name: STEP 5 — Persist
-        if: ${{ github.event.inputs.stage == 'persist' || (github.event.inputs.stage == '' || github.event.inputs.stage == 'all') && (github.event_name != 'schedule' || steps.major_gate.outputs.should_run_expensive == 'true') }}
+        if: ${{ env.RUN_STAGE == 'persist' || env.RUN_STAGE == 'all' && (github.event_name != 'schedule' || steps.major_gate.outputs.should_run_expensive == 'true') }}
         run: |
-          python -m scripts.run_market \
-            --stage persist \
-            ${{ github.event.inputs.target_date && format('--date {0}', github.event.inputs.target_date) || '' }}
+          DATE_ARG=()
+          if [ -n "${TARGET_DATE}" ]; then DATE_ARG=(--date "${TARGET_DATE}"); fi
+          python -m scripts.run_market --stage persist "${DATE_ARG[@]}"
 
       - name: STEP 6 — Image Generation (Gemini)
-        if: ${{ github.event.inputs.stage == 'image' || (github.event.inputs.stage == '' || github.event.inputs.stage == 'all') && (github.event_name != 'schedule' || steps.major_gate.outputs.should_run_expensive == 'true') }}
+        if: ${{ env.RUN_STAGE == 'image' || env.RUN_STAGE == 'all' && (github.event_name != 'schedule' || steps.major_gate.outputs.should_run_expensive == 'true') }}
         run: |
-          python -m scripts.run_market \
-            --stage image \
-            ${{ github.event.inputs.target_date && format('--date {0}', github.event.inputs.target_date) || '' }}
+          DATE_ARG=()
+          if [ -n "${TARGET_DATE}" ]; then DATE_ARG=(--date "${TARGET_DATE}"); fi
+          python -m scripts.run_market --stage image "${DATE_ARG[@]}"
 
       - name: PAUSE — Dialog Gate
         run: |

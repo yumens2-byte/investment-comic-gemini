@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 _MODEL = "gemini-2.5-flash-image"
 _COST_INPUT_PER_1M = 0.30  # USD per 1M input tokens
 _COST_OUTPUT_PER_1M = 30.0  # USD per 1M output tokens
+_ESTIMATED_IMAGE_OUTPUT_TOKENS = 1290
 
 
 def _get_client():
@@ -53,6 +54,76 @@ def _calc_cost(prompt_tokens: int, output_tokens: int) -> float:
     )
 
 
+def _metadata_value(metadata: object, key: str) -> int:
+    """Read an integer usage field from SDK objects or dict-like metadata."""
+    if metadata is None:
+        return 0
+    if isinstance(metadata, dict):
+        value = metadata.get(key, 0)
+    else:
+        value = getattr(metadata, key, 0)
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _extract_usage_tokens(response: object) -> tuple[int, int]:
+    """Extract Gemini usage metadata for cost/quality logs across SDK versions."""
+    metadata = getattr(response, "usage_metadata", None)
+    if metadata is None and isinstance(response, dict):
+        metadata = response.get("usage_metadata") or response.get("usageMetadata")
+
+    prompt_tokens = _metadata_value(metadata, "prompt_token_count")
+    if prompt_tokens == 0:
+        prompt_tokens = _metadata_value(metadata, "promptTokenCount")
+
+    output_tokens = _metadata_value(metadata, "candidates_token_count")
+    if output_tokens == 0:
+        output_tokens = _metadata_value(metadata, "candidatesTokenCount")
+
+    total_tokens = _metadata_value(metadata, "total_token_count")
+    if total_tokens == 0:
+        total_tokens = _metadata_value(metadata, "totalTokenCount")
+    if output_tokens == 0 and total_tokens > prompt_tokens:
+        output_tokens = total_tokens - prompt_tokens
+
+    return prompt_tokens, output_tokens
+
+
+def _estimate_prompt_tokens(prompt_text: str, ref_paths: list[Path]) -> int:
+    """Fallback token estimate when Gemini image responses omit usage metadata."""
+    text_tokens = max(1, len(prompt_text) // 4)
+    # Reference images are billed as input too, but SDK metadata can be absent for image output.
+    return text_tokens + len(ref_paths) * 258
+
+
+def _obj_value(obj: object, key: str, default: object = None) -> object:
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
+def _response_parts(response: object) -> list[object]:
+    """Return Gemini response parts without leaking SDK AttributeError shapes."""
+    candidates = _obj_value(response, "candidates", [])
+    if not candidates:
+        return []
+    first = candidates[0]
+    content = _obj_value(first, "content")
+    if content is None:
+        return []
+    parts = _obj_value(content, "parts", [])
+    return list(parts or [])
+
+
+def _response_finish_reason(response: object) -> str:
+    candidates = _obj_value(response, "candidates", [])
+    if not candidates:
+        return "no_candidates"
+    return str(_obj_value(candidates[0], "finish_reason", "unknown"))
+
+
 def _write_jsonl_log(log_path: Path, record: dict) -> None:
     """gemini_run.log에 JSONL 레코드 추가."""
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -65,7 +136,7 @@ def _generate_one(
     client,
     prompt_text: str,
     ref_paths: list[Path],
-) -> bytes:
+) -> tuple[bytes, int, int]:
     """
     Gemini API 단일 패널 이미지 생성.
 
@@ -75,7 +146,7 @@ def _generate_one(
         ref_paths: 캐릭터 REF 이미지 경로 목록.
 
     Returns:
-        이미지 바이너리 (PNG).
+        이미지 바이너리 (PNG), prompt token count, output token count.
 
     Raises:
         RuntimeError: 응답에 이미지 없을 때.
@@ -100,12 +171,20 @@ def _generate_one(
         contents=contents,
     )
 
-    # 응답에서 이미지 추출
-    for part in response.candidates[0].content.parts:
-        if hasattr(part, "inline_data") and part.inline_data:
-            return part.inline_data.data
+    prompt_tokens, output_tokens = _extract_usage_tokens(response)
 
-    raise RuntimeError("Gemini 응답에 이미지 없음 — fallback 필요")
+    # 응답에서 이미지 추출
+    for part in _response_parts(response):
+        inline_data = _obj_value(part, "inline_data")
+        if inline_data:
+            data = _obj_value(inline_data, "data")
+            if data:
+                return data, prompt_tokens, output_tokens
+
+    raise RuntimeError(
+        "Gemini 응답에 이미지 없음 — fallback 필요 "
+        f"(finish_reason={_response_finish_reason(response)})"
+    )
 
 
 def generate_panel(
@@ -114,7 +193,7 @@ def generate_panel(
     ref_paths: list[Path],
     output_dir: Path,
     log_path: Path,
-) -> Path | None:
+) -> tuple[Path | None, float]:
     """
     패널 이미지 생성 + P{N}.png 저장 + gemini_run.log 기록.
 
@@ -126,7 +205,7 @@ def generate_panel(
         log_path: gemini_run.log 경로.
 
     Returns:
-        저장된 PNG 경로 또는 None (3회 실패 시 fallback).
+        (저장된 PNG 경로 또는 None, 패널 비용 USD).
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"P{panel_idx}.png"
@@ -142,6 +221,7 @@ def generate_panel(
         "output_tokens": 0,
         "latency_sec": 0.0,
         "cost_usd": 0.0,
+        "cost_estimated": False,
         "output": None,
     }
 
@@ -168,13 +248,17 @@ def generate_panel(
                 "Render the scene with primary character only if needed for quality.\n\n"
                 + prompt_text
             )
-        image_bytes = _generate_one(client, adjusted_prompt, adjusted_refs)
+        image_bytes, prompt_tokens, output_tokens = _generate_one(
+            client, adjusted_prompt, adjusted_refs
+        )
 
         latency = round(time.monotonic() - start_ts, 2)
 
-        # usage_metadata에서 토큰 수 추출 (SDK 버전마다 구조 다를 수 있음)
-        prompt_tokens = 0
-        output_tokens = 0
+        cost_estimated = False
+        if prompt_tokens == 0 and output_tokens == 0:
+            prompt_tokens = _estimate_prompt_tokens(adjusted_prompt, adjusted_refs)
+            output_tokens = _ESTIMATED_IMAGE_OUTPUT_TOKENS
+            cost_estimated = True
         cost_usd = _calc_cost(prompt_tokens, output_tokens)
 
         output_path.write_bytes(image_bytes)
@@ -186,13 +270,22 @@ def generate_panel(
                 "output_tokens": output_tokens,
                 "latency_sec": latency,
                 "cost_usd": cost_usd,
+                "cost_estimated": cost_estimated,
                 "output": str(output_path),
             }
         )
         _write_jsonl_log(log_path, log_record)
 
-        logger.info("[gemini] 패널 P%d 생성 완료 (%.2fs, $%.4f)", panel_idx, latency, cost_usd)
-        return output_path
+        logger.info(
+            "[gemini] 패널 P%d 생성 완료 (%.2fs, tokens=%d/%d, $%.4f, estimated=%s)",
+            panel_idx,
+            latency,
+            prompt_tokens,
+            output_tokens,
+            cost_usd,
+            cost_estimated,
+        )
+        return output_path, cost_usd
 
     except Exception as exc:
         latency = round(time.monotonic() - start_ts, 2)
@@ -206,7 +299,7 @@ def generate_panel(
         _write_jsonl_log(log_path, log_record)
 
         logger.error("[gemini] 패널 P%d 생성 실패 → text_card fallback: %s", panel_idx, exc)
-        return None  # 상위에서 text_card fallback 처리
+        return None, 0.0  # 상위에서 text_card fallback 처리
 
 
 def generate_episode(
@@ -233,7 +326,7 @@ def generate_episode(
         prompt = panel.get("prompt_text", "")
         refs = panel.get("ref_image_paths", [])
 
-        path = generate_panel(
+        path, panel_cost = generate_panel(
             panel_idx=idx,
             prompt_text=prompt,
             ref_paths=refs,
@@ -241,6 +334,7 @@ def generate_episode(
             log_path=log_path,
         )
         results.append(path)
+        total_cost += panel_cost
 
     success_count = sum(1 for p in results if p is not None)
     logger.info(
