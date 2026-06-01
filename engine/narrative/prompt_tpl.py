@@ -76,6 +76,9 @@ def render_user_prompt(
     triggered_pair: str | None = None,
     hero_belief: dict | None = None,
     villain_belief: dict | None = None,
+    # ── Narrative enrichment pilot (2026-06-01) ───────────────────────────────
+    narrative_context_pack: dict | None = None,
+    story_beat_plan: dict | None = None,
 ) -> str:
     """
     Notion에서 로드한 narrative_user 템플릿 렌더링.
@@ -99,6 +102,8 @@ def render_user_prompt(
         triggered_pair:          v2.3 — STEP 1.5-B에서 triggered된 페어 ID.
         hero_belief:             v2.3 — 주 히어로 belief 6요소 dict.
         villain_belief:          v2.3 — 빌런 belief 6요소 dict (Oil Shock은 4요소).
+        narrative_context_pack:  파일럿 — 시장/뉴스/이벤트 압축 컨텍스트.
+        story_beat_plan:         파일럿 — 8컷 서사 설계도.
 
     Returns:
         렌더링된 사용자 프롬프트 문자열.
@@ -153,6 +158,8 @@ def render_user_prompt(
         triggered_pair=triggered_pair,
         hero_belief=hero_belief,
         villain_belief=villain_belief,
+        narrative_context_pack=narrative_context_pack or {},
+        story_beat_plan=story_beat_plan or {},
     )
 
 

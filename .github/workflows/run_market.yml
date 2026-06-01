@@ -52,6 +52,14 @@ on:
         description: 'G09 Emergence Information Deficit (true/false/auto)'
         required: false
         default: 'auto'
+      narrative_context:
+        description: 'Pilot Narrative Context Pack (true/false/auto)'
+        required: false
+        default: 'auto'
+      story_planner:
+        description: 'Pilot StoryBeatPlan 2-pass planner (true/false/auto)'
+        required: false
+        default: 'auto'
 
 permissions:
   contents: read
@@ -97,6 +105,10 @@ jobs:
       CROWD_MODIFIER_ENABLED: ${{ (github.event.inputs.crowd_modifier != '' && github.event.inputs.crowd_modifier != 'auto') && github.event.inputs.crowd_modifier || vars.CROWD_MODIFIER_ENABLED || 'false' }}
       VILLAIN_SIGNATURE_BONUS_ENABLED: ${{ (github.event.inputs.villain_signature_bonus != '' && github.event.inputs.villain_signature_bonus != 'auto') && github.event.inputs.villain_signature_bonus || vars.VILLAIN_SIGNATURE_BONUS_ENABLED || 'false' }}
       EMERGENCE_DEFICIT_ENABLED: ${{ (github.event.inputs.emergence_deficit != '' && github.event.inputs.emergence_deficit != 'auto') && github.event.inputs.emergence_deficit || vars.EMERGENCE_DEFICIT_ENABLED || 'false' }}
+
+      # ── Narrative Context Pilot Flags (inputs > vars > 'false') ─────────
+      NARRATIVE_CONTEXT_ENABLED: ${{ (github.event.inputs.narrative_context != '' && github.event.inputs.narrative_context != 'auto') && github.event.inputs.narrative_context || vars.NARRATIVE_CONTEXT_ENABLED || 'false' }}
+      STORY_PLANNER_ENABLED: ${{ (github.event.inputs.story_planner != '' && github.event.inputs.story_planner != 'auto') && github.event.inputs.story_planner || vars.STORY_PLANNER_ENABLED || 'false' }}
 
       PYTHONPATH: .
 
@@ -150,6 +162,8 @@ jobs:
           echo "  CROWD_MODIFIER_ENABLED         = ${CROWD_MODIFIER_ENABLED}"
           echo "  VILLAIN_SIGNATURE_BONUS_ENABLED = ${VILLAIN_SIGNATURE_BONUS_ENABLED}"
           echo "  EMERGENCE_DEFICIT_ENABLED      = ${EMERGENCE_DEFICIT_ENABLED}"
+          echo "  NARRATIVE_CONTEXT_ENABLED      = ${NARRATIVE_CONTEXT_ENABLED}"
+          echo "  STORY_PLANNER_ENABLED          = ${STORY_PLANNER_ENABLED}"
           python -m scripts.run_market \
             --stage narrative \
             ${{ github.event.inputs.target_date && format('--date {0}', github.event.inputs.target_date) || '' }}

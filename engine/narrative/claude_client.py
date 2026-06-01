@@ -220,6 +220,9 @@ def generate_episode(
     narrative_depth_enabled: bool | None = None,
     pair_tension_enabled: bool | None = None,
     triggered_pair: str | None = None,
+    # ── Narrative enrichment pilot ─────────────────────────────────────────────
+    narrative_context_pack: dict | None = None,
+    story_beat_plan: dict | None = None,
 ) -> EpisodeScript:
     """
     Claude API를 호출하여 EpisodeScript를 생성.
@@ -279,6 +282,8 @@ def generate_episode(
             narrative_depth_enabled=narrative_depth_enabled,
             pair_tension_enabled=pair_tension_enabled,
             triggered_pair=triggered_pair,
+            narrative_context_pack=narrative_context_pack,
+            story_beat_plan=story_beat_plan,
         )
     except TypeError:
         # render_user_prompt()가 신규 파라미터를 수용하지 못할 경우 fallback:
@@ -314,6 +319,33 @@ def generate_episode(
             )
         if guest_character_prompt:
             user_prompt += f"\n\n{guest_character_prompt}\n"
+        if narrative_context_pack:
+            user_prompt += (
+                "\n\n## [Narrative Context Pack Pilot]\n"
+                + json.dumps(narrative_context_pack, ensure_ascii=False, indent=2)
+                + "\n"
+            )
+        if story_beat_plan:
+            user_prompt += (
+                "\n\n## [Story Beat Plan Pilot]\n"
+                + json.dumps(story_beat_plan, ensure_ascii=False, indent=2)
+                + "\n"
+            )
+
+    # If the runtime Notion template has not yet been updated with the pilot blocks,
+    # append compact JSON blocks so feature-flagged context still reaches Claude.
+    if narrative_context_pack and "Narrative Context Pack" not in user_prompt:
+        user_prompt += (
+            "\n\n## Narrative Context Pack (Pilot — DATA/STORY GROUNDING)\n"
+            + json.dumps(narrative_context_pack, ensure_ascii=False, indent=2)
+            + "\n"
+        )
+    if story_beat_plan and "Story Beat Plan" not in user_prompt:
+        user_prompt += (
+            "\n\n## Story Beat Plan (Pilot — follow this 8-panel contract)\n"
+            + json.dumps(story_beat_plan, ensure_ascii=False, indent=2)
+            + "\n"
+        )
 
     last_error: Exception | None = None
 
