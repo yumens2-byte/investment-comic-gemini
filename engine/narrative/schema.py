@@ -14,6 +14,50 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 
+class StoryBeat(BaseModel):
+    """A deterministic panel-level plan used to guide richer narrative generation."""
+
+    panel_idx: int = Field(ge=1, le=8)
+    dramatic_function: Literal[
+        "HOOK",
+        "MARKET_CAUSE",
+        "CHARACTER_REACTION",
+        "CONFLICT",
+        "TURNING_POINT",
+        "OUTCOME",
+        "NEXT_HOOK",
+        "DISCLAIMER",
+    ]
+    market_evidence_ids: list[str] = Field(default_factory=list)
+    required_character: list[str] = Field(default_factory=list)
+    emotional_shift: str
+    visual_symbol: str
+    dialogue_intent: str
+    forbidden: list[str] = Field(default_factory=list)
+
+
+class StoryBeatPlan(BaseModel):
+    """Episode-level beat contract generated before the final EpisodeScript."""
+
+    episode_thesis: str
+    market_cause_summary: str
+    villain_motivation: str
+    hero_inner_conflict: str
+    panel_beats: list[StoryBeat] = Field(min_length=8, max_length=8)
+    next_hook_seed: str
+    factuality_guardrails: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_panel_sequence(self) -> "StoryBeatPlan":
+        expected = list(range(1, 9))
+        actual = [beat.panel_idx for beat in self.panel_beats]
+        if actual != expected:
+            raise ValueError(f"StoryBeatPlan panel_idx must be 1..8 in order. got={actual}")
+        if self.panel_beats[-1].dramatic_function != "DISCLAIMER":
+            raise ValueError("StoryBeatPlan panel 8 must be DISCLAIMER.")
+        return self
+
+
 class PanelCharacter(BaseModel):
     """패널 등장 캐릭터."""
 
