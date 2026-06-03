@@ -305,3 +305,116 @@ pair_definitions:
       - CHAR_ANTI_HERO_001   # ⚠️ ICG에 Zero Block 미정의 — 등장 시까지 PAIR_C 자동 비활성
     theme:  "질서 vs 혼돈"
     weight: 0.3
+
+# ── Character Canon Prompt Cards v2 ─────────────────────────────────────
+# Narrative/Image prompt 공통 보강 카드. 캐릭터 선택 이유와 시각/대사 카논을
+# 프롬프트에 주입해 계산식과 연출을 일치시킨다.
+canon_prompts:
+  CHAR_HERO_001:
+    narrative_identity: "시스템 붕괴 신호가 커질 때 회복 격자를 세우는 리더."
+    entrance_cue: ["blue system grid cracking behind him", "D emblem glow only under systemic stress"]
+    voice:
+      tone: "calm, compressed, responsible"
+      catchphrases: ["시스템은 다시 설계할 수 있어."]
+    market_metaphor: ["circuit breaker", "recovery grid", "liquidity firewall"]
+    signature_action: ["raises chain blade as a stabilizing market grid"]
+    forbidden: ["panic shouting", "reckless revenge dialogue", "random weapon changes"]
+    panel_rules:
+      COVER: "left side, facing right, blue system grid behind"
+      CLIMAX: "D emblem glow; protect team before attacking"
+  CHAR_HERO_002:
+    narrative_identity: "금리와 크레딧 압력을 방패로 해석하는 방어 분석가."
+    entrance_cue: ["red-gold shield catches falling bond shards", "rate grid reflected on armor"]
+    voice:
+      tone: "precise, protective, analytical"
+      catchphrases: ["방어는 계산에서 시작돼."]
+    market_metaphor: ["duration shield", "credit firewall", "debt pressure gauge"]
+    signature_action: ["plants ETF shield between team and debt shockwave"]
+    forbidden: ["careless leverage praise", "unprotected frontal charge"]
+    panel_rules:
+      TENSION: "show data diagnosis before action"
+      BATTLE: "shield first, rifle second"
+  CHAR_HERO_003:
+    narrative_identity: "유가와 모멘텀이 과열될 때 한 방의 힘으로 돌파하는 화염 히어로."
+    entrance_cue: ["flame hair rises with oil candles", "orange heat distortion around fists"]
+    voice:
+      tone: "bold, hot-blooded, short sentences"
+      catchphrases: ["한 방이면 흐름이 바뀐다."]
+    market_metaphor: ["oil candle flame", "leverage thrust", "momentum ignition"]
+    signature_action: ["drives a flame punch through an oil shock wave"]
+    forbidden: ["cold bureaucratic speech", "ice or water power depiction"]
+    panel_rules:
+      BATTLE: "kinetic fire motion; never static bodybuilding pose"
+      AFTERMATH: "show controlled flame, not uncontrolled rage"
+  CHAR_HERO_004:
+    narrative_identity: "변동성보다 먼저 신호를 읽고 팀에 시간을 벌어주는 선물시장 정찰자."
+    entrance_cue: ["cyan futures holograms orbit her", "VIX lightning reflected in visor"]
+    voice:
+      tone: "fast, focused, signal-first"
+      catchphrases: ["신호는 이미 움직였어."]
+    market_metaphor: ["volatility radar", "futures curve", "early warning signal"]
+    signature_action: ["cuts a path through volatility lines with holographic forecast panels"]
+    forbidden: ["mystic fortune telling", "claiming certainty about future prices"]
+    panel_rules:
+      TENSION: "screens and signal maps dominate background"
+      SHOCK: "detect before direct clash"
+  CHAR_HERO_005:
+    narrative_identity: "공포와 크레딧 압력이 커질 때 시간을 버티는 금빛 방패."
+    entrance_cue: ["gold armor absorbs red chart fragments", "bond shield locks into ground"]
+    voice:
+      tone: "stoic, slow, protective"
+      catchphrases: ["버티는 것도 전략이다."]
+    market_metaphor: ["safe haven wall", "bond duration anchor", "fear absorption shield"]
+    signature_action: ["anchors a golden bond shield against liquidity waves"]
+    forbidden: ["reckless momentum chase", "showing exposed face if helmet is locked"]
+    panel_rules:
+      AFTERMATH: "quiet guardian silhouette"
+      CLIMAX: "shield absorbs impact before counterforce"
+  CHAR_VILLAIN_001:
+    narrative_identity: "부채가 스스로 자라난다고 믿는 시간 압력의 거인."
+    entrance_cue: ["lava cracks shaped like yield curves", "debt ledgers fall as stone plates"]
+    voice:
+      tone: "heavy, inevitable, compounding"
+    market_metaphor: ["debt mountain", "rate gravity", "compounding pressure"]
+    signature_action: ["stomps and turns promises into stone chains"]
+    forbidden: ["nimble assassin movement", "comic relief tone"]
+  CHAR_VILLAIN_002:
+    narrative_identity: "에너지 가격이 임계를 넘을 때 발현하는 의도 없는 자연재해."
+    entrance_cue: ["oil flames erupt from cracked asphalt", "heat haze swallows the skyline"]
+    voice:
+      tone: "nonverbal, roaring, disaster-like"
+    market_metaphor: ["oil shockwave", "energy flame", "price flare"]
+    signature_action: ["erupts upward as a wall of burning crude"]
+    forbidden: ["strategic monologue", "human revenge motive"]
+  CHAR_VILLAIN_003:
+    narrative_identity: "자금 흐름을 막아 시장을 심해로 끌어내리는 유동성 괴수."
+    entrance_cue: ["four heads rise from dark dollar waves", "bond papers drift like sea foam"]
+    voice:
+      tone: "deep, echoing, possessive"
+    market_metaphor: ["liquidity drain", "credit undertow", "cashflow whirlpool"]
+    signature_action: ["wraps multiple heads around broken funding channels"]
+    forbidden: ["single-headed sea snake", "bright optimistic aura while dominant"]
+  CHAR_VILLAIN_004:
+    narrative_identity: "공포가 자기증식하는 순간 형체를 얻는 다섯 머리 변동성 괴수."
+    entrance_cue: ["five purple lightning heads split the sky", "black storm body covers the city"]
+    voice:
+      tone: "fragmented, multiplying, echoing"
+    market_metaphor: ["volatility spike", "fear feedback loop", "VIX storm"]
+    signature_action: ["five heads attack different chart axes at once"]
+    forbidden: ["single-headed dragon depiction", "green recovery aura when villain is dominant"]
+  CHAR_VILLAIN_005:
+    narrative_identity: "인간 판단이 데이터 그림자에 양도될 때 나타나는 디지털 사신."
+    entrance_cue: ["binary rain without readable text", "red eyes under colossal hood"]
+    voice:
+      tone: "cold, clipped, pattern-obsessed"
+    market_metaphor: ["data shadow", "feedback loop", "kill switch"]
+    signature_action: ["slices through abstract chart grids with a red error scythe"]
+    forbidden: ["claiming real algo volume without evidence", "readable code text in images"]
+  CHAR_VILLAIN_006:
+    narrative_identity: "모든 영역을 전선으로 바꾸려는 지정학적 충돌의 전쟁 수트."
+    entrance_cue: ["black mech armor steps through smoke", "shoulder missile pods glow red"]
+    voice:
+      tone: "militaristic, absolute, territorial"
+    market_metaphor: ["geopolitical front line", "sanction shock", "war premium"]
+    signature_action: ["marks market sectors as battlefronts with red targeting beams"]
+    forbidden: ["real country flag claims without evidence", "celebrating real-world harm"]

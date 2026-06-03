@@ -216,6 +216,49 @@ def _get_chart_direction(outcome: str | None) -> str:
     return f"CHART DIRECTION RULE ({outcome}): {direction}"
 
 
+def _get_local_canon_designs(char_ids: list[str]) -> str:
+    """Fallback visual canon cards from config/characters.yaml canon_prompts."""
+    if not char_ids:
+        return ""
+    try:
+        import yaml
+
+        canon_path = Path("config/characters.yaml")
+        if not canon_path.exists():
+            return ""
+        canon = yaml.safe_load(canon_path.read_text(encoding="utf-8")) or {}
+        prompts = canon.get("canon_prompts", {}) or {}
+        heroes = canon.get("heroes", {}) or {}
+        villains = canon.get("villains", {}) or {}
+        blocks: list[str] = []
+        for char_id in char_ids:
+            card = prompts.get(char_id) or {}
+            if not card:
+                continue
+            entry = heroes.get(char_id) or villains.get(char_id) or {}
+            name = entry.get("name_en") or entry.get("name_ko") or char_id
+            blocks.append(f"== LOCAL CANON DESIGN: {name} ==")
+            if card.get("narrative_identity"):
+                blocks.append(f"Identity: {card['narrative_identity']}")
+            for key, label in (
+                ("entrance_cue", "Entrance Cue"),
+                ("market_metaphor", "Market Metaphor"),
+                ("signature_action", "Signature Action"),
+                ("forbidden", "Forbidden Visuals — HARD ERRORS"),
+            ):
+                vals = card.get(key) or []
+                if vals:
+                    blocks.append(f"{label}: {'; '.join(vals)}")
+            panel_rules = card.get("panel_rules") or {}
+            if panel_rules:
+                blocks.append("Panel Rules: " + "; ".join(f"{k}={v}" for k, v in panel_rules.items()))
+            blocks.append(f"== END LOCAL CANON DESIGN: {name} ==")
+        return "\n".join(blocks)
+    except Exception as exc:
+        logger.warning("[prompt_builder] local canon design 로드 실패 (무시): %s", exc)
+        return ""
+
+
 def _get_char_designs(char_ids: list[str]) -> str:
     """
     등장 캐릭터 외형 명세 블록 생성.
@@ -228,15 +271,15 @@ def _get_char_designs(char_ids: list[str]) -> str:
 
         specs = load_char_design_blocks(char_ids)
         if not specs:
-            return ""
+            return _get_local_canon_designs(char_ids)
         blocks = []
         for char_id in char_ids:
             if char_id in specs:
                 blocks.append(char_design_to_prompt_block(char_id, specs[char_id]))
         return "\n\n".join(blocks)
     except Exception as exc:
-        logger.warning("[prompt_builder] CHAR_DESIGN 로드 실패 (무시): %s", exc)
-        return ""
+        logger.warning("[prompt_builder] CHAR_DESIGN 로드 실패 (local canon fallback): %s", exc)
+        return _get_local_canon_designs(char_ids)
 
 
 def _tone_hint(panel_type: str, key_text: str, narration: str) -> str:

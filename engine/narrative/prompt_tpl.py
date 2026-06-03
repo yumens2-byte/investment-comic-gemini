@@ -42,6 +42,86 @@ def _load_canon() -> dict:
         }
 
 
+def _canon_prompt_for(canon: dict, char_id: str) -> dict:
+    """Return character canon prompt card from nested or top-level canon config."""
+    heroes = canon.get("heroes", {}) or {}
+    villains = canon.get("villains", {}) or {}
+    entry = heroes.get(char_id) or villains.get(char_id) or {}
+    top_level = (canon.get("canon_prompts", {}) or {}).get(char_id, {})
+    card = dict(top_level)
+    card.update(entry.get("canon_prompt") or {})
+    if not card:
+        return {}
+    return card
+
+
+def build_active_character_cards(
+    *,
+    canon: dict,
+    hero_ids: list[str],
+    villain_id: str | None = None,
+    neutral_guest_ids: list[str] | None = None,
+) -> list[dict]:
+    """Build compact narrative/visual canon cards for active characters."""
+    cards: list[dict] = []
+    heroes = canon.get("heroes", {}) or {}
+    villains = canon.get("villains", {}) or {}
+    neutral_guest_ids = neutral_guest_ids or []
+    ordered_ids = [*hero_ids]
+    if villain_id:
+        ordered_ids.append(villain_id)
+    ordered_ids.extend(neutral_guest_ids)
+
+    seen: set[str] = set()
+    for char_id in ordered_ids:
+        if not char_id or char_id in seen:
+            continue
+        seen.add(char_id)
+        entry = heroes.get(char_id) or villains.get(char_id) or {}
+        canon_prompt = _canon_prompt_for(canon, char_id)
+        if not canon_prompt:
+            continue
+        cards.append({
+            "char_id": char_id,
+            "name_ko": entry.get("name_ko", canon_prompt.get("name_ko", char_id)),
+            "name_en": entry.get("name_en", canon_prompt.get("name_en", char_id)),
+            "narrative_identity": canon_prompt.get("narrative_identity", ""),
+            "entrance_cue": canon_prompt.get("entrance_cue", []),
+            "voice": canon_prompt.get("voice", {}),
+            "market_metaphor": canon_prompt.get("market_metaphor", []),
+            "signature_action": canon_prompt.get("signature_action", []),
+            "forbidden": canon_prompt.get("forbidden", []),
+            "panel_rules": canon_prompt.get("panel_rules", {}),
+        })
+    return cards
+
+
+def _append_character_cards_fallback(rendered: str, cards: list[dict] | None) -> str:
+    """Append character canon cards if runtime template has not been updated."""
+    if not cards or "Active Character Canon Cards" in rendered:
+        return rendered
+    lines = ["", "## Active Character Canon Cards (Pilot — CANON PROMPT LOCK)"]
+    for card in cards:
+        voice = card.get("voice") or {}
+        lines.append(f"### {card.get('char_id')} — {card.get('name_ko') or card.get('name_en')}")
+        if card.get("narrative_identity"):
+            lines.append(f"- narrative_identity: {card['narrative_identity']}")
+        if voice:
+            tone = voice.get("tone", "") if isinstance(voice, dict) else str(voice)
+            catchphrases = voice.get("catchphrases", []) if isinstance(voice, dict) else []
+            lines.append(f"- voice_tone: {tone}")
+            if catchphrases:
+                lines.append(f"- catchphrases: {'; '.join(catchphrases)}")
+        for key in ("entrance_cue", "market_metaphor", "signature_action", "forbidden"):
+            vals = card.get(key) or []
+            if vals:
+                lines.append(f"- {key}: {'; '.join(vals)}")
+        panel_rules = card.get("panel_rules") or {}
+        if panel_rules:
+            lines.append("- panel_rules: " + "; ".join(f"{k}={v}" for k, v in panel_rules.items()))
+    return rendered + "\n" + "\n".join(lines)
+
+
 def _make_jinja_env_from_string(template_str: str) -> Environment:
     env = Environment(
         loader=DictLoader({"narrative_user.j2": template_str}),
@@ -139,6 +219,7 @@ def render_user_prompt(
     # ── Narrative enrichment pilot (2026-06-01) ───────────────────────────────
     narrative_context_pack: dict | None = None,
     story_beat_plan: dict | None = None,
+    active_character_cards: list[dict] | None = None,
 ) -> str:
     """
     Notion에서 로드한 narrative_user 템플릿 렌더링.
@@ -164,6 +245,7 @@ def render_user_prompt(
         villain_belief:          v2.3 — 빌런 belief 6요소 dict (Oil Shock은 4요소).
         narrative_context_pack:  파일럿 — 시장/뉴스/이벤트 압축 컨텍스트.
         story_beat_plan:         파일럿 — 8컷 서사 설계도.
+        active_character_cards:  캐릭터별 카논 프롬프트 카드.
 
     Returns:
         렌더링된 사용자 프롬프트 문자열.
@@ -191,6 +273,20 @@ def render_user_prompt(
             hero_belief = hero_entry.get("belief") or {}
         if villain_belief is None:
             villain_belief = villain_entry.get("belief") or {}
+
+    if active_character_cards is None:
+        import os
+
+        if os.environ.get("CHARACTER_CANON_PROMPT_V2_ENABLED", "false").lower() == "true":
+            neutral_guest_ids = []
+            active_character_cards = build_active_character_cards(
+                canon=canon,
+                hero_ids=heroes,
+                villain_id=villain_id if scenario_type != "NO_BATTLE" else None,
+                neutral_guest_ids=neutral_guest_ids,
+            )
+        else:
+            active_character_cards = []
 
     env = _make_jinja_env_from_string(template_str)
     template = env.get_template("narrative_user.j2")
@@ -220,9 +316,11 @@ def render_user_prompt(
         villain_belief=villain_belief,
         narrative_context_pack=narrative_context_pack or {},
         story_beat_plan=story_beat_plan or {},
+        active_character_cards=active_character_cards or [],
     )
     rendered = _append_narrative_context_fallback(rendered, narrative_context_pack)
     rendered = _append_story_beat_plan_fallback(rendered, story_beat_plan)
+    rendered = _append_character_cards_fallback(rendered, active_character_cards)
     return rendered
 
 
