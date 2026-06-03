@@ -1,0 +1,107 @@
+from engine.persist.asset_writer import (
+    character_selection_candidate_rows,
+    character_selection_summary,
+)
+from scripts.run_market import _build_episode_asset_payload
+
+
+def _ctx() -> dict:
+    return {
+        "event_type": "BATTLE",
+        "scenario_type": "ONE_VS_ONE",
+        "risk_level": "MEDIUM",
+        "hero_id": "CHAR_HERO_003",
+        "battle_result": {"outcome": "DRAW", "balance": 0},
+        "heroes": ["CHAR_HERO_003"],
+        "active_character_cards": [{"char_id": "CHAR_HERO_003"}],
+        "character_selection": {
+            "version": "character-appearance-v2",
+            "scenario_type": "ONE_VS_ONE",
+            "event_type": "BATTLE",
+            "risk_level": "MEDIUM",
+            "primary_hero": "CHAR_HERO_003",
+            "support_heroes": [],
+            "heroes": ["CHAR_HERO_003"],
+            "primary_villain": "CHAR_VILLAIN_002",
+            "neutral_guests": [{"char_id": "SENTINEL_YIELD", "role": "WARNER"}],
+            "selection_reason": "ONE_VS_ONE selected by score",
+            "all_candidates": [
+                {
+                    "char_id": "CHAR_HERO_003",
+                    "faction": "HERO",
+                    "role": "PRIMARY_HERO",
+                    "appear": True,
+                    "score": 105,
+                    "threshold": 60,
+                    "rank": 1,
+                    "reasons": ["WTI pct >= 8 calls Leverage"],
+                    "score_breakdown": {"oil_pct_lv2": 50},
+                    "metrics_used": {"WTI.pct": 8.2},
+                },
+                {
+                    "char_id": "CHAR_VILLAIN_002",
+                    "faction": "VILLAIN",
+                    "role": "PRIMARY_ANTAGONIST",
+                    "appear": True,
+                    "score": 95,
+                    "threshold": 60,
+                    "rank": 1,
+                    "reasons": ["WTI pct >= 8 Oil Shock high trigger"],
+                    "score_breakdown": {"wti_pct_lv2": 60},
+                    "metrics_used": {"WTI.pct": 8.2},
+                },
+            ],
+        },
+    }
+
+
+def test_character_selection_summary_extracts_reporting_fields():
+    summary = character_selection_summary(_ctx())
+
+    assert summary["character_selector_version"] == "character-appearance-v2"
+    assert summary["character_selector_mode"] == "scored"
+    assert summary["selected_hero_id"] == "CHAR_HERO_003"
+    assert summary["selected_villain_id"] == "CHAR_VILLAIN_002"
+    assert summary["top_hero_score"] == 105
+    assert summary["top_villain_score"] == 95
+    assert summary["neutral_guest_count"] == 1
+    assert summary["character_selection_reason"] == "ONE_VS_ONE selected by score"
+
+
+def test_character_selection_candidate_rows_flatten_candidates():
+    rows = character_selection_candidate_rows("2026-06-03", "BATTLE", _ctx())
+
+    assert len(rows) == 2
+    hero = next(row for row in rows if row["faction"] == "HERO")
+    villain = next(row for row in rows if row["faction"] == "VILLAIN")
+    assert hero["selected"] is True
+    assert villain["selected"] is True
+    assert hero["score_breakdown"] == {"oil_pct_lv2": 50}
+    assert villain["metrics_used"] == {"WTI.pct": 8.2}
+
+
+def test_episode_asset_payload_excludes_character_snapshot_by_default(monkeypatch):
+    monkeypatch.setenv("CHARACTER_SELECTION_ASSET_SNAPSHOT_ENABLED", "false")
+
+    payload = _build_episode_asset_payload(
+        "ICG-2026-06-03-001",
+        _ctx(),
+        {"title": "테스트", "panels": []},
+    )
+
+    assert "character_selection_json" not in payload
+    assert "active_character_cards_json" not in payload
+    assert payload["heroes_json"] == ["CHAR_HERO_003"]
+
+
+def test_episode_asset_payload_includes_character_snapshot_when_enabled(monkeypatch):
+    monkeypatch.setenv("CHARACTER_SELECTION_ASSET_SNAPSHOT_ENABLED", "true")
+
+    payload = _build_episode_asset_payload(
+        "ICG-2026-06-03-001",
+        _ctx(),
+        {"title": "테스트", "panels": []},
+    )
+
+    assert payload["character_selection_json"]["primary_hero"] == "CHAR_HERO_003"
+    assert payload["active_character_cards_json"] == [{"char_id": "CHAR_HERO_003"}]
