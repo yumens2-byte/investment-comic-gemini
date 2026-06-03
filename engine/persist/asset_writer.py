@@ -180,6 +180,128 @@ def set_failed(episode_date: str, event_type: str, error_message: str) -> None:
     )
 
 
+def _top_candidate(selection: dict, faction: str) -> dict:
+    """Return highest-ranked/highest-score candidate for a faction."""
+    candidates = [
+        c for c in selection.get("all_candidates", [])
+        if isinstance(c, dict) and c.get("faction") == faction
+    ]
+    if not candidates:
+        return {}
+    return sorted(
+        candidates,
+        key=lambda c: (
+            c.get("rank") is None,
+            c.get("rank") or 9999,
+            -(c.get("score") or 0),
+        ),
+    )[0]
+
+
+def character_selection_summary(ctx: dict) -> dict:
+    """Build reporting-safe daily_analysis summary fields from ctx.character_selection."""
+    selection = ctx.get("character_selection") or {}
+    if not isinstance(selection, dict) or not selection:
+        return {
+            "character_selection": {},
+            "character_selector_version": None,
+            "character_selector_mode": None,
+            "selected_hero_id": None,
+            "selected_villain_id": None,
+            "support_heroes_json": [],
+            "neutral_guests_json": [],
+            "top_hero_score": None,
+            "top_villain_score": None,
+            "neutral_guest_count": 0,
+            "character_selection_reason": None,
+        }
+
+    version = selection.get("version")
+    top_hero = _top_candidate(selection, "HERO")
+    top_villain = _top_candidate(selection, "VILLAIN")
+    neutral_guests = selection.get("neutral_guests") or []
+    if not isinstance(neutral_guests, list):
+        neutral_guests = []
+
+    return {
+        "character_selection": selection,
+        "character_selector_version": version,
+        "character_selector_mode": (
+            "scored" if version == "character-appearance-v2" else "legacy-trace"
+        ),
+        "selected_hero_id": selection.get("primary_hero"),
+        "selected_villain_id": selection.get("primary_villain"),
+        "support_heroes_json": selection.get("support_heroes") or [],
+        "neutral_guests_json": neutral_guests,
+        "top_hero_score": top_hero.get("score"),
+        "top_villain_score": top_villain.get("score"),
+        "neutral_guest_count": len(neutral_guests),
+        "character_selection_reason": selection.get("selection_reason"),
+    }
+
+
+def character_selection_candidate_rows(
+    episode_date: str,
+    event_type: str,
+    ctx: dict,
+) -> list[dict]:
+    """Flatten ctx.character_selection.all_candidates into candidate fact rows."""
+    selection = ctx.get("character_selection") or {}
+    if not isinstance(selection, dict):
+        return []
+
+    selected_ids = {selection.get("primary_hero"), selection.get("primary_villain")}
+    selected_ids.update(selection.get("support_heroes") or [])
+    selected_ids.discard(None)
+
+    rows: list[dict] = []
+    for candidate in selection.get("all_candidates") or []:
+        if not isinstance(candidate, dict) or not candidate.get("char_id"):
+            continue
+        rows.append({
+            "analysis_date": episode_date,
+            "event_type": event_type,
+            "scenario_type": selection.get("scenario_type") or ctx.get("scenario_type"),
+            "risk_level": selection.get("risk_level") or ctx.get("risk_level"),
+            "selector_version": selection.get("version"),
+            "char_id": candidate.get("char_id"),
+            "faction": candidate.get("faction"),
+            "role": candidate.get("role"),
+            "appear": bool(candidate.get("appear")),
+            "selected": candidate.get("char_id") in selected_ids,
+            "score": candidate.get("score") or 0,
+            "threshold": candidate.get("threshold") or 0,
+            "rank": candidate.get("rank"),
+            "reasons": candidate.get("reasons") or [],
+            "score_breakdown": candidate.get("score_breakdown") or {},
+            "metrics_used": candidate.get("metrics_used") or {},
+        })
+    return rows
+
+
+def save_character_selection_candidates(
+    episode_date: str,
+    event_type: str,
+    ctx: dict,
+) -> None:
+    """Persist candidate-level selection facts when the optional table exists."""
+    rows = character_selection_candidate_rows(episode_date, event_type, ctx)
+    if not rows:
+        return
+
+    from engine.common.supabase_client import icg_table
+
+    icg_table("character_selection_candidates").upsert(
+        rows,
+        on_conflict="analysis_date,event_type,char_id,faction",
+    ).execute()
+    logger.info(
+        "[asset_writer] character_selection_candidates 저장 완료 date=%s rows=%d",
+        episode_date,
+        len(rows),
+    )
+
+
 def save_analysis_ctx(episode_date: str, event_type: str, ctx: dict) -> None:
     """
     step_analysis 결과 ctx를 daily_analysis.analysis_ctx_json에 저장.
@@ -194,14 +316,36 @@ def save_analysis_ctx(episode_date: str, event_type: str, ctx: dict) -> None:
     """
     from engine.common.supabase_client import icg_table
 
-    icg_table("daily_analysis").update(
-        {"analysis_ctx_json": ctx}
-    ).eq("analysis_date", episode_date).execute()
+    payload = {"analysis_ctx_json": ctx}
+    payload.update(character_selection_summary(ctx))
+
+    try:
+        icg_table("daily_analysis").update(payload).eq(
+            "analysis_date", episode_date
+        ).execute()
+    except Exception as exc:
+        # Backward compatibility: allow code rollout before the observability migration.
+        logger.warning(
+            "[asset_writer] character_selection summary 저장 실패 — "
+            "analysis_ctx_json only fallback: %s",
+            exc,
+        )
+        icg_table("daily_analysis").update({"analysis_ctx_json": ctx}).eq(
+            "analysis_date", episode_date
+        ).execute()
+
+    try:
+        save_character_selection_candidates(episode_date, event_type, ctx)
+    except Exception as exc:
+        logger.warning(
+            "[asset_writer] character_selection_candidates 저장 실패 (진행): %s", exc
+        )
 
     logger.info(
-        "[asset_writer] analysis_ctx_json 저장 완료 date=%s type=%s",
+        "[asset_writer] analysis_ctx_json 저장 완료 date=%s type=%s character_selection=%s",
         episode_date,
         event_type,
+        bool(ctx.get("character_selection")),
     )
 
 

@@ -813,6 +813,23 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
         raise
 
 
+def _build_episode_asset_payload(episode_id: str, ctx: dict, script_dict: dict) -> dict:
+    """Build episode_assets payload with optional character selection snapshots."""
+    payload = {
+        "episode_no": int(episode_id.split("-")[-1]),
+        "title": script_dict.get("title", ""),
+        "script_json": script_dict,
+        "battle_json": ctx["battle_result"],
+        "status": "narrative_done",
+        "scenario_type": ctx.get("scenario_type", "ONE_VS_ONE"),
+        "heroes_json": ctx.get("heroes", [ctx["hero_id"]]),
+    }
+    if os.environ.get("CHARACTER_SELECTION_ASSET_SNAPSHOT_ENABLED", "false").lower() == "true":
+        payload["character_selection_json"] = ctx.get("character_selection", {})
+        payload["active_character_cards_json"] = ctx.get("active_character_cards", [])
+    return payload
+
+
 def step_persist(
     episode_date: str, episode_id: str, ctx: dict, script_dict: dict, logger_inst
 ) -> None:
@@ -825,16 +842,7 @@ def step_persist(
         asset_upsert(
             episode_date,
             ctx["event_type"],
-            {
-                "episode_no": int(episode_id.split("-")[-1]),
-                "title": script_dict.get("title", ""),
-                "script_json": script_dict,
-                "battle_json": ctx["battle_result"],
-                "status": "narrative_done",
-                # v2.0 신규 필드 (episode_assets에 컬럼 추가됨)
-                "scenario_type": ctx.get("scenario_type", "ONE_VS_ONE"),
-                "heroes_json":   ctx.get("heroes", [ctx["hero_id"]]),
-            },
+            _build_episode_asset_payload(episode_id, ctx, script_dict),
         )
 
         create_or_update(
