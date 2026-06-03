@@ -313,6 +313,7 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
         scenario_type_v2 = "ONE_VS_ONE"
         ending_tone_v2   = "TENSE"
         heroes_v2: list[str] = [hero_id_base]
+        character_selection_trace: dict = {}
         hero_id   = hero_id_base
         villain_id = villain_id_base
         # ARC_STATE_V3 + EPISODE_TYPE_V3 초기값 (2026-05-02)
@@ -406,6 +407,43 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                 villain_id = villain_id_base
                 heroes_v2  = [hero_id]
 
+            # -- STEP 3-4b: Character Appearance v2 점수 기반 재선정 ----------
+            if os.environ.get("CHARACTER_APPEARANCE_V2_ENABLED", "false").lower() == "true":
+                try:
+                    from engine.narrative.character_appearance_engine import (
+                        resolve_character_selection,
+                    )
+
+                    _selection = resolve_character_selection(
+                        delta=delta,
+                        event_type=event_type,
+                        scenario_type=scenario_type_v2,
+                        risk_level=risk_level_v2,
+                        base_hero_id=hero_id_base,
+                        base_villain_id=villain_id_base,
+                        arc_context=arc_context,
+                        curr_row=curr_row,
+                        recent_outcomes=_load_recent_outcomes(episode_date, limit=3),
+                    )
+                    character_selection_trace = _selection.to_dict()
+                    hero_id = _selection.primary_hero
+                    heroes_v2 = _selection.heroes
+                    if scenario_type_v2 == "NO_BATTLE":
+                        # legacy persistence compatibility: battle_json still carries a villain_id,
+                        # while character_selection.primary_villain explicitly records None.
+                        villain_id = villain_id_base
+                    else:
+                        villain_id = _selection.primary_villain or villain_id_base
+                    logger.info(
+                        "[Step 3-4b] character_appearance_v2 hero=%s heroes=%s villain=%s reason=%s",
+                        hero_id, heroes_v2, villain_id, _selection.selection_reason,
+                    )
+                except Exception as _sel_exc:
+                    logger.warning(
+                        "[Step 3-4b] character_appearance_v2 실패 (기존 선택 유지): %s",
+                        _sel_exc,
+                    )
+
         # ── characters.yaml base_power 로드 (공통) ─────────────────────────────
         canon = yaml.safe_load(Path("config/characters.yaml").read_text(encoding="utf-8"))
         try:
@@ -480,7 +518,32 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                 villain_base=villain_base,
                 market_context=market_ctx,
                 arc_context=arc_context,
+                form_bonus=(
+                    _form_bonus_v3
+                    if os.environ.get("FORM_BONUS_PIPELINE_ENABLED", "false").lower() == "true"
+                    else 0
+                ),
             )
+
+        # ── STEP 3-5b: Phase 2.3 Battle Modifier 파이프라인 연결 ─────────────
+        if (
+            os.environ.get("BATTLE_V23_PIPELINE_ENABLED", "false").lower() == "true"
+            and scenario_type_v2 != "NO_BATTLE"
+        ):
+            try:
+                from engine.narrative.battle_calc import apply_v23_modifiers
+
+                _episode_for_modifier = _episode_type_v3 or event_type
+                before_balance = battle_result.balance
+                battle_result = apply_v23_modifiers(
+                    battle_result, arc_context, _episode_for_modifier
+                )
+                logger.info(
+                    "[Step 3-5b] battle_v23 modifiers episode=%s balance=%d→%d outcome=%s",
+                    _episode_for_modifier, before_balance, battle_result.balance, battle_result.outcome,
+                )
+            except Exception as _mod_exc:
+                logger.warning("[Step 3-5b] battle_v23 modifier 실패 (원본 유지): %s", _mod_exc)
 
         # ── STEP 3-6/7: outcome + ending_tone 결정 ────────────────────────────
         if _scenario_v2:
@@ -516,6 +579,18 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                     curr_row, _story_state, _guest_characters
                 )
                 # sl 사용 → run.log NDJSON 기록 보장 (logger.info는 StepLogger 미기록)
+                if (
+                    os.environ.get("NEUTRAL_GUEST_SCORING_ENABLED", "false").lower() == "true"
+                    and character_selection_trace.get("neutral_guests")
+                ):
+                    _guest_characters = [
+                        (g["char_id"], g["role"])
+                        for g in character_selection_trace.get("neutral_guests", [])
+                        if g.get("appear")
+                    ]
+                    _guest_prompt = build_guest_character_prompt(
+                        curr_row, _story_state, _guest_characters
+                    )
                 _guest_names = [f"{c}({r})" for c, r in _guest_characters] or ["없음"]
                 logger_inst.info(
                     "STEP_3",
@@ -550,6 +625,29 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
             except Exception as _exc:
                 logger.warning("[Step 3-8] v2.0 필드 DB 업데이트 실패 (진행): %s", _exc)
 
+        if (
+            not character_selection_trace
+            and os.environ.get("CHARACTER_RULE_TRACE_ENABLED", "true").lower() == "true"
+        ):
+            character_selection_trace = {
+                "version": "legacy-trace",
+                "scenario_type": scenario_type_v2,
+                "event_type": event_type,
+                "risk_level": risk_level_v2,
+                "primary_hero": hero_id,
+                "support_heroes": [h for h in heroes_v2 if h != hero_id],
+                "heroes": heroes_v2,
+                "primary_villain": None if scenario_type_v2 == "NO_BATTLE" else villain_id,
+                "neutral_guests": [
+                    {"char_id": c, "role": r, "faction": "NEUTRAL", "appear": True}
+                    for c, r in _guest_characters
+                ],
+                "selection_reason": (
+                    "legacy selector trace; enable CHARACTER_APPEARANCE_V2_ENABLED "
+                    "for scored candidate breakdown"
+                ),
+            }
+
         # ── ctx 조립 ────────────────────────────────────────────────────────────
         ctx = {
             "event_type":   event_type,
@@ -573,7 +671,21 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
             # EPISODE_TYPE_V3 신규 필드 (2026-05-02)
             "episode_type_v3": _episode_type_v3,
             "form_bonus":      _form_bonus_v3,
+            "character_selection": character_selection_trace,
         }
+
+        if os.environ.get("CHARACTER_CANON_PROMPT_V2_ENABLED", "false").lower() == "true":
+            try:
+                from engine.narrative.prompt_tpl import build_active_character_cards
+
+                ctx["active_character_cards"] = build_active_character_cards(
+                    canon=canon,
+                    hero_ids=heroes_v2,
+                    villain_id=(None if scenario_type_v2 == "NO_BATTLE" else villain_id),
+                    neutral_guest_ids=[c for c, _ in _guest_characters],
+                )
+            except Exception as _card_exc:
+                logger.warning("[step_analysis] active character cards 생성 실패 (진행): %s", _card_exc)
 
         # ── Narrative Context Pilot: 데이터/스토리 고도화 컨텍스트 생성 ─────────
         if os.environ.get("NARRATIVE_CONTEXT_ENABLED", "false").lower() == "true":
@@ -668,6 +780,7 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
             # Narrative Context Pilot (2026-06-01)
             narrative_context_pack=ctx.get("narrative_context_pack"),
             story_beat_plan=ctx.get("story_beat_plan"),
+            active_character_cards=ctx.get("active_character_cards"),
         )
         script_dict = script.model_dump()
 
