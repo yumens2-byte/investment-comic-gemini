@@ -240,7 +240,29 @@ def step_data(episode_date: str, logger_inst) -> None:
         crypto = crypto_fetcher.fetch_all(episode_date)
         sentiment = sentiment_fetcher.fetch_all(episode_date)
 
-        upsert(episode_date, fred, market, fg, crypto, sentiment)
+        extended_data: dict = {}
+        if os.environ.get("MARKET_DATA_EXTENDED_ENABLED", "false").lower() == "true":
+            try:
+                from engine.data import sector_fetcher
+
+                extended_data.update(
+                    sector_fetcher.fetch_all(
+                        episode_date,
+                        spy_change=market.get("spy_change"),
+                    )
+                )
+                logger_inst.info(
+                    "STEP_2",
+                    "[MarketDataExtended] sector_heatmap 수집 완료 "
+                    f"coverage={extended_data.get('sector_heatmap', {}).get('coverage', 0):.0%}",
+                )
+            except Exception as _ext_exc:
+                logger_inst.warning(
+                    "STEP_2",
+                    f"[MarketDataExtended] 확장 데이터 수집 실패 (파이프라인 계속): {_ext_exc}",
+                )
+
+        upsert(episode_date, fred, market, fg, crypto, sentiment, extended_data or None)
         logger_inst.step_done("STEP_2", ts, "daily_snapshots upsert 완료")
     except Exception as exc:
         logger_inst.step_fail("STEP_2", ts, exc)
@@ -280,6 +302,48 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
         prev_row = rows[1] if len(rows) > 1 else None
 
         delta = compute(curr_row, prev_row)
+
+        signal_pack: dict | None = None
+        risk_trace_v3: dict | None = None
+        if os.environ.get("SIGNAL_PACK_V1_ENABLED", "false").lower() == "true":
+            try:
+                from engine.analysis.signal_pack_builder import build_signal_pack
+
+                signal_pack = build_signal_pack(delta, curr_row)
+                logger_inst.info(
+                    "STEP_3",
+                    "[SignalPack] 생성 완료 "
+                    f"signals={len(signal_pack.get('signals', []))} "
+                    f"confidence={signal_pack.get('data_confidence', 0):.2f}",
+                )
+            except Exception as _sig_exc:
+                logger_inst.warning(
+                    "STEP_3",
+                    f"[SignalPack] 생성 실패 (파이프라인 계속): {_sig_exc}",
+                )
+                signal_pack = None
+
+        if (
+            signal_pack is not None
+            and os.environ.get("RISK_SCORE_V3_ENABLED", "false").lower() == "true"
+        ):
+            try:
+                from engine.analysis.risk_score_engine import compute as compute_risk_score
+
+                risk_trace_v3 = compute_risk_score(signal_pack)
+                logger_inst.info(
+                    "STEP_3",
+                    "[RiskScoreV3] "
+                    f"risk={risk_trace_v3.get('risk_level')} "
+                    f"score={risk_trace_v3.get('risk_score', 0):.2f} "
+                    f"dominant={risk_trace_v3.get('dominant_domain')}",
+                )
+            except Exception as _risk_exc:
+                logger_inst.warning(
+                    "STEP_3",
+                    f"[RiskScoreV3] 계산 실패 (legacy risk 유지): {_risk_exc}",
+                )
+                risk_trace_v3 = None
 
         # -- ARC_STATE_V3: arc_context 동적 로드 (2026-05-02) ----------------
         _arc_v3 = os.environ.get("ARC_STATE_V3_ENABLED", "false").lower() == "true"
@@ -323,7 +387,11 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
         if _scenario_v2:
             # ── STEP 3-2: risk_level 산출 (delta 기반 자체 계산) ──────────────
             from engine.narrative.scenario_selector import compute_risk_level_from_delta
-            risk_level_v2 = compute_risk_level_from_delta(delta)
+            risk_level_v2 = (
+                str(risk_trace_v3.get("risk_level"))
+                if risk_trace_v3 is not None and risk_trace_v3.get("risk_level")
+                else compute_risk_level_from_delta(delta)
+            )
             logger.info("[Step 3-2] risk_level=%s", risk_level_v2)
 
             # ── STEP 3-3: scenario 결정 ────────────────────────────────────────
@@ -558,8 +626,46 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                 battle_result.outcome, ending_tone_v2,
             )
 
-        # ── analysis_upsert (기존 시그니처 유지) ──────────────────────────────
-        analysis_upsert(episode_date, event_type, battle_result.to_dict(), delta, arc_context)
+        # ── analysis_upsert (기존 시그니처 유지 + v3 관측성 옵션) ─────────────
+        _sector_rank: list[dict] | None = None
+        _watch_areas: list[str] | None = None
+        _caution_areas: list[str] | None = None
+        if signal_pack is not None:
+            _sector_signals = signal_pack.get("by_domain", {}).get("sector", [])
+            _ranked_sectors = sorted(
+                [s for s in _sector_signals if s.get("change_pct") is not None],
+                key=lambda s: float(s.get("change_pct") or 0),
+                reverse=True,
+            )
+            if _ranked_sectors:
+                _sector_rank = [
+                    {
+                        "symbol": s.get("symbol"),
+                        "name": s.get("name"),
+                        "change_pct": s.get("change_pct"),
+                        "relative_pct": s.get("relative_pct"),
+                        "state": s.get("state"),
+                    }
+                    for s in _ranked_sectors
+                ]
+                _watch_areas = [str(s.get("name") or s.get("symbol")) for s in _ranked_sectors[:3]]
+                _caution_areas = [
+                    str(s.get("name") or s.get("symbol"))
+                    for s in list(reversed(_ranked_sectors[-3:]))
+                ]
+
+        analysis_upsert(
+            episode_date,
+            event_type,
+            battle_result.to_dict(),
+            delta,
+            arc_context,
+            formula_trace=risk_trace_v3,
+            risk_drivers=(risk_trace_v3 or {}).get("risk_drivers") if risk_trace_v3 else None,
+            sector_rank=_sector_rank,
+            watch_areas=_watch_areas,
+            caution_areas=_caution_areas,
+        )
 
         # ── STEP 3-Story: 게스트 캐릭터 판단 (2026-04-22 보정) ─────────────────
         # SCENARIO_V2_ENABLED=true 일 때만 실행. engine.character.* 엔진 활성화.
@@ -672,6 +778,8 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
             "episode_type_v3": _episode_type_v3,
             "form_bonus":      _form_bonus_v3,
             "character_selection": character_selection_trace,
+            "signal_pack": signal_pack,
+            "risk_trace_v3": risk_trace_v3,
         }
 
         if os.environ.get("CHARACTER_CANON_PROMPT_V2_ENABLED", "false").lower() == "true":
@@ -694,6 +802,9 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                     build_narrative_context_pack,
                 )
 
+                _extended_context = (
+                    os.environ.get("STORY_CONTEXT_EXTENDED_ENABLED", "false").lower() == "true"
+                )
                 _context_pack = build_narrative_context_pack(
                     delta=delta,
                     battle_result=battle_result.to_dict(),
@@ -701,6 +812,9 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                     scenario_type=scenario_type_v2,
                     ending_tone=ending_tone_v2,
                     arc_context=arc_context,
+                    news_items=(curr_row.get("news_items") if _extended_context else None),
+                    economic_events=(curr_row.get("event_calendar") if _extended_context else None),
+                    sector_heatmap=(curr_row.get("sector_heatmap") if _extended_context else None),
                 )
                 ctx["narrative_context_pack"] = _context_pack
 
