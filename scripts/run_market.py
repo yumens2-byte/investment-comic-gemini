@@ -232,7 +232,11 @@ def step_data(episode_date: str, logger_inst) -> None:
             market_fetcher,
             sentiment_fetcher,
         )
-        from engine.data.snapshot_writer import upsert
+        from engine.data.snapshot_writer import (
+            build_snapshot_payload,
+            enforce_critical_quality,
+            upsert,
+        )
 
         fred = fred_fetcher.fetch_all(episode_date)
         market = market_fetcher.fetch_all(episode_date)
@@ -262,7 +266,30 @@ def step_data(episode_date: str, logger_inst) -> None:
                     f"[MarketDataExtended] 확장 데이터 수집 실패 (파이프라인 계속): {_ext_exc}",
                 )
 
+        snapshot_payload = build_snapshot_payload(
+            fred,
+            market,
+            fg,
+            crypto,
+            sentiment,
+            extended_data or None,
+        )
+
+        if os.environ.get("CRITICAL_DATA_GATE_ENABLED", "true").lower() == "true":
+            quality = enforce_critical_quality(
+                snapshot_payload,
+                context=f"STEP_2 date={episode_date}",
+            )
+            logger_inst.info(
+                "STEP_2",
+                "[CriticalDataGate] 통과 "
+                f"missing={len(quality['missing'])} optional={len(quality['optional_missing'])}",
+            )
+        else:
+            logger_inst.warning("STEP_2", "[CriticalDataGate] 비활성화 — 운영 override 적용")
+
         upsert(episode_date, fred, market, fg, crypto, sentiment, extended_data or None)
+
         logger_inst.step_done("STEP_2", ts, "daily_snapshots upsert 완료")
     except Exception as exc:
         logger_inst.step_fail("STEP_2", ts, exc)

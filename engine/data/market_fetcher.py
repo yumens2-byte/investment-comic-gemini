@@ -11,7 +11,7 @@ yfinance 기반 시장 지표 수집.
 개선:
   - timeout=10 으로 단축 (기존 30초 → 10초)
   - ThreadPoolExecutor로 병렬 수집 (총 대기시간 단축)
-  - 실패 시 즉시 None fallback (파이프라인 차단 없음)
+  - 데이터 부족/일시 장애는 3회 재시도 후 None fallback
 """
 
 from __future__ import annotations
@@ -22,46 +22,52 @@ from concurrent.futures import TimeoutError as FuturesTimeoutError
 
 import pandas as pd
 
+from engine.common.retry import api_retry
+
 logger = logging.getLogger(__name__)
 
 # 개별 티커 수집 최대 대기 시간 (초)
 _TICKER_TIMEOUT_SEC = 12
 # 전체 병렬 수집 최대 대기 시간 (초)
-_TOTAL_TIMEOUT_SEC = 20
+_TOTAL_TIMEOUT_SEC = 45
+
+
+@api_retry(max_attempts=3, min_wait=1.0, max_wait=10.0)
+def _download_ticker(ticker: str, period: str) -> pd.DataFrame:
+    """Download one yfinance ticker and retry empty/insufficient responses."""
+    import yfinance as yf
+
+    data = yf.download(
+        ticker,
+        period=period,
+        progress=False,
+        auto_adjust=True,
+        timeout=_TICKER_TIMEOUT_SEC,
+    )
+    if data.empty or len(data) < 2:
+        raise ValueError(f"insufficient yfinance rows for {ticker}: rows={len(data)}")
+    return data
 
 
 def _fetch_ticker_safe(ticker: str, period: str = "5d") -> dict:
     """
     yfinance 단일 티커 수집. timeout + MultiIndex 대응.
-    실패 시 None 딕셔너리 반환 (예외 전파 없음).
+    데이터 부족/일시 장애는 3회 재시도 후 None 딕셔너리 반환.
     """
     try:
-        import yfinance as yf
-
-        # timeout 파라미터로 연결 시간 제한
-        data = yf.download(
-            ticker,
-            period=period,
-            progress=False,
-            auto_adjust=True,
-            timeout=_TICKER_TIMEOUT_SEC,
-        )
-
-        if data.empty or len(data) < 2:
-            logger.warning("[yfinance] %s: 데이터 부족 (rows=%d)", ticker, len(data))
-            return {"close": None, "prev_close": None, "pct_change": None}
+        data = _download_ticker(ticker, period)
 
         # yfinance 0.2.x+: MultiIndex 대응
         if isinstance(data.columns, pd.MultiIndex):
             close_cols = [c for c in data.columns if c[0] == "Close"]
             if not close_cols:
-                return {"close": None, "prev_close": None, "pct_change": None}
+                raise ValueError(f"Close column missing for {ticker}")
             closes = data[close_cols[0]].dropna()
         else:
             closes = data["Close"].dropna()
 
         if len(closes) < 2:
-            return {"close": None, "prev_close": None, "pct_change": None}
+            raise ValueError(f"insufficient close rows for {ticker}: rows={len(closes)}")
 
         curr = float(closes.iloc[-1])
         prev = float(closes.iloc[-2])
@@ -70,7 +76,7 @@ def _fetch_ticker_safe(ticker: str, period: str = "5d") -> dict:
         return {"close": curr, "prev_close": prev, "pct_change": pct}
 
     except Exception as exc:
-        logger.warning("[yfinance] %s 수집 실패: %s", ticker, type(exc).__name__)
+        logger.warning("[yfinance] %s 수집 실패(3회 재시도 후): %s", ticker, type(exc).__name__)
         return {"close": None, "prev_close": None, "pct_change": None}
 
 
@@ -79,7 +85,7 @@ def fetch_all(target_date: str | None = None) -> dict[str, float | None]:
     모든 시장 지표 병렬 수집.
 
     ThreadPoolExecutor로 4개 티커를 동시에 수집.
-    전체 최대 대기 시간: _TOTAL_TIMEOUT_SEC (20초)
+    전체 최대 대기 시간: _TOTAL_TIMEOUT_SEC (45초)
 
     Returns:
         icg.daily_snapshots 컬럼명 → 값 딕셔너리.
