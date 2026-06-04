@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,52 @@ _CRITICAL_FIELDS: tuple[str, ...] = (
     "fear_greed",
 )
 
+# Public aliases for tests, docs, and pipeline gates.
+EXPECTED_FIELDS = _EXPECTED_FIELDS
+EXTENDED_FIELDS = _EXTENDED_FIELDS
+CRITICAL_FIELDS = _CRITICAL_FIELDS
+
 _UNKNOWN_SENTINELS = {"Unknown", "UNKNOWN", ""}
+
+
+class CriticalDataMissingError(RuntimeError):
+    """Raised when a snapshot is unsafe for autopublish because core fields are missing."""
+
+    def __init__(
+        self,
+        critical_missing: list[str],
+        *,
+        context: str = "",
+        quality: dict | None = None,
+    ):
+        self.critical_missing = critical_missing
+        self.context = context
+        self.quality = quality or {}
+        suffix = f" ({context})" if context else ""
+        super().__init__(
+            "CRITICAL market data missing"
+            f"{suffix}: {critical_missing}. "
+            "자동 발행을 중단하고 데이터 소스/Secrets/네트워크를 확인하세요."
+        )
+
+
+def build_snapshot_payload(
+    fred_data: dict,
+    market_data: dict,
+    feargreed_data: dict,
+    crypto_data: dict,
+    sentiment_data: dict,
+    extended_data: dict | None = None,
+) -> dict[str, Any]:
+    """Merge fetcher outputs into the canonical daily_snapshots payload."""
+    return {
+        **fred_data,
+        **market_data,
+        **feargreed_data,
+        **crypto_data,
+        **sentiment_data,
+        **(extended_data or {}),
+    }
 
 
 def _is_missing_quality_value(value: object) -> bool:
@@ -74,6 +120,19 @@ def summarize_quality(payload: dict) -> dict[str, list[str]]:
         "critical_missing": critical_missing,
         "optional_missing": optional_missing,
     }
+
+
+def enforce_critical_quality(payload: dict, *, context: str = "") -> dict[str, list[str]]:
+    """Raise when critical market data needed for autopublish is missing.
+
+    Returns the quality summary when the payload is safe. Callers can log or persist
+    the returned summary without recomputing it.
+    """
+    quality = summarize_quality(payload)
+    critical_missing = quality["critical_missing"]
+    if critical_missing:
+        raise CriticalDataMissingError(critical_missing, context=context, quality=quality)
+    return quality
 
 
 def upsert(
@@ -99,14 +158,14 @@ def upsert(
     """
     from engine.common.supabase_client import upsert_snapshot
 
-    payload: dict = {
-        **fred_data,
-        **market_data,
-        **feargreed_data,
-        **crypto_data,
-        **sentiment_data,
-        **(extended_data or {}),
-    }
+    payload = build_snapshot_payload(
+        fred_data,
+        market_data,
+        feargreed_data,
+        crypto_data,
+        sentiment_data,
+        extended_data,
+    )
 
     # None 값은 Supabase에 그대로 null 저장 (허용)
     upsert_snapshot(snapshot_date, payload)

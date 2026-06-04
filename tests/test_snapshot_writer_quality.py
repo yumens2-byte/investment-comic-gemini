@@ -1,4 +1,6 @@
-from engine.data.snapshot_writer import summarize_quality
+import pytest
+
+from engine.data.snapshot_writer import enforce_critical_quality, summarize_quality
 
 
 def _complete_payload() -> dict:
@@ -53,3 +55,19 @@ def test_summarize_quality_flags_critical_market_missing() -> None:
     summary = summarize_quality(payload)
 
     assert summary["critical_missing"] == ["vix", "fear_greed"]
+
+
+def test_enforce_critical_quality_raises_for_autopublish_blocker() -> None:
+    payload = _complete_payload()
+    payload["spy_change"] = None
+
+    with pytest.raises(RuntimeError, match="CRITICAL market data missing"):
+        enforce_critical_quality(payload, context="STEP_2 date=2026-06-04")
+
+
+def test_enforce_critical_quality_allows_optional_missing() -> None:
+    payload = _complete_payload()
+    payload["btc_social_sentiment"] = None
+    payload["btc_sentiment_state"] = "Unknown"
+
+    enforce_critical_quality(payload, context="optional sentiment missing")
