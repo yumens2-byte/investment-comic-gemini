@@ -33,6 +33,18 @@ _EXPECTED_FIELDS: tuple[str, ...] = (
     "btc_sentiment_state",
 )
 
+_EXTENDED_FIELDS: tuple[str, ...] = (
+    "sector_heatmap",
+    "market_breadth",
+    "rates_detail",
+    "credit_detail",
+    "fx_detail",
+    "commodity_detail",
+    "event_calendar",
+    "news_items",
+    "signal_quality",
+)
+
 _CRITICAL_FIELDS: tuple[str, ...] = (
     "us10y",
     "vix",
@@ -71,6 +83,7 @@ def upsert(
     feargreed_data: dict,
     crypto_data: dict,
     sentiment_data: dict,
+    extended_data: dict | None = None,
 ) -> None:
     """
     5개 fetcher 결과를 병합하여 icg.daily_snapshots에 upsert.
@@ -82,6 +95,7 @@ def upsert(
         feargreed_data: feargreed_fetcher.fetch_all() 결과.
         crypto_data: crypto_fetcher.fetch_all() 결과.
         sentiment_data: sentiment_fetcher.fetch_all() 결과.
+        extended_data: optional P0/P1 enrichment JSONB fields.
     """
     from engine.common.supabase_client import upsert_snapshot
 
@@ -91,6 +105,7 @@ def upsert(
         **feargreed_data,
         **crypto_data,
         **sentiment_data,
+        **(extended_data or {}),
     }
 
     # None 값은 Supabase에 그대로 null 저장 (허용)
@@ -116,6 +131,14 @@ def upsert(
             "[snapshot_writer] 보조/스토리 강화 데이터 누락 date=%s fields=%s",
             snapshot_date,
             quality["optional_missing"],
+        )
+
+    present_extended = [key for key in _EXTENDED_FIELDS if key in payload]
+    if present_extended:
+        logger.info(
+            "[snapshot_writer] 확장 데이터 포함 date=%s fields=%s",
+            snapshot_date,
+            present_extended,
         )
 
 

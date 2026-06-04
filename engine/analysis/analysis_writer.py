@@ -16,6 +16,11 @@ def upsert(
     battle_result: dict,
     delta: dict,
     arc_context: dict,
+    formula_trace: dict | None = None,
+    risk_drivers: list[dict] | None = None,
+    sector_rank: list[dict] | None = None,
+    watch_areas: list[str] | None = None,
+    caution_areas: list[str] | None = None,
 ) -> None:
     """
     분석 결과를 icg.daily_analysis에 upsert.
@@ -45,6 +50,17 @@ def upsert(
         "buy_watch": [],
         "reduce_list": [],
     }
+
+    if formula_trace is not None:
+        payload["formula_trace"] = formula_trace
+    if risk_drivers is not None:
+        payload["risk_drivers"] = risk_drivers
+    if sector_rank is not None:
+        payload["sector_rank"] = sector_rank
+    if watch_areas is not None:
+        payload["watch_areas"] = watch_areas
+    if caution_areas is not None:
+        payload["caution_areas"] = caution_areas
 
     upsert_analysis(analysis_date, payload)
     logger.info(
