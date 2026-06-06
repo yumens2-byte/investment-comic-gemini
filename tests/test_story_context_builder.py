@@ -65,3 +65,25 @@ def test_context_pack_json_serializable() -> None:
     )
 
     assert json.loads(json.dumps(pack, ensure_ascii=False))["version"] == "pilot-1"
+
+
+def test_context_pack_includes_previous_episode_continuity() -> None:
+    previous = {
+        "source_episode_id": "ICG-2026-06-04-001",
+        "title": "전날의 균열",
+        "final_panel_summary": "문은 아직 닫히지 않았다.",
+        "next_hook": "문은 아직 닫히지 않았다.",
+        "unresolved_threads": ["균열"],
+    }
+
+    pack = build_narrative_context_pack(
+        delta=_delta(),
+        battle_result={"outcome": "DRAW", "balance": 0},
+        event_type="BATTLE",
+        scenario_type="ONE_VS_ONE",
+        ending_tone="TENSE",
+        previous_episode=previous,
+    )
+
+    assert pack["previous_episode"]["source_episode_id"] == "ICG-2026-06-04-001"
+    assert pack["continuity_directives"]

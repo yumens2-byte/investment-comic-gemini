@@ -155,6 +155,21 @@ def _append_narrative_context_fallback(rendered: str, context_pack: dict | None)
                 f"- {ev.get('id', '')} | {ev.get('kind', '')} | {value} | "
                 f"story_role={ev.get('story_role', '')}"
             )
+    previous_episode = context_pack.get("previous_episode") or {}
+    if previous_episode:
+        lines.append("### Previous Episode Continuity")
+        lines.append(f"- source_episode_id: {previous_episode.get('source_episode_id', '')}")
+        lines.append(f"- title: {previous_episode.get('title', '')}")
+        lines.append(f"- previous_final_panel: {previous_episode.get('final_panel_summary', '')}")
+        lines.append(f"- previous_next_hook: {previous_episode.get('next_hook', '')}")
+        unresolved = previous_episode.get("unresolved_threads") or []
+        if unresolved:
+            lines.append("- unresolved_threads: " + "; ".join(str(item) for item in unresolved))
+        lines.append(f"- must_continue_from: {previous_episode.get('must_continue_from', '')}")
+    directives = context_pack.get("continuity_directives") or []
+    if directives:
+        lines.append("### Continuity Directives")
+        lines.extend(f"- {directive}" for directive in directives)
     foreshadow = context_pack.get("foreshadow") or []
     if foreshadow:
         lines.append("### Next Event Cards")
@@ -187,10 +202,13 @@ def _append_story_beat_plan_fallback(rendered: str, story_beat_plan: dict | None
     for beat in story_beat_plan.get("panel_beats") or []:
         evidence = ", ".join(beat.get("market_evidence_ids") or [])
         characters = ", ".join(beat.get("required_character") or [])
+        continuity = beat.get("continuity_payoff") or ""
+        continuity_suffix = f"; continuity={continuity}" if continuity else ""
         lines.append(
             f"P{beat.get('panel_idx')} {beat.get('dramatic_function')} — "
             f"evidence={evidence}; characters={characters}; "
             f"visual={beat.get('visual_symbol', '')}; intent={beat.get('dialogue_intent', '')}"
+            f"{continuity_suffix}"
         )
     return rendered + "\n" + "\n".join(lines)
 

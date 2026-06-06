@@ -34,6 +34,8 @@ class StoryBeat(BaseModel):
     visual_symbol: str
     dialogue_intent: str
     forbidden: list[str] = Field(default_factory=list)
+    continuity_payoff: str | None = None
+    must_reference_previous: bool = False
 
 
 class StoryBeatPlan(BaseModel):

@@ -175,3 +175,31 @@ class TestNotionMirror:
         assert _STATUS_MAP["image_generated"] == "Image Generated"
         assert _STATUS_MAP["published"] == "Published"
         assert _STATUS_MAP["failed"] == "Failed"
+
+
+class TestPatchByEpisode:
+    def test_patch_by_episode_filters_by_episode_no(self, monkeypatch):
+        from engine.persist.asset_writer import patch_by_episode
+        import engine.common.supabase_client as sb
+
+        calls = []
+
+        class Table:
+            def update(self, data):
+                calls.append(("update", data))
+                return self
+
+            def eq(self, key, value):
+                calls.append(("eq", key, value))
+                return self
+
+            def execute(self):
+                calls.append(("execute",))
+                return None
+
+        monkeypatch.setattr(sb, "icg_table", lambda name: Table())
+
+        patch_by_episode("2026-06-05", 2, {"status": "assembled"})
+
+        assert ("eq", "episode_date", "2026-06-05") in calls
+        assert ("eq", "episode_no", 2) in calls

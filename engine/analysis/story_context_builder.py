@@ -172,6 +172,7 @@ def build_narrative_context_pack(
     scenario_type: str,
     ending_tone: str,
     arc_context: dict[str, Any] | None = None,
+    previous_episode: dict[str, Any] | None = None,
     news_items: list[dict[str, Any]] | None = None,
     economic_events: list[dict[str, Any]] | None = None,
     sector_heatmap: dict[str, Any] | None = None,
@@ -196,7 +197,7 @@ def build_narrative_context_pack(
         if symbol not in scene_symbols:
             scene_symbols.append(symbol)
 
-    return {
+    pack = {
         "version": "pilot-1",
         "event_type": event_type,
         "scenario_type": scenario_type,
@@ -214,3 +215,11 @@ def build_narrative_context_pack(
             "Use only supplied metrics/news summaries in market_ref.",
         ],
     }
+    if previous_episode:
+        pack["previous_episode"] = previous_episode
+        pack["continuity_directives"] = [
+            "Panel 1-2 must acknowledge or pay off previous_episode.next_hook when present.",
+            "Do not reset character relationship state without explanation.",
+            "Continue unresolved_threads unless today's market evidence makes a clear pivot necessary.",
+        ]
+    return pack

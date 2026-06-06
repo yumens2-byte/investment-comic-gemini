@@ -59,6 +59,10 @@ def build_story_beat_plan(
     market_cause = str(narrative_context_pack.get("market_cause") or "Market signal is mixed.")
     foreshadow = narrative_context_pack.get("foreshadow") or []
     next_hook = str(foreshadow[0]) if foreshadow else "The next market gate remains unresolved."
+    previous_episode = narrative_context_pack.get("previous_episode") or {}
+    previous_hook = str(previous_episode.get("next_hook") or "").strip()
+    previous_final = str(previous_episode.get("final_panel_summary") or "").strip()
+    continuity_seed = previous_hook or previous_final
 
     beats: list[StoryBeat] = []
     for idx, function in enumerate(_FUNCTIONS, 1):
@@ -75,9 +79,24 @@ def build_story_beat_plan(
             dialogue_intent = "Tie the fixed battle outcome to the supplied market cause."
             emotional_shift = "Escalate pressure, then resolve according to the fixed outcome."
 
+        continuity_payoff = None
+        must_reference_previous = False
+        if continuity_seed and idx == 1:
+            continuity_payoff = f"Acknowledge previous episode hook: {continuity_seed}"
+            must_reference_previous = True
+            dialogue_intent = f"Open by paying off the previous hook before today's market cause: {continuity_seed}"
+            emotional_shift = "Connect yesterday's unresolved tension to today's opening pressure."
+
         if function == "NEXT_HOOK":
             dialogue_intent = f"Foreshadow: {next_hook}"
             emotional_shift = "Leave a clear but non-predictive unresolved question."
+
+        forbidden = [
+            "Do not change battle_result.outcome.",
+            "Do not invent unsupported market facts.",
+        ]
+        if continuity_seed:
+            forbidden.append("Do not start a completely new conflict before acknowledging previous_episode.next_hook.")
 
         beats.append(
             StoryBeat(
@@ -88,10 +107,9 @@ def build_story_beat_plan(
                 emotional_shift=emotional_shift,
                 visual_symbol=_symbol(narrative_context_pack, idx),
                 dialogue_intent=dialogue_intent,
-                forbidden=[
-                    "Do not change battle_result.outcome.",
-                    "Do not invent unsupported market facts.",
-                ],
+                forbidden=forbidden,
+                continuity_payoff=continuity_payoff,
+                must_reference_previous=must_reference_previous,
             )
         )
 

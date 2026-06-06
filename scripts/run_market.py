@@ -828,10 +828,22 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                 from engine.analysis.story_context_builder import (
                     build_narrative_context_pack,
                 )
+                from engine.narrative.continuity import load_previous_continuity
 
                 _extended_context = (
                     os.environ.get("STORY_CONTEXT_EXTENDED_ENABLED", "false").lower() == "true"
                 )
+                _previous_episode = load_previous_continuity(episode_date)
+                if _previous_episode:
+                    ctx["previous_episode"] = _previous_episode
+                    logger_inst.info(
+                        "STEP_3",
+                        "[Continuity] previous_episode=%s hook=%s"
+                        % (
+                            _previous_episode.get("source_episode_id"),
+                            bool(_previous_episode.get("next_hook")),
+                        ),
+                    )
                 _context_pack = build_narrative_context_pack(
                     delta=delta,
                     battle_result=battle_result.to_dict(),
@@ -839,6 +851,7 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                     scenario_type=scenario_type_v2,
                     ending_tone=ending_tone_v2,
                     arc_context=arc_context,
+                    previous_episode=_previous_episode,
                     news_items=(curr_row.get("news_items") if _extended_context else None),
                     economic_events=(curr_row.get("event_calendar") if _extended_context else None),
                     sector_heatmap=(curr_row.get("sector_heatmap") if _extended_context else None),
@@ -956,10 +969,23 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
 
 def _build_episode_asset_payload(episode_id: str, ctx: dict, script_dict: dict) -> dict:
     """Build episode_assets payload with optional character selection snapshots."""
+    script_for_asset = dict(script_dict)
+    try:
+        from engine.narrative.continuity import build_continuity_bundle
+
+        script_for_asset["_continuity"] = build_continuity_bundle(
+            episode_id,
+            str(script_dict.get("date") or episode_id[4:14]),
+            ctx,
+            script_dict,
+        )
+    except Exception as _cont_exc:
+        logger.warning("[step_persist] continuity bundle 생성 실패 (진행): %s", _cont_exc)
+
     payload = {
         "episode_no": int(episode_id.split("-")[-1]),
         "title": script_dict.get("title", ""),
-        "script_json": script_dict,
+        "script_json": script_for_asset,
         "battle_json": ctx["battle_result"],
         "status": "narrative_done",
         "scenario_type": ctx.get("scenario_type", "ONE_VS_ONE"),
