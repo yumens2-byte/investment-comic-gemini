@@ -28,6 +28,10 @@ on:
         description: 'Episode Type v3 활성화 (9종 타입 / false=기존 3종 로직)'
         required: false
         default: 'false'
+      arc_state_v3:
+        description: 'Arc State v3 연속성 활성화 (true/false/auto)'
+        required: false
+        default: 'auto'
 
       # ── Phase 2.3 Feature Flags (2026-05-15) ──────────────────────────
       # 미입력 시: Repository Variables(vars.*) → 'false' 순서로 fallback
@@ -99,6 +103,7 @@ jobs:
       FORCE_RUN: ${{ inputs.force || 'false' }}
       SCENARIO_V2_ENABLED: ${{ inputs.scenario_v2 || 'false' }}
       EPISODE_TYPE_V3_ENABLED: ${{ inputs.episode_type_v3 || 'false' }}
+      ARC_STATE_V3_ENABLED: ${{ (inputs.arc_state_v3 != '' && inputs.arc_state_v3 != 'auto') && inputs.arc_state_v3 || vars.ARC_STATE_V3_ENABLED || 'false' }}
 
       # ── Phase 2.3 Feature Flags (하이브리드: inputs > vars > 'false') ──
       # 'auto' 입력 시: vars 값 사용. 'true'/'false' 직접 입력 시: inputs 우선.
@@ -204,6 +209,7 @@ jobs:
           echo "  CROWD_MODIFIER_ENABLED          = $(flag_label "$CROWD_MODIFIER_ENABLED")"
           echo "  VILLAIN_SIGNATURE_BONUS_ENABLED = $(flag_label "$VILLAIN_SIGNATURE_BONUS_ENABLED")"
           echo "  EMERGENCE_DEFICIT_ENABLED       = $(flag_label "$EMERGENCE_DEFICIT_ENABLED")"
+          echo "  ARC_STATE_V3_ENABLED            = $(flag_label "$ARC_STATE_V3_ENABLED")"
           echo "  NARRATIVE_CONTEXT_ENABLED       = $(flag_label "$NARRATIVE_CONTEXT_ENABLED")"
           echo "  STORY_PLANNER_ENABLED           = $(flag_label "$STORY_PLANNER_ENABLED")"
           DATE_ARG=()

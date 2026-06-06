@@ -52,3 +52,15 @@ def test_run_market_workflow_has_single_pilot_flag_definitions() -> None:
     assert "legacy workflow dispatch input reference remains" in text
     assert text.count("NARRATIVE_CONTEXT_ENABLED:") == 1
     assert text.count("STORY_PLANNER_ENABLED:") == 1
+
+
+def test_run_market_workflow_wires_arc_state_v3_flag() -> None:
+    text = _workflow_text()
+    env = _workflow_yaml()["jobs"]["pipeline"]["env"]
+
+    assert _count_job_env_key(text, "ARC_STATE_V3_ENABLED") == 1
+    assert env["ARC_STATE_V3_ENABLED"].startswith("${{ (inputs.arc_state_v3")
+    workflow = _workflow_yaml()
+    on_block = workflow.get("on") or workflow.get(True)
+    assert "arc_state_v3" in on_block["workflow_dispatch"]["inputs"]
+    assert "ARC_STATE_V3_ENABLED            =" in text

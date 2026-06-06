@@ -225,3 +225,28 @@ class TestRenderUserPromptNarrativeContextPilot:
         assert "Story Beat Plan" in result
         assert "P8 DISCLAIMER" in result
         assert "CPI gate" in result
+
+
+def test_prompt_fallback_includes_previous_episode_continuity() -> None:
+    from engine.narrative.prompt_tpl import _append_narrative_context_fallback
+
+    rendered = _append_narrative_context_fallback(
+        "base prompt",
+        {
+            "market_cause": "cause",
+            "battle_outcome": "DRAW",
+            "previous_episode": {
+                "source_episode_id": "ICG-2026-06-04-001",
+                "title": "전날의 균열",
+                "final_panel_summary": "문은 아직 닫히지 않았다.",
+                "next_hook": "문은 아직 닫히지 않았다.",
+                "unresolved_threads": ["균열"],
+                "must_continue_from": "문",
+            },
+            "continuity_directives": ["Panel 1-2 must acknowledge previous hook."],
+        },
+    )
+
+    assert "Previous Episode Continuity" in rendered
+    assert "ICG-2026-06-04-001" in rendered
+    assert "Continuity Directives" in rendered

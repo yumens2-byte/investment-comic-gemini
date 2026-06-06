@@ -30,15 +30,28 @@ def _parse_date(episode_id: str) -> str:
     return m.group(1)
 
 
-def _latest_episode_id() -> str | None:
+def _latest_episode_id(
+    *,
+    include_assembled: bool = False,
+    allow_narrative_only: bool = False,
+) -> str | None:
     """
     Supabase에서 가장 최신의 재처리 가능한 에피소드 ID 반환.
-    우선순위: image_generated → assembled (재조립) → narrative_done
+
+    기본 자동 선택은 image_generated만 허용한다. assembled 재조립은
+    명시적 --force/--include-assembled 또는 --episode 지정 시 status guard를
+    통과해야 하며, narrative_done 조립은 --allow-narrative-only가 필요하다.
     """
     try:
         from engine.common.supabase_client import icg_table
 
-        for status in ("image_generated", "assembled", "narrative_done"):
+        statuses = ["image_generated"]
+        if include_assembled:
+            statuses.append("assembled")
+        if allow_narrative_only:
+            statuses.append("narrative_done")
+
+        for status in statuses:
             rows = (
                 icg_table("episode_assets")
                 .select("episode_date, episode_no")
@@ -59,6 +72,30 @@ def _latest_episode_id() -> str | None:
     except Exception as exc:
         logger.warning("[run_resume] 최신 에피소드 조회 실패: %s", exc)
     return None
+
+
+def guard_resume_status(status: str, *, force: bool, allow_narrative_only: bool) -> None:
+    """Resume 대상 status 검증.
+
+    - image_generated: 정상 조립 허용
+    - assembled: --force가 있을 때만 재조립 허용
+    - narrative_done: --allow-narrative-only가 있을 때만 text-card 가능성을 감수하고 허용
+    - published/failed/aborted 등은 기본 차단
+    """
+    status = status or ""
+    if status == "image_generated":
+        return
+    if status == "assembled" and force:
+        return
+    if status == "narrative_done" and allow_narrative_only:
+        return
+    if status == "published":
+        raise RuntimeError("published 에피소드는 Resume Episode로 재조립할 수 없습니다.")
+    if status == "assembled":
+        raise RuntimeError("assembled 에피소드 재조립은 --force가 필요합니다.")
+    if status == "narrative_done":
+        raise RuntimeError("narrative_done 에피소드 조립은 --allow-narrative-only가 필요합니다.")
+    raise RuntimeError(f"Resume Episode 실행 불가 status={status!r}")
 
 
 def _get_artifact_run_id(episode_date: str, event_type: str) -> str | None:
@@ -88,12 +125,21 @@ def main() -> None:
         default=None,
         help="에피소드 ID (ICG-YYYY-MM-DD-001). 미입력 시 최신 image_generated 에피소드 자동 선택.",
     )
-    parser.add_argument("--force", action="store_true", help="assembled 상태 덮어쓰기")
+    parser.add_argument("--force", action="store_true", help="assembled 상태 재조립 허용")
+    parser.add_argument(
+        "--allow-narrative-only",
+        action="store_true",
+        help="이미지 생성 전 narrative_done 상태도 조립 허용 (text_card fallback 가능)",
+    )
     args = parser.parse_args()
 
     # 빈 문자열("") 입력 시 None으로 처리 (yml에서 미입력 시 "" 전달되는 경우)
     episode_id = (args.episode or None) and args.episode.strip() or None
-    episode_id = episode_id or _latest_episode_id()
+    explicit_episode = bool(episode_id)
+    episode_id = episode_id or _latest_episode_id(
+        include_assembled=False,
+        allow_narrative_only=args.allow_narrative_only,
+    )
     if not episode_id:
         logger.error("❌ 실행 가능한 에피소드 없음 (image_generated 상태 없음)")
         sys.exit(1)
@@ -103,7 +149,7 @@ def main() -> None:
     from engine.assembly.pil_composer import compose_episode
     from engine.common.logger import StepLogger, get_run_id
     from engine.common.supabase_client import icg_table
-    from engine.persist.asset_writer import patch as asset_patch
+    from engine.persist.asset_writer import patch_by_episode as asset_patch_by_episode
 
     run_id = get_run_id(episode_date)
     output_dir = Path("output") / "episodes" / episode_date
@@ -124,27 +170,25 @@ def main() -> None:
     row = rows.data[0] if rows.data else None
 
     if not row:
-        # fallback: 날짜 기준 최신 row
-        rows = (
-            icg_table("episode_assets")
-            .select("*")
-            .eq("episode_date", episode_date)
-            .order("created_at", desc=True)
-            .limit(1)
-            .execute()
-        )
-        row = rows.data[0] if rows.data else None
-        if row:
-            sl.info(
-                "STEP_7",
-                f"episode_no 조회 실패 → 최신 row fallback (event_type={row.get('event_type')})",
-            )
-
-    if not row:
-        sl.error("STEP_7", f"episode_assets row 없음: date={episode_date}")
+        sl.error("STEP_7", f"episode_assets row 없음: episode_id={episode_id}")
         sys.exit(1)
 
-    event_type = row.get("event_type", "NORMAL")
+    status = row.get("status", "")
+    try:
+        guard_resume_status(
+            status,
+            force=args.force,
+            allow_narrative_only=args.allow_narrative_only,
+        )
+    except RuntimeError as exc:
+        sl.error("STEP_7", str(exc))
+        sys.exit(1)
+
+    if explicit_episode and status == "assembled" and args.force:
+        sl.info("STEP_7", "assembled 에피소드 강제 재조립 허용 (--force)")
+    if status == "narrative_done" and args.allow_narrative_only:
+        sl.warning("STEP_7", "narrative_done 상태 조립 허용 — 이미지 없는 text_card fallback 가능")
+
     script_dict = row.get("script_json", {})
     dialog_edits = row.get("dialog_edits_json", {})
 
@@ -196,10 +240,13 @@ def main() -> None:
         slides_json = [{"idx": i + 1, "path": str(s)} for i, s in enumerate(slides)]
         slides_run_id = _os.environ.get("GITHUB_RUN_ID")  # publish_sns.yml 아티팩트 다운로드용
 
-        # patch 사용 — script_json 등 기존 컬럼 보존
-        asset_patch(
+        fallback_count = sum(1 for p in panel_images if p is None or not p.exists())
+        fallback_count += max(0, len(panels) - len(panel_images))
+
+        # episode_no 기준 patch — script_json 등 기존 컬럼 보존, 동일 event_type row 덮어쓰기 방지
+        asset_patch_by_episode(
             episode_date,
-            event_type,
+            episode_no,
             {
                 "slides_json": slides_json,
                 "dialog_edited": bool(dialog_edits),
@@ -207,6 +254,11 @@ def main() -> None:
                 "slides_run_id": slides_run_id,  # 슬라이드 아티팩트 run_id 저장
             },
         )
+        if fallback_count:
+            sl.warning(
+                "STEP_7_PIL",
+                f"패널 이미지 {fallback_count}개 누락/미존재 — text_card fallback 포함",
+            )
 
         if slides_run_id:
             sl.info("STEP_7_PIL", f"slides_run_id={slides_run_id} → DB 저장 완료")

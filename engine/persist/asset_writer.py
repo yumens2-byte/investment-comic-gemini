@@ -155,6 +155,44 @@ def patch(
     )
 
 
+def get_episode_by_no(episode_date: str, episode_no: int) -> dict | None:
+    """episode_date + episode_no 기준으로 episode_assets row 조회."""
+    from engine.common.supabase_client import icg_table
+
+    rows = (
+        icg_table("episode_assets")
+        .select("*")
+        .eq("episode_date", episode_date)
+        .eq("episode_no", episode_no)
+        .limit(1)
+        .execute()
+    )
+    data = getattr(rows, "data", None)
+    if not data:
+        return None
+    return data[0]
+
+
+def patch_by_episode(episode_date: str, episode_no: int, data: dict) -> None:
+    """episode_date + episode_no 기준으로 episode_assets 특정 컬럼만 UPDATE.
+
+    Resume/Publish처럼 episode_id 기반으로 대상을 확정한 뒤에는 event_type보다
+    episode_no를 사용해야 같은 날짜 동일 event_type row 덮어쓰기 위험을 줄일 수 있다.
+    """
+    from engine.common.supabase_client import icg_table
+
+    icg_table("episode_assets").update(data).eq("episode_date", episode_date).eq(
+        "episode_no", episode_no
+    ).execute()
+
+    logger.info(
+        "[asset_writer] patch_by_episode date=%s no=%s fields=%s",
+        episode_date,
+        episode_no,
+        list(data.keys()),
+    )
+
+
 def set_failed(episode_date: str, event_type: str, error_message: str) -> None:
     """
     episode_assets.status = 'failed' + error_message 업데이트.

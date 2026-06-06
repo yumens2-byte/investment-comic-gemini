@@ -74,3 +74,24 @@ def test_story_beat_plan_model_dump_json_serializable() -> None:
     ).model_dump()
 
     assert json.loads(json.dumps(plan, ensure_ascii=False))["panel_beats"][-1]["dramatic_function"] == "DISCLAIMER"
+
+
+def test_story_beat_plan_pays_off_previous_hook_in_opening() -> None:
+    context = _context_pack()
+    context["previous_episode"] = {
+        "next_hook": "문은 아직 닫히지 않았다.",
+        "final_panel_summary": "전날의 균열",
+    }
+
+    plan = build_story_beat_plan(
+        narrative_context_pack=context,
+        hero_id="CHAR_HERO_003",
+        villain_id="CHAR_VILLAIN_002",
+        battle_result={"outcome": "DRAW"},
+        scenario_type="ONE_VS_ONE",
+    )
+
+    first = plan.panel_beats[0]
+    assert first.must_reference_previous is True
+    assert "문은 아직 닫히지 않았다" in (first.continuity_payoff or "")
+    assert "previous hook" in first.dialogue_intent

@@ -11,7 +11,11 @@ on:
         required: false
         default: ''
       force:
-        description: '기존 assembled 상태 덮어쓰기 (true/false)'
+        description: '기존 assembled 상태 재조립 허용 (true/false)'
+        required: false
+        default: 'false'
+      allow_narrative_only:
+        description: '이미지 생성 전 narrative_done 상태 조립 허용 (true/false)'
         required: false
         default: 'false'
 
@@ -123,10 +127,12 @@ jobs:
           if [ -n "${{ github.event.inputs.episode_id }}" ]; then
             python -m scripts.run_resume \
               --episode "${{ github.event.inputs.episode_id }}" \
-              ${{ github.event.inputs.force == 'true' && '--force' || '' }}
+              ${{ github.event.inputs.force == 'true' && '--force' || '' }} \
+              ${{ github.event.inputs.allow_narrative_only == 'true' && '--allow-narrative-only' || '' }}
           else
             python -m scripts.run_resume \
-              ${{ github.event.inputs.force == 'true' && '--force' || '' }}
+              ${{ github.event.inputs.force == 'true' && '--force' || '' }} \
+              ${{ github.event.inputs.allow_narrative_only == 'true' && '--allow-narrative-only' || '' }}
           fi
 
       - name: Upload Assembled Slides

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import copy
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 VERSION = "1.0.0"
@@ -46,35 +46,45 @@ _OUTCOME_HP_MAP: dict[str, int] = {
 
 def load_story_state(episode_date: str) -> dict:
     """
-    전날 story_state_json 로드.
-    없으면 DEFAULT_STORY_STATE 반환.
+    가장 최근 이전 story_state_json 로드.
+
+    기존의 정확한 전날 조회는 주말/휴장/major gate skip 이후 연속성을
+    초기화할 수 있으므로, episode_date보다 과거인 daily_analysis 중
+    story_state_json이 존재하는 최신 row를 사용한다. 없으면 기본값을 반환한다.
 
     Args:
         episode_date: 오늘 날짜 (YYYY-MM-DD)
     """
     try:
-        from engine.common.supabase_client import icg_table
+        # 날짜 형식 검증: 잘못된 episode_date는 기존과 같이 안전 fallback.
+        datetime.strptime(episode_date, "%Y-%m-%d")
 
-        yesterday = (
-            datetime.strptime(episode_date, "%Y-%m-%d").date() - timedelta(days=1)
-        ).isoformat()
+        from engine.common.supabase_client import icg_table
 
         resp = (
             icg_table("daily_analysis")
-            .select("story_state_json")
-            .eq("analysis_date", yesterday)
-            .limit(1)
+            .select("analysis_date, story_state_json")
+            .lt("analysis_date", episode_date)
+            .order("analysis_date", desc=True)
+            .limit(10)
             .execute()
         )
 
-        if resp.data and resp.data[0].get("story_state_json"):
-            state = resp.data[0]["story_state_json"]
-            logger.info(
-                "[StoryStateManager] 전날 story_state 로드 (arc=%s)", state.get("arc_id")
-            )
-            return state
+        rows = getattr(resp, "data", None)
+        if isinstance(rows, list):
+            for row in rows:
+                state = row.get("story_state_json") if isinstance(row, dict) else None
+                if state:
+                    logger.info(
+                        "[StoryStateManager] 이전 story_state 로드 "
+                        "source_date=%s target_date=%s arc=%s",
+                        row.get("analysis_date"),
+                        episode_date,
+                        state.get("arc_id"),
+                    )
+                    return state
 
-        logger.info("[StoryStateManager] 전날 story_state 없음 → 초기값 사용")
+        logger.info("[StoryStateManager] 이전 story_state 없음 → 초기값 사용")
         return _deep_copy_default()
 
     except Exception as e:
