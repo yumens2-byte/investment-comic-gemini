@@ -189,7 +189,6 @@ def main() -> None:
     if status == "narrative_done" and args.allow_narrative_only:
         sl.warning("STEP_7", "narrative_done 상태 조립 허용 — 이미지 없는 text_card fallback 가능")
 
-    event_type = row.get("event_type", "NORMAL")
     script_dict = row.get("script_json", {})
     dialog_edits = row.get("dialog_edits_json", {})
 

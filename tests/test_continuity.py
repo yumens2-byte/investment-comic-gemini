@@ -42,8 +42,9 @@ def test_bundle_from_episode_row_prefers_embedded_continuity() -> None:
 
 
 def test_load_previous_continuity_prefers_published_rows(monkeypatch) -> None:
-    from engine.narrative.continuity import load_previous_continuity
     import sys
+
+    from engine.narrative.continuity import load_previous_continuity
 
     calls = []
 

@@ -179,9 +179,11 @@ class TestNotionMirror:
 
 class TestPatchByEpisode:
     def test_patch_by_episode_filters_by_episode_no(self, monkeypatch):
-        from engine.persist.asset_writer import patch_by_episode
-        import engine.common.supabase_client as sb
+        import sys
 
+        from engine.persist.asset_writer import patch_by_episode
+
+        sb = sys.modules["engine.common.supabase_client"]
         calls = []
 
         class Table:
