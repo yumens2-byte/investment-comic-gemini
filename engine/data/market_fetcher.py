@@ -21,6 +21,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 
 import pandas as pd
+import requests
 
 from engine.common.retry import api_retry
 
@@ -34,7 +35,7 @@ _TOTAL_TIMEOUT_SEC = 45
 
 @api_retry(max_attempts=3, min_wait=1.0, max_wait=10.0)
 def _download_ticker(ticker: str, period: str) -> pd.DataFrame:
-    """Download one yfinance ticker and retry empty/insufficient responses."""
+    """Download one yfinance ticker and retry empty responses."""
     import yfinance as yf
 
     data = yf.download(
@@ -44,9 +45,33 @@ def _download_ticker(ticker: str, period: str) -> pd.DataFrame:
         auto_adjust=True,
         timeout=_TICKER_TIMEOUT_SEC,
     )
-    if data.empty or len(data) < 2:
-        raise ValueError(f"insufficient yfinance rows for {ticker}: rows={len(data)}")
+    if data.empty:
+        raise ValueError(f"empty yfinance response for {ticker}")
     return data
+
+
+@api_retry(max_attempts=3, min_wait=1.0, max_wait=10.0)
+def _fetch_btc_usd_fallback() -> float:
+    """Fetch a BTC/USD spot price from Coinbase when yfinance is temporarily sparse."""
+    resp = requests.get(
+        "https://api.coinbase.com/v2/prices/BTC-USD/spot",
+        timeout=8,
+    )
+    resp.raise_for_status()
+    amount = resp.json().get("data", {}).get("amount")
+    if amount is None:
+        raise ValueError("Coinbase BTC-USD spot amount missing")
+    return float(amount)
+
+
+def _extract_closes(data: pd.DataFrame, ticker: str) -> pd.Series:
+    """Return non-null yfinance closes, including yfinance 0.2.x MultiIndex frames."""
+    if isinstance(data.columns, pd.MultiIndex):
+        close_cols = [c for c in data.columns if c[0] == "Close"]
+        if not close_cols:
+            raise ValueError(f"Close column missing for {ticker}")
+        return data[close_cols[0]].dropna()
+    return data["Close"].dropna()
 
 
 def _fetch_ticker_safe(ticker: str, period: str = "5d") -> dict:
@@ -57,26 +82,37 @@ def _fetch_ticker_safe(ticker: str, period: str = "5d") -> dict:
     try:
         data = _download_ticker(ticker, period)
 
-        # yfinance 0.2.x+: MultiIndex 대응
-        if isinstance(data.columns, pd.MultiIndex):
-            close_cols = [c for c in data.columns if c[0] == "Close"]
-            if not close_cols:
-                raise ValueError(f"Close column missing for {ticker}")
-            closes = data[close_cols[0]].dropna()
-        else:
-            closes = data["Close"].dropna()
+        closes = _extract_closes(data, ticker)
 
-        if len(closes) < 2:
-            raise ValueError(f"insufficient close rows for {ticker}: rows={len(closes)}")
+        if closes.empty:
+            raise ValueError(f"close rows missing for {ticker}")
 
         curr = float(closes.iloc[-1])
-        prev = float(closes.iloc[-2])
-        pct = round((curr - prev) / prev * 100, 4) if prev != 0 else 0.0
+        prev = None
+        pct = None
+        if len(closes) >= 2:
+            prev = float(closes.iloc[-2])
+            pct = round((curr - prev) / prev * 100, 4) if prev != 0 else 0.0
+        else:
+            logger.warning(
+                "[yfinance] %s close row가 1개뿐이라 pct_change는 None 처리",
+                ticker,
+            )
 
         return {"close": curr, "prev_close": prev, "pct_change": pct}
 
     except Exception as exc:
         logger.warning("[yfinance] %s 수집 실패(3회 재시도 후): %s", ticker, type(exc).__name__)
+        if ticker == "BTC-USD":
+            try:
+                close = _fetch_btc_usd_fallback()
+                logger.info("[Coinbase] BTC-USD fallback=%.1f", close)
+                return {"close": close, "prev_close": None, "pct_change": None}
+            except Exception as fallback_exc:
+                logger.warning(
+                    "[Coinbase] BTC-USD fallback 실패(3회 재시도 후): %s",
+                    type(fallback_exc).__name__,
+                )
         return {"close": None, "prev_close": None, "pct_change": None}
 
 
