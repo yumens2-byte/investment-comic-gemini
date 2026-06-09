@@ -51,3 +51,18 @@ def test_render_user_prompt_appends_explicit_active_character_cards(monkeypatch)
     assert "Active Character Canon Cards" in rendered
     assert "유가 과열 테스트 카드" in rendered
     assert "ice power" in rendered
+
+
+def test_build_active_character_cards_accepts_multiple_villains():
+    cards = build_active_character_cards(
+        canon=_canon(),
+        hero_ids=["CHAR_HERO_001"],
+        villain_id="CHAR_VILLAIN_004",
+        villain_ids=["CHAR_VILLAIN_004", "CHAR_VILLAIN_001"],
+    )
+
+    assert [card["char_id"] for card in cards[:3]] == [
+        "CHAR_HERO_001",
+        "CHAR_VILLAIN_004",
+        "CHAR_VILLAIN_001",
+    ]

@@ -60,6 +60,7 @@ def build_active_character_cards(
     canon: dict,
     hero_ids: list[str],
     villain_id: str | None = None,
+    villain_ids: list[str] | None = None,
     neutral_guest_ids: list[str] | None = None,
 ) -> list[dict]:
     """Build compact narrative/visual canon cards for active characters."""
@@ -68,7 +69,9 @@ def build_active_character_cards(
     villains = canon.get("villains", {}) or {}
     neutral_guest_ids = neutral_guest_ids or []
     ordered_ids = [*hero_ids]
-    if villain_id:
+    if villain_ids is not None:
+        ordered_ids.extend(villain_ids)
+    elif villain_id:
         ordered_ids.append(villain_id)
     ordered_ids.extend(neutral_guest_ids)
 
@@ -238,6 +241,7 @@ def render_user_prompt(
     narrative_context_pack: dict | None = None,
     story_beat_plan: dict | None = None,
     active_character_cards: list[dict] | None = None,
+    villain_ids: list[str] | None = None,
 ) -> str:
     """
     Notion에서 로드한 narrative_user 템플릿 렌더링.
@@ -264,6 +268,7 @@ def render_user_prompt(
         narrative_context_pack:  파일럿 — 시장/뉴스/이벤트 압축 컨텍스트.
         story_beat_plan:         파일럿 — 8컷 서사 설계도.
         active_character_cards:  캐릭터별 카논 프롬프트 카드.
+        villain_ids:             다중 빌런 ID 리스트. None이면 villain_id 단일값 사용.
 
     Returns:
         렌더링된 사용자 프롬프트 문자열.
@@ -301,6 +306,7 @@ def render_user_prompt(
                 canon=canon,
                 hero_ids=heroes,
                 villain_id=villain_id if scenario_type != "NO_BATTLE" else None,
+                villain_ids=(villain_ids if scenario_type != "NO_BATTLE" else []),
                 neutral_guest_ids=neutral_guest_ids,
             )
         else:
@@ -318,6 +324,7 @@ def render_user_prompt(
         hero_id=hero_id,
         hero_name=hero_entry.get("name_ko", hero_id),
         villain_id=villain_id,
+        villain_ids=villain_ids or ([villain_id] if scenario_type != "NO_BATTLE" else []),
         villain_name=villain_entry.get("name_ko", villain_id),
         arc_context=arc_context,
         heroes=heroes_canon,

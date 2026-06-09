@@ -7,6 +7,7 @@ Character Appearance Engine v2.
 
 from __future__ import annotations
 
+import os
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
@@ -16,6 +17,8 @@ HERO_PRIMARY_THRESHOLD = 60
 HERO_SUPPORT_THRESHOLD = 45
 HERO_NO_BATTLE_THRESHOLD = 50
 VILLAIN_THRESHOLD = 60
+VILLAIN_SUPPORT_THRESHOLD = 50
+VILLAIN_SUPPORT_MAX_GAP = 25
 NEUTRAL_THRESHOLD = 25
 
 HERO_IDS = [
@@ -42,6 +45,15 @@ VILLAIN_TO_COUNTER_HERO = {
     "CHAR_VILLAIN_004": "CHAR_HERO_004",
     "CHAR_VILLAIN_005": "CHAR_HERO_001",
     "CHAR_VILLAIN_006": "CHAR_HERO_001",
+}
+
+VILLAIN_DOMAIN = {
+    "CHAR_VILLAIN_001": "rates",
+    "CHAR_VILLAIN_002": "commodity",
+    "CHAR_VILLAIN_003": "liquidity",
+    "CHAR_VILLAIN_004": "volatility",
+    "CHAR_VILLAIN_005": "momentum",
+    "CHAR_VILLAIN_006": "geopolitics",
 }
 
 LEGACY_VILLAIN_TO_HERO = {
@@ -86,10 +98,17 @@ class CharacterSelectionResult:
     neutral_guests: list[CharacterAppearanceDecision]
     all_candidates: list[CharacterAppearanceDecision]
     selection_reason: str
+    support_villains: list[str] = field(default_factory=list)
+    villain_roles: dict[str, str] = field(default_factory=dict)
+    villain_selection_reason: dict[str, str] = field(default_factory=dict)
 
     @property
     def heroes(self) -> list[str]:
         return [self.primary_hero, *self.support_heroes]
+
+    @property
+    def villains(self) -> list[str]:
+        return [v for v in [self.primary_villain, *self.support_villains] if v]
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -101,6 +120,10 @@ class CharacterSelectionResult:
             "support_heroes": self.support_heroes,
             "heroes": self.heroes,
             "primary_villain": self.primary_villain,
+            "support_villains": self.support_villains,
+            "villains": self.villains,
+            "villain_roles": self.villain_roles,
+            "villain_selection_reason": self.villain_selection_reason,
             "neutral_guests": [d.to_dict() for d in self.neutral_guests],
             "all_candidates": [d.to_dict() for d in self.all_candidates],
             "selection_reason": self.selection_reason,
@@ -516,6 +539,55 @@ def score_neutral_guests(delta: dict, curr_row: dict | None = None) -> list[Char
     return decisions
 
 
+
+def _multi_villain_max() -> int:
+    try:
+        return max(1, min(int(os.environ.get("MULTI_VILLAIN_MAX", "2")), 3))
+    except ValueError:
+        return 2
+
+
+def _select_support_villains(
+    villain_decisions: list[CharacterAppearanceDecision],
+    primary_villain: str | None,
+    scenario_type: str,
+) -> tuple[list[str], dict[str, str], dict[str, str]]:
+    """Pick deterministic secondary villains behind a feature flag."""
+    roles: dict[str, str] = {}
+    reasons: dict[str, str] = {}
+    if primary_villain:
+        roles[primary_villain] = "PRIMARY_THREAT"
+        reasons[primary_villain] = "primary villain selected by top score or legacy fallback"
+    if (
+        not primary_villain
+        or os.environ.get("MULTI_VILLAIN_ENABLED", "false").lower() != "true"
+        or scenario_type not in {"ALLIANCE", "VILLAIN_PACT"}
+    ):
+        return [], roles, reasons
+
+    primary_decision = next((d for d in villain_decisions if d.char_id == primary_villain), None)
+    primary_score = primary_decision.score if primary_decision else VILLAIN_THRESHOLD
+    primary_domain = VILLAIN_DOMAIN.get(primary_villain)
+    support: list[str] = []
+    for decision in villain_decisions:
+        if decision.char_id == primary_villain:
+            continue
+        if decision.score < VILLAIN_SUPPORT_THRESHOLD:
+            continue
+        if primary_score - decision.score > VILLAIN_SUPPORT_MAX_GAP:
+            continue
+        if VILLAIN_DOMAIN.get(decision.char_id) == primary_domain:
+            continue
+        support.append(decision.char_id)
+        roles[decision.char_id] = "SECONDARY_THREAT"
+        reasons[decision.char_id] = (
+            f"support score {decision.score}>={VILLAIN_SUPPORT_THRESHOLD} "
+            f"within gap {VILLAIN_SUPPORT_MAX_GAP} of primary {primary_score}"
+        )
+        if len(support) >= _multi_villain_max() - 1:
+            break
+    return support, roles, reasons
+
 def _rank(decisions: list[CharacterAppearanceDecision]) -> list[CharacterAppearanceDecision]:
     ranked = sorted(decisions, key=lambda d: (d.score, d.char_id), reverse=True)
     return [
@@ -551,6 +623,10 @@ def resolve_character_selection(
         top_villain = villain_decisions[0]
         primary_villain = top_villain.char_id if top_villain.appear else base_villain_id
 
+    support_villains, villain_roles, villain_selection_reason = _select_support_villains(
+        villain_decisions, primary_villain, st
+    )
+
     hero_decisions = _rank([
         score_hero(h, delta, st, event_type, primary_villain, arc_context)
         for h in HERO_IDS
@@ -585,7 +661,10 @@ def resolve_character_selection(
     if st == "NO_BATTLE":
         reason = f"NO_BATTLE: {hero_reason}; villain suppressed"
     elif st == "ALLIANCE":
-        reason = f"ALLIANCE: villain={primary_villain}; primary={primary_hero}; support={support_heroes}; {hero_reason}"
+        reason = (
+            f"ALLIANCE: villains={[primary_villain, *support_villains] if primary_villain else []}; "
+            f"primary={primary_hero}; support={support_heroes}; {hero_reason}"
+        )
     else:
         reason = f"ONE_VS_ONE: villain={primary_villain}; primary={primary_hero}; {hero_reason}"
 
@@ -599,4 +678,7 @@ def resolve_character_selection(
         neutral_guests=neutral_guests,
         all_candidates=[*hero_decisions, *villain_decisions, *neutral_decisions],
         selection_reason=reason,
+        support_villains=support_villains,
+        villain_roles=villain_roles,
+        villain_selection_reason=villain_selection_reason,
     )
