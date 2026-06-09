@@ -246,6 +246,7 @@ def character_selection_summary(ctx: dict) -> dict:
             "character_selector_mode": None,
             "selected_hero_id": None,
             "selected_villain_id": None,
+            "selected_villain_ids": [],
             "support_heroes_json": [],
             "neutral_guests_json": [],
             "top_hero_score": None,
@@ -269,6 +270,9 @@ def character_selection_summary(ctx: dict) -> dict:
         ),
         "selected_hero_id": selection.get("primary_hero"),
         "selected_villain_id": selection.get("primary_villain"),
+        "selected_villain_ids": selection.get("villains") or (
+            [selection.get("primary_villain")] if selection.get("primary_villain") else []
+        ),
         "support_heroes_json": selection.get("support_heroes") or [],
         "neutral_guests_json": neutral_guests,
         "top_hero_score": top_hero.get("score"),
@@ -290,6 +294,8 @@ def character_selection_candidate_rows(
 
     selected_ids = {selection.get("primary_hero"), selection.get("primary_villain")}
     selected_ids.update(selection.get("support_heroes") or [])
+    selected_ids.update(selection.get("support_villains") or [])
+    selected_ids.update(selection.get("villains") or [])
     selected_ids.discard(None)
 
     rows: list[dict] = []

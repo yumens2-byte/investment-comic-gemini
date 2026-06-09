@@ -105,3 +105,23 @@ def test_episode_asset_payload_includes_character_snapshot_when_enabled(monkeypa
 
     assert payload["character_selection_json"]["primary_hero"] == "CHAR_HERO_003"
     assert payload["active_character_cards_json"] == [{"char_id": "CHAR_HERO_003"}]
+
+
+def test_character_selection_summary_includes_selected_villain_ids():
+    from engine.persist.asset_writer import character_selection_summary
+
+    summary = character_selection_summary({
+        "character_selection": {
+            "version": "character-appearance-v2",
+            "primary_hero": "CHAR_HERO_001",
+            "support_heroes": ["CHAR_HERO_002"],
+            "primary_villain": "CHAR_VILLAIN_004",
+            "support_villains": ["CHAR_VILLAIN_001"],
+            "villains": ["CHAR_VILLAIN_004", "CHAR_VILLAIN_001"],
+            "neutral_guests": [],
+            "all_candidates": [],
+        }
+    })
+
+    assert summary["selected_villain_id"] == "CHAR_VILLAIN_004"
+    assert summary["selected_villain_ids"] == ["CHAR_VILLAIN_004", "CHAR_VILLAIN_001"]

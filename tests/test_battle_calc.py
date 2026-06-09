@@ -16,6 +16,7 @@ from engine.narrative.battle_calc import (
     CANON_HERO_IDS,
     CANON_VILLAIN_IDS,
     battle,
+    battle_multi_villain,
     resolve_outcome,
     select_characters_for_event,
 )
@@ -297,3 +298,21 @@ class TestEventClassifier:
         result = classify(delta, arc)
         # AFTERMATH가 아닌 INTEL 또는 NORMAL이어야 한다
         assert result in ("INTEL", "NORMAL")
+
+
+def test_battle_multi_villain_applies_support_decay_and_cap():
+    result = battle_multi_villain(
+        hero_ids=["CHAR_HERO_001", "CHAR_HERO_002"],
+        hero_bases=[80, 78],
+        villain_ids=["CHAR_VILLAIN_004", "CHAR_VILLAIN_001"],
+        villain_bases=[90, 120],
+        market_context={"vix": 45, "dgs10": 5.4, "wti_pct_3d": 0},
+        arc_context={"tension": 80},
+    )
+
+    data = result.to_dict()
+    assert data["encounter_type"] == "MULTI_VILLAIN"
+    assert data["villain_ids"] == ["CHAR_VILLAIN_004", "CHAR_VILLAIN_001"]
+    assert data["villain_pact_state"] == "DUAL_PRESSURE"
+    assert data["villain_power_breakdown_by_id"]["CHAR_VILLAIN_001"]["support_decay"] < 0
+    assert result.villain_power <= int(120 * 1.75)

@@ -105,18 +105,26 @@ class BattleResult:
     outcome: Outcome
     hero_power_breakdown: dict[str, int]
     villain_power_breakdown: dict[str, int]
+    villain_ids: list[str] | None = None
+    villain_power_breakdown_by_id: dict[str, dict[str, int]] | None = None
+    encounter_type: str = "SINGLE_VILLAIN"
+    villain_pact_state: str = "NONE"
 
     def to_dict(self) -> dict:
         """Claude 컨텍스트 주입용 dict 변환."""
         return {
             "hero_id": self.hero_id,
             "villain_id": self.villain_id,
+            "villain_ids": self.villain_ids or [self.villain_id],
             "hero_power": self.hero_power,
             "villain_power": self.villain_power,
             "balance": self.balance,
             "outcome": self.outcome,
             "hero_power_breakdown": self.hero_power_breakdown,
             "villain_power_breakdown": self.villain_power_breakdown,
+            "villain_power_breakdown_by_id": self.villain_power_breakdown_by_id or {self.villain_id: self.villain_power_breakdown},
+            "encounter_type": self.encounter_type,
+            "villain_pact_state": self.villain_pact_state,
         }
 
 
@@ -471,6 +479,93 @@ def battle_alliance(
         outcome=outcome,
         hero_power_breakdown=combined_hero_breakdown,
         villain_power_breakdown=villain_breakdown,
+    )
+
+
+def battle_multi_villain(
+    hero_ids: list[str],
+    hero_bases: list[int],
+    villain_ids: list[str],
+    villain_bases: list[int],
+    market_context: dict,
+    arc_context: dict,
+) -> BattleResult:
+    """Calculate a deterministic encounter with one primary and optional support villains.
+
+    The first villain is the primary threat. Support villains are decayed to avoid
+    runaway power inflation and the combined villain power is capped at 1.75x the
+    primary villain power.
+    """
+    from engine.common.exceptions import UnknownCharacterError
+
+    if not hero_ids:
+        raise UnknownCharacterError("MISSING_HERO")
+    if not villain_ids:
+        raise UnknownCharacterError("MISSING_VILLAIN")
+    for h_id in hero_ids:
+        if h_id not in CANON_HERO_IDS:
+            raise UnknownCharacterError(h_id)
+    for v_id in villain_ids:
+        if v_id not in CANON_VILLAIN_IDS:
+            raise UnknownCharacterError(v_id)
+
+    hero_results = [
+        calc_hero_power(h_id, h_base, market_context, arc_context)
+        for h_id, h_base in zip(hero_ids, hero_bases)
+    ]
+    hero_raw = sum(power for power, _ in hero_results)
+    hero_power = int(hero_raw * 0.85) if len(hero_ids) > 1 else hero_raw
+    hero_breakdown: dict[str, int] = {}
+    for _, bd in hero_results:
+        for k, v in bd.items():
+            hero_breakdown[k] = hero_breakdown.get(k, 0) + v
+    if len(hero_ids) > 1:
+        hero_breakdown["alliance_decay"] = -(hero_raw - hero_power)
+
+    villain_breakdown_by_id: dict[str, dict[str, int]] = {}
+    adjusted_villain_powers: list[int] = []
+    raw_villain_powers: list[int] = []
+    for idx, (v_id, v_base) in enumerate(zip(villain_ids, villain_bases)):
+        raw_power, bd = calc_villain_power(v_id, v_base, market_context)
+        raw_villain_powers.append(raw_power)
+        adjusted = raw_power if idx == 0 else int(raw_power * 0.60)
+        bd = dict(bd)
+        if idx > 0:
+            bd["support_decay"] = adjusted - raw_power
+        adjusted_villain_powers.append(adjusted)
+        villain_breakdown_by_id[v_id] = bd
+
+    pact_bonus = 0
+    if len(villain_ids) > 1:
+        pact_bonus = min(10, 5 * (len(villain_ids) - 1))
+    villain_power_uncapped = sum(adjusted_villain_powers) + pact_bonus
+    primary_power = raw_villain_powers[0]
+    cap = int(primary_power * 1.75)
+    villain_power = min(villain_power_uncapped, cap)
+
+    combined_villain_breakdown: dict[str, int] = {"primary": adjusted_villain_powers[0]}
+    for idx, power in enumerate(adjusted_villain_powers[1:], 1):
+        combined_villain_breakdown[f"support_{idx}"] = power
+    if pact_bonus:
+        combined_villain_breakdown["villain_pact_bonus"] = pact_bonus
+    if villain_power < villain_power_uncapped:
+        combined_villain_breakdown["villain_power_cap"] = villain_power - villain_power_uncapped
+
+    balance = hero_power - villain_power
+    outcome = resolve_alliance_outcome(balance) if len(hero_ids) > 1 else resolve_outcome(balance)
+    return BattleResult(
+        hero_id=hero_ids[0],
+        villain_id=villain_ids[0],
+        hero_power=hero_power,
+        villain_power=villain_power,
+        balance=balance,
+        outcome=outcome,
+        hero_power_breakdown=hero_breakdown,
+        villain_power_breakdown=combined_villain_breakdown,
+        villain_ids=villain_ids,
+        villain_power_breakdown_by_id=villain_breakdown_by_id,
+        encounter_type="MULTI_VILLAIN" if len(villain_ids) > 1 else "SINGLE_VILLAIN",
+        villain_pact_state="DUAL_PRESSURE" if len(villain_ids) > 1 else "NONE",
     )
 
 # ════════════════════════════════════════════════════════════════════════════

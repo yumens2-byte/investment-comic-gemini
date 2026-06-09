@@ -95,3 +95,22 @@ def test_story_beat_plan_pays_off_previous_hook_in_opening() -> None:
     assert first.must_reference_previous is True
     assert "문은 아직 닫히지 않았다" in (first.continuity_payoff or "")
     assert "previous hook" in first.dialogue_intent
+
+
+def test_story_beat_plan_limits_multi_villain_panels_to_p4_p5() -> None:
+    plan = build_story_beat_plan(
+        narrative_context_pack=_context_pack(),
+        hero_id="CHAR_HERO_001",
+        villain_id="CHAR_VILLAIN_004",
+        villain_ids=["CHAR_VILLAIN_004", "CHAR_VILLAIN_001"],
+        battle_result={"outcome": "DRAW"},
+        scenario_type="ALLIANCE",
+    )
+
+    support_panels = [
+        beat.panel_idx
+        for beat in plan.panel_beats
+        if "CHAR_VILLAIN_001" in beat.required_character
+    ]
+    assert support_panels == [4, 5]
+    assert all("outside the supplied villain_ids" in " ".join(beat.forbidden) for beat in plan.panel_beats)

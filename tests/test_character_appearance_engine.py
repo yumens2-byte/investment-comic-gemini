@@ -116,3 +116,33 @@ def test_neutral_guests_score_arbitrator_and_double_agent():
     assert roles["SENTINEL_YIELD"] == "ARBITRATOR"
     assert roles["CRYPTO_SHADE"] == "DOUBLE_AGENT"
     assert all(g.appear for g in guests)
+
+
+def test_multi_villain_flag_adds_support_villain(monkeypatch):
+    monkeypatch.setenv("MULTI_VILLAIN_ENABLED", "true")
+    monkeypatch.setenv("MULTI_VILLAIN_MAX", "2")
+    delta = _delta(
+        WTI_curr=96.0,
+        WTI_pct=8.2,
+        VIX_curr=36.0,
+        VIX_pct=25.0,
+        SPY_pct=-2.5,
+        NASDAQ_pct=-2.2,
+    )
+
+    result = resolve_character_selection(
+        delta=delta,
+        event_type="BATTLE",
+        scenario_type="ALLIANCE",
+        risk_level="HIGH",
+        base_hero_id="CHAR_HERO_001",
+        base_villain_id="CHAR_VILLAIN_004",
+        arc_context={"tension": 80},
+    )
+
+    assert len(result.villains) == 2
+    assert result.primary_villain in result.villains
+    assert result.support_villains
+    assert result.villain_roles[result.primary_villain] == "PRIMARY_THREAT"
+    assert result.villain_roles[result.support_villains[0]] == "SECONDARY_THREAT"
+    assert result.to_dict()["villains"] == result.villains

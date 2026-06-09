@@ -224,6 +224,7 @@ def generate_episode(
     narrative_context_pack: dict | None = None,
     story_beat_plan: dict | None = None,
     active_character_cards: list[dict] | None = None,
+    villain_ids: list[str] | None = None,
 ) -> EpisodeScript:
     """
     Claude API를 호출하여 EpisodeScript를 생성.
@@ -286,6 +287,7 @@ def generate_episode(
             narrative_context_pack=narrative_context_pack,
             story_beat_plan=story_beat_plan,
             active_character_cards=active_character_cards,
+            villain_ids=villain_ids,
         )
     except TypeError:
         # render_user_prompt()가 신규 파라미터를 수용하지 못할 경우 fallback:

@@ -53,6 +53,7 @@ def build_story_beat_plan(
     villain_id: str,
     battle_result: dict[str, Any],
     scenario_type: str,
+    villain_ids: list[str] | None = None,
 ) -> StoryBeatPlan:
     """Build a deterministic 8-panel story plan for the current episode."""
     outcome = str(battle_result.get("outcome", "DRAW"))
@@ -63,6 +64,9 @@ def build_story_beat_plan(
     previous_hook = str(previous_episode.get("next_hook") or "").strip()
     previous_final = str(previous_episode.get("final_panel_summary") or "").strip()
     continuity_seed = previous_hook or previous_final
+    active_villain_ids = villain_ids or ([villain_id] if villain_id else [])
+    primary_villain = active_villain_ids[0] if active_villain_ids else villain_id
+    support_villains = active_villain_ids[1:]
 
     beats: list[StoryBeat] = []
     for idx, function in enumerate(_FUNCTIONS, 1):
@@ -75,8 +79,15 @@ def build_story_beat_plan(
             dialogue_intent = "Observe the market calmly without introducing villain combat."
             emotional_shift = "Move from observation to cautious confidence."
         else:
-            required = [hero_id, villain_id] if idx in (3, 4, 5, 6) else [hero_id]
+            if idx in (4, 5) and support_villains:
+                required = [hero_id, primary_villain, support_villains[0]]
+            elif idx in (3, 4, 5, 6):
+                required = [hero_id, primary_villain]
+            else:
+                required = [hero_id]
             dialogue_intent = "Tie the fixed battle outcome to the supplied market cause."
+            if support_villains and idx == 5:
+                dialogue_intent = "Show the secondary villain amplifying pressure without changing the fixed outcome."
             emotional_shift = "Escalate pressure, then resolve according to the fixed outcome."
 
         continuity_payoff = None
@@ -94,6 +105,7 @@ def build_story_beat_plan(
         forbidden = [
             "Do not change battle_result.outcome.",
             "Do not invent unsupported market facts.",
+            "Do not add villains outside the supplied villain_ids.",
         ]
         if continuity_seed:
             forbidden.append("Do not start a completely new conflict before acknowledging previous_episode.next_hook.")
@@ -119,7 +131,10 @@ def build_story_beat_plan(
         villain_motivation=(
             "No direct villain combat; show market observation."
             if scenario_type == "NO_BATTLE"
-            else f"{villain_id} gains pressure from the supplied market evidence."
+            else (
+                f"{primary_villain} leads pressure from the supplied market evidence; "
+                f"support_villains={support_villains}."
+            )
         ),
         hero_inner_conflict=f"{hero_id} must respond without denying the fixed outcome: {outcome}.",
         panel_beats=beats,

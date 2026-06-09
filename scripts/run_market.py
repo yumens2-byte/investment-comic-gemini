@@ -404,6 +404,7 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
         scenario_type_v2 = "ONE_VS_ONE"
         ending_tone_v2   = "TENSE"
         heroes_v2: list[str] = [hero_id_base]
+        villain_ids_v2: list[str] = [villain_id_base]
         character_selection_trace: dict = {}
         hero_id   = hero_id_base
         villain_id = villain_id_base
@@ -488,11 +489,13 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                 hero_id, _no_villain = select_for_no_battle(delta)
                 villain_id = villain_id_base  # analysis_upsert용 유지 (None 방어)
                 heroes_v2  = [hero_id]
+                villain_ids_v2 = []
                 logger.info("[Step 3-4] NO_BATTLE hero=%s", hero_id)
 
             elif scenario_type_v2 == "ALLIANCE":
                 from engine.narrative.character_selector import select_for_alliance
                 heroes_v2, villain_id = select_for_alliance(event_type, delta, villain_id_base)
+                villain_ids_v2 = [villain_id]
                 hero_id = heroes_v2[0]
                 logger.info("[Step 3-4] ALLIANCE heroes=%s villain=%s", heroes_v2, villain_id)
 
@@ -500,6 +503,7 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                 # ONE_VS_ONE — 기존 캐릭터 그대로
                 hero_id    = hero_id_base
                 villain_id = villain_id_base
+                villain_ids_v2 = [villain_id]
                 heroes_v2  = [hero_id]
 
             # -- STEP 3-4b: Character Appearance v2 점수 기반 재선정 ----------
@@ -527,8 +531,10 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                         # legacy persistence compatibility: battle_json still carries a villain_id,
                         # while character_selection.primary_villain explicitly records None.
                         villain_id = villain_id_base
+                        villain_ids_v2 = []
                     else:
                         villain_id = _selection.primary_villain or villain_id_base
+                        villain_ids_v2 = _selection.villains or [villain_id]
                     logger.info(
                         "[Step 3-4b] character_appearance_v2 hero=%s heroes=%s villain=%s reason=%s",
                         hero_id, heroes_v2, villain_id, _selection.selection_reason,
@@ -574,7 +580,7 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
             logger.info("[Step 3-5] NO_BATTLE → PEACEFUL_GROWTH (전투 스킵)")
 
         elif _scenario_v2 and scenario_type_v2 == "ALLIANCE":
-            from engine.narrative.battle_calc import battle_alliance
+            from engine.narrative.battle_calc import battle_alliance, battle_multi_villain
 
             # 각 히어로 base_power 수집
             hero_bases: list[int] = []
@@ -588,14 +594,28 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                 except Exception:
                     hero_bases.append(canon["heroes"].get(h_id, {}).get("base_power", 75))
 
-            battle_result = battle_alliance(
-                hero_ids=heroes_v2,
-                hero_bases=hero_bases,
-                villain_id=villain_id,
-                villain_base=villain_base,
-                market_context=market_ctx,
-                arc_context=arc_context,
-            )
+            if len(villain_ids_v2) > 1:
+                villain_bases = [
+                    canon["villains"].get(v_id, {}).get("base_power", 72)
+                    for v_id in villain_ids_v2
+                ]
+                battle_result = battle_multi_villain(
+                    hero_ids=heroes_v2,
+                    hero_bases=hero_bases,
+                    villain_ids=villain_ids_v2,
+                    villain_bases=villain_bases,
+                    market_context=market_ctx,
+                    arc_context=arc_context,
+                )
+            else:
+                battle_result = battle_alliance(
+                    hero_ids=heroes_v2,
+                    hero_bases=hero_bases,
+                    villain_id=villain_id,
+                    villain_base=villain_base,
+                    market_context=market_ctx,
+                    arc_context=arc_context,
+                )
             logger.info(
                 "[Step 3-5] ALLIANCE balance=%d outcome=%s",
                 battle_result.balance, battle_result.outcome,
@@ -771,6 +791,14 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                 "support_heroes": [h for h in heroes_v2 if h != hero_id],
                 "heroes": heroes_v2,
                 "primary_villain": None if scenario_type_v2 == "NO_BATTLE" else villain_id,
+                "support_villains": [v for v in villain_ids_v2 if v != villain_id],
+                "villains": villain_ids_v2,
+                "villain_roles": (
+                    {} if scenario_type_v2 == "NO_BATTLE" else {
+                        **({villain_id: "PRIMARY_THREAT"} if villain_id else {}),
+                        **{v: "SECONDARY_THREAT" for v in villain_ids_v2 if v != villain_id},
+                    }
+                ),
                 "neutral_guests": [
                     {"char_id": c, "role": r, "faction": "NEUTRAL", "appear": True}
                     for c, r in _guest_characters
@@ -788,6 +816,7 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
             "battle_result": battle_result.to_dict(),
             "hero_id":      hero_id,
             "villain_id":   villain_id,
+            "villain_ids":  villain_ids_v2,
             "arc_context":  arc_context,
             # v2.0 신규 필드 (SCENARIO_V2_ENABLED=false 시 기본값 유지)
             "scenario_type": scenario_type_v2,
@@ -817,7 +846,8 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                     canon=canon,
                     hero_ids=heroes_v2,
                     villain_id=(None if scenario_type_v2 == "NO_BATTLE" else villain_id),
-                    neutral_guest_ids=[c for c, _ in _guest_characters],
+                    villain_ids=villain_ids_v2,
+                    neutral_guest_ids=[c for c, _ in _guest_characters][: (1 if len(villain_ids_v2) > 1 else None)],
                 )
             except Exception as _card_exc:
                 logger.warning("[step_analysis] active character cards 생성 실패 (진행): %s", _card_exc)
@@ -867,6 +897,7 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                         villain_id=villain_id,
                         battle_result=battle_result.to_dict(),
                         scenario_type=scenario_type_v2,
+                        villain_ids=villain_ids_v2,
                     ).model_dump()
                 logger_inst.info(
                     "STEP_3",
@@ -935,6 +966,7 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
             narrative_context_pack=ctx.get("narrative_context_pack"),
             story_beat_plan=ctx.get("story_beat_plan"),
             active_character_cards=ctx.get("active_character_cards"),
+            villain_ids=ctx.get("villain_ids"),
         )
         script_dict = script.model_dump()
 
