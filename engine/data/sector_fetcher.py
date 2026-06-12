@@ -17,6 +17,8 @@ from typing import Any
 
 import pandas as pd
 
+from engine.data import yfinance_client
+
 logger = logging.getLogger(__name__)
 
 _TICKER_TIMEOUT_SEC = 12
@@ -51,9 +53,7 @@ def _extract_close_series(data: pd.DataFrame) -> pd.Series:
 def _fetch_ticker_change(ticker: str, period: str = "5d") -> float | None:
     """Return latest close-to-close percent change for a ticker."""
     try:
-        import yfinance as yf
-
-        data = yf.download(
+        data = yfinance_client.download(
             ticker,
             period=period,
             progress=False,

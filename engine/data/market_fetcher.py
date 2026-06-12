@@ -24,6 +24,7 @@ import pandas as pd
 import requests
 
 from engine.common.retry import api_retry
+from engine.data import yfinance_client
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +37,7 @@ _TOTAL_TIMEOUT_SEC = 45
 @api_retry(max_attempts=3, min_wait=1.0, max_wait=10.0)
 def _download_ticker(ticker: str, period: str) -> pd.DataFrame:
     """Download one yfinance ticker and retry empty responses."""
-    import yfinance as yf
-
-    data = yf.download(
+    data = yfinance_client.download(
         ticker,
         period=period,
         progress=False,
