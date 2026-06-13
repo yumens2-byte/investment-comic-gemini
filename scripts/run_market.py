@@ -897,6 +897,7 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                         villain_id=villain_id,
                         battle_result=battle_result.to_dict(),
                         scenario_type=scenario_type_v2,
+                        hero_ids=heroes_v2,
                         villain_ids=villain_ids_v2,
                     ).model_dump()
                 logger_inst.info(
