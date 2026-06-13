@@ -16,19 +16,19 @@ logger = logging.getLogger(__name__)
 CANON_HERO_IDS: list[str] = [
     "CHAR_HERO_001",   # EDT — 전략 수호자
     "CHAR_HERO_002",   # Iron Securities Nuna — 데이터 분석가
-    "CHAR_HERO_003",   # Exposure Futures Girl — 선물 감지
-    "CHAR_HERO_004",   # Gold Bond Muscle — 금/채권 방어
-    "CHAR_HERO_005",   # (5번째 히어로)
+    "CHAR_HERO_003",   # Leverage Muscle Man — 오일 쇼크 화력 대응
+    "CHAR_HERO_004",   # Exposure Futures Girl — 선물/변동성 신호 감지
+    "CHAR_HERO_005",   # Gold Bond Muscle — 금/채권 방어
 ]
 
-# 빌런 → 주 히어로 상극 매핑 (battle_calc.select_characters_for_event 기반 역매핑)
+# 빌런 → 주 히어로 상극 매핑 (characters.yaml의 mirror_hero와 일치)
 _VILLAIN_TO_MAIN_HERO: dict[str, str] = {
-    "CHAR_VILLAIN_001": "CHAR_HERO_002",   # Debt Titan → Iron Nuna
-    "CHAR_VILLAIN_002": "CHAR_HERO_003",   # Oil Shock Titan → Exposure Futures
-    "CHAR_VILLAIN_003": "CHAR_HERO_005",   # Liquidity Leviathan → Gold Bond
-    "CHAR_VILLAIN_004": "CHAR_HERO_001",   # Volatility Hydra → EDT
+    "CHAR_VILLAIN_001": "CHAR_HERO_005",   # Debt Titan → Gold Bond
+    "CHAR_VILLAIN_002": "CHAR_HERO_003",   # Oil Shock Titan → Leverage
+    "CHAR_VILLAIN_003": "CHAR_HERO_002",   # Liquidity Leviathan → Iron Nuna
+    "CHAR_VILLAIN_004": "CHAR_HERO_004",   # Volatility Hydra → Futures Girl
     "CHAR_VILLAIN_005": "CHAR_HERO_001",   # Algorithm Reaper → EDT
-    "CHAR_VILLAIN_006": "CHAR_HERO_004",   # War Dominion → Futures Girl
+    "CHAR_VILLAIN_006": "CHAR_HERO_001",   # War Dominion → EDT
 }
 
 # 보조 히어로 우선순위 (event_type별)
@@ -45,8 +45,8 @@ def select_for_no_battle(delta: dict) -> tuple[str, None]:
 
     선정 기준:
         VIX < 16 AND SPY > 0%  → CHAR_HERO_001 (EDT, 평온한 상승)
-        SPY > +1.0%             → CHAR_HERO_003 (Exposure Futures, 모멘텀)
-        VIX > 18                → CHAR_HERO_004 (Gold Bond, 방어적)
+        SPY > +1.0%             → CHAR_HERO_004 (Exposure Futures, 모멘텀)
+        VIX > 18                → CHAR_HERO_005 (Gold Bond, 방어적)
         else                    → CHAR_HERO_002 (Iron Nuna, 분석적)
 
     Args:
@@ -61,9 +61,9 @@ def select_for_no_battle(delta: dict) -> tuple[str, None]:
     if vix < 16 and spy_pct > 0:
         hero_id = "CHAR_HERO_001"
     elif spy_pct > 1.0:
-        hero_id = "CHAR_HERO_003"
-    elif vix > 18:
         hero_id = "CHAR_HERO_004"
+    elif vix > 18:
+        hero_id = "CHAR_HERO_005"
     else:
         hero_id = "CHAR_HERO_002"
 

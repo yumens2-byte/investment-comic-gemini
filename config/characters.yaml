@@ -145,7 +145,7 @@ heroes:
 
 villains:
   CHAR_VILLAIN_001:
-    name_ko: 듰트 타이탄
+    name_ko: 데트 타이탄
     name_en: Debt Titan
     notion_label: Debt Titan
     event: Debt Stress

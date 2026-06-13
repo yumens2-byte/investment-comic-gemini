@@ -199,6 +199,7 @@ class TestScenarioC_Alliance:
         assert len(heroes) == 2
         assert villain_id in (vill,)
         assert heroes[0] != heroes[1]   # 두 히어로가 달라야 함
+        assert heroes[0] == "CHAR_HERO_004"  # Volatility Hydra mirror_hero = Futures Girl
 
     def test_battle_alliance_result(self):
         from engine.narrative.battle_calc import battle_alliance, select_characters_for_event

@@ -114,3 +114,22 @@ def test_story_beat_plan_limits_multi_villain_panels_to_p4_p5() -> None:
     ]
     assert support_panels == [4, 5]
     assert all("outside the supplied villain_ids" in " ".join(beat.forbidden) for beat in plan.panel_beats)
+
+
+def test_alliance_story_beat_plan_requires_support_hero_in_coordination_panels() -> None:
+    plan = build_story_beat_plan(
+        narrative_context_pack=_context_pack(),
+        hero_id="CHAR_HERO_004",
+        hero_ids=["CHAR_HERO_004", "CHAR_HERO_001"],
+        villain_id="CHAR_VILLAIN_004",
+        battle_result={"outcome": "PYRRHIC_VICTORY"},
+        scenario_type="ALLIANCE",
+    )
+
+    support_panels = [
+        beat.panel_idx
+        for beat in plan.panel_beats
+        if "CHAR_HERO_001" in beat.required_character
+    ]
+    assert support_panels == [4, 5]
+    assert "support_heroes=['CHAR_HERO_001']" in plan.hero_inner_conflict

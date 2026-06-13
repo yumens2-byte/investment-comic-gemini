@@ -53,6 +53,7 @@ def build_story_beat_plan(
     villain_id: str,
     battle_result: dict[str, Any],
     scenario_type: str,
+    hero_ids: list[str] | None = None,
     villain_ids: list[str] | None = None,
 ) -> StoryBeatPlan:
     """Build a deterministic 8-panel story plan for the current episode."""
@@ -67,6 +68,9 @@ def build_story_beat_plan(
     active_villain_ids = villain_ids or ([villain_id] if villain_id else [])
     primary_villain = active_villain_ids[0] if active_villain_ids else villain_id
     support_villains = active_villain_ids[1:]
+    active_hero_ids = hero_ids or [hero_id]
+    primary_hero = active_hero_ids[0] if active_hero_ids else hero_id
+    support_heroes = active_hero_ids[1:]
 
     beats: list[StoryBeat] = []
     for idx, function in enumerate(_FUNCTIONS, 1):
@@ -75,17 +79,23 @@ def build_story_beat_plan(
             dialogue_intent = "State investment disclaimer clearly."
             emotional_shift = "Reset audience expectation from story to caution."
         elif scenario_type == "NO_BATTLE":
-            required = [hero_id]
+            required = [primary_hero]
             dialogue_intent = "Observe the market calmly without introducing villain combat."
             emotional_shift = "Move from observation to cautious confidence."
         else:
-            if idx in (4, 5) and support_villains:
-                required = [hero_id, primary_villain, support_villains[0]]
+            if scenario_type == "ALLIANCE" and idx in (4, 5) and support_heroes:
+                required = [primary_hero, support_heroes[0], primary_villain]
+                if support_villains:
+                    required.append(support_villains[0])
+            elif idx in (4, 5) and support_villains:
+                required = [primary_hero, primary_villain, support_villains[0]]
             elif idx in (3, 4, 5, 6):
-                required = [hero_id, primary_villain]
+                required = [primary_hero, primary_villain]
             else:
-                required = [hero_id]
+                required = [primary_hero]
             dialogue_intent = "Tie the fixed battle outcome to the supplied market cause."
+            if scenario_type == "ALLIANCE" and support_heroes and idx in (4, 5):
+                dialogue_intent = "Show the support hero actively coordinating with the main hero without changing the fixed outcome."
             if support_villains and idx == 5:
                 dialogue_intent = "Show the secondary villain amplifying pressure without changing the fixed outcome."
             emotional_shift = "Escalate pressure, then resolve according to the fixed outcome."
@@ -136,7 +146,10 @@ def build_story_beat_plan(
                 f"support_villains={support_villains}."
             )
         ),
-        hero_inner_conflict=f"{hero_id} must respond without denying the fixed outcome: {outcome}.",
+        hero_inner_conflict=(
+            f"{primary_hero} must respond without denying the fixed outcome: {outcome}. "
+            f"support_heroes={support_heroes}."
+        ),
         panel_beats=beats,
         next_hook_seed=next_hook,
         factuality_guardrails=list(narrative_context_pack.get("prohibited_claims") or []),

@@ -30,21 +30,21 @@ class TestSelectForNoBattle:
         assert villain is None
 
     def test_spy_strong_up_returns_exposure(self):
-        """SPY > +1.0% → CHAR_HERO_003 (Exposure Futures)."""
+        """SPY > +1.0% → CHAR_HERO_004 (Exposure Futures)."""
         hero, villain = select_for_no_battle(_delta(vix=18.0, spy_pct=1.5))
-        assert hero == "CHAR_HERO_003"
+        assert hero == "CHAR_HERO_004"
         assert villain is None
 
     def test_spy_exactly_1pct_returns_exposure(self):
-        """SPY = +1.01% → CHAR_HERO_003 (경계값)."""
+        """SPY = +1.01% → CHAR_HERO_004 (경계값)."""
         hero, villain = select_for_no_battle(_delta(vix=17.0, spy_pct=1.01))
-        assert hero == "CHAR_HERO_003"
+        assert hero == "CHAR_HERO_004"
         assert villain is None
 
     def test_high_vix_returns_gold_bond(self):
-        """VIX > 18 → CHAR_HERO_004 (Gold Bond)."""
+        """VIX > 18 → CHAR_HERO_005 (Gold Bond)."""
         hero, villain = select_for_no_battle(_delta(vix=20.0, spy_pct=0.2))
-        assert hero == "CHAR_HERO_004"
+        assert hero == "CHAR_HERO_005"
         assert villain is None
 
     def test_default_returns_iron_nuna(self):
