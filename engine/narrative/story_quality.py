@@ -32,6 +32,10 @@ class StoryGroundingError(ValueError):
     """Raised when generated story contains unsupported market facts."""
 
 
+class StoryContinuityError(ValueError):
+    """Raised when generated story fails required previous-episode continuity."""
+
+
 def _evidence_text(context_pack: dict[str, Any] | None) -> str:
     if not context_pack:
         return ""
@@ -72,6 +76,60 @@ def _script_market_text(script_dict: dict[str, Any]) -> list[tuple[str, str]]:
             if isinstance(value, str) and value.strip():
                 snippets.append((f"P{idx}.{field}", value.strip()))
     return snippets
+
+
+def validate_story_continuity(
+    script_dict: dict[str, Any],
+    context_pack: dict[str, Any] | None,
+    story_beat_plan: dict[str, Any] | None = None,
+    *,
+    strict: bool = False,
+) -> list[str]:
+    """Validate that generated panels pay off previous-episode continuity."""
+    from engine.narrative.continuity_score import score_story_continuity
+
+    score = score_story_continuity(script_dict, context_pack, story_beat_plan)
+    if not score.seed and not score.source_episode_id:
+        return []
+
+    warnings: list[str] = []
+    if score.status != "pass":
+        warnings.append(
+            "Continuity score %.1f below threshold 70 (status=%s, missing=%s)"
+            % (score.total_score, score.status, ",".join(score.missing_requirements) or "none")
+        )
+
+    if warnings and strict:
+        raise StoryContinuityError("; ".join(warnings))
+    return warnings
+
+
+def build_continuity_quality_payload(
+    script_dict: dict[str, Any],
+    context_pack: dict[str, Any] | None,
+    story_beat_plan: dict[str, Any] | None = None,
+    *,
+    strict_enabled: bool = False,
+) -> dict[str, Any]:
+    """Build persistable continuity-quality metadata for shadow/strict operation."""
+    from engine.narrative.continuity_score import score_story_continuity
+
+    score = score_story_continuity(script_dict, context_pack, story_beat_plan)
+    warnings = []
+    if score.status != "pass" and (score.seed or score.source_episode_id):
+        warnings.append(
+            "Continuity score %.1f below threshold 70 (missing=%s)"
+            % (score.total_score, ",".join(score.missing_requirements) or "none")
+        )
+    payload = score.to_dict()
+    payload.update(
+        {
+            "strict_enabled": strict_enabled,
+            "warnings": warnings,
+            "previous_source_episode_id": score.source_episode_id,
+        }
+    )
+    return payload
 
 
 def validate_story_grounding(

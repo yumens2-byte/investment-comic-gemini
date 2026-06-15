@@ -73,7 +73,10 @@ def test_story_beat_plan_model_dump_json_serializable() -> None:
         scenario_type="ONE_VS_ONE",
     ).model_dump()
 
-    assert json.loads(json.dumps(plan, ensure_ascii=False))["panel_beats"][-1]["dramatic_function"] == "DISCLAIMER"
+    assert (
+        json.loads(json.dumps(plan, ensure_ascii=False))["panel_beats"][-1]["dramatic_function"]
+        == "DISCLAIMER"
+    )
 
 
 def test_story_beat_plan_pays_off_previous_hook_in_opening() -> None:
@@ -108,12 +111,12 @@ def test_story_beat_plan_limits_multi_villain_panels_to_p4_p5() -> None:
     )
 
     support_panels = [
-        beat.panel_idx
-        for beat in plan.panel_beats
-        if "CHAR_VILLAIN_001" in beat.required_character
+        beat.panel_idx for beat in plan.panel_beats if "CHAR_VILLAIN_001" in beat.required_character
     ]
     assert support_panels == [4, 5]
-    assert all("outside the supplied villain_ids" in " ".join(beat.forbidden) for beat in plan.panel_beats)
+    assert all(
+        "outside the supplied villain_ids" in " ".join(beat.forbidden) for beat in plan.panel_beats
+    )
 
 
 def test_alliance_story_beat_plan_requires_support_hero_in_coordination_panels() -> None:
@@ -127,9 +130,28 @@ def test_alliance_story_beat_plan_requires_support_hero_in_coordination_panels()
     )
 
     support_panels = [
-        beat.panel_idx
-        for beat in plan.panel_beats
-        if "CHAR_HERO_001" in beat.required_character
+        beat.panel_idx for beat in plan.panel_beats if "CHAR_HERO_001" in beat.required_character
     ]
     assert support_panels == [4, 5]
     assert "support_heroes=['CHAR_HERO_001']" in plan.hero_inner_conflict
+
+
+def test_story_beat_plan_marks_panel_2_for_arc_pivot() -> None:
+    context = _context_pack()
+    context["previous_episode"] = {"next_hook": "검은 문은 아직 닫히지 않았다"}
+    context["arc_pivot"] = {
+        "pivot_required": True,
+        "pivot_reasons": ["active_villain_changed"],
+        "instruction": "Explain why the villain changed.",
+    }
+
+    plan = build_story_beat_plan(
+        narrative_context_pack=context,
+        hero_id="hero_gold_bond_muscle",
+        villain_id="villain_debt_titan",
+        battle_result={"outcome": "DRAW"},
+        scenario_type="ONE_VS_ONE",
+    )
+
+    assert plan.panel_beats[1].must_reference_previous is True
+    assert "villain changed" in plan.panel_beats[1].dialogue_intent
