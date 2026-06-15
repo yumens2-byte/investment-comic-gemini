@@ -111,6 +111,25 @@ class EpisodeScript(BaseModel):
     event_type: str = Field(description="에피소드 타입 (BATTLE/SHOCK/AFTERMATH/INTEL/NORMAL)")
     title: str = Field(description="에피소드 제목 (한국어)")
     logline: str = Field(description="한 줄 요약 (한국어, 100자 이내)", max_length=100)
+    next_hook: str | None = Field(
+        default=None,
+        max_length=120,
+        description="다음 회차에서 회수할 비예측형 서사 hook (투자 전망 금지)",
+    )
+    unresolved_threads: list[str] = Field(
+        default_factory=list,
+        max_length=3,
+        description="다음 회차로 넘길 미해결 감정/갈등 thread 목록",
+    )
+    resolved_threads: list[str] = Field(
+        default_factory=list,
+        max_length=3,
+        description="이번 회차에서 회수된 이전 thread 목록",
+    )
+    relationship_delta: dict[str, str] = Field(
+        default_factory=dict,
+        description="캐릭터/진영 관계 변화 요약",
+    )
 
     panels: list[Panel] = Field(
         min_length=8,

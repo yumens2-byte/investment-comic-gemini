@@ -45,6 +45,10 @@ def _derive_threads(script_dict: dict[str, Any], ctx: dict[str, Any]) -> list[st
     next_hook = str(script_dict.get("next_hook") or "").strip()
     if next_hook:
         threads.append(next_hook)
+    for thread in script_dict.get("unresolved_threads") or []:
+        text = str(thread).strip()
+        if text:
+            threads.append(text)
     outcome = (ctx.get("battle_result") or {}).get("outcome")
     villain = ctx.get("villain_id")
     if outcome:
@@ -88,6 +92,17 @@ def build_continuity_bundle(
         "hero_ids": ctx.get("heroes") or [ctx.get("hero_id")],
         "villain_id": ctx.get("villain_id"),
         "unresolved_threads": _derive_threads(script_dict, ctx),
+        "resolved_threads": [
+            str(item).strip()
+            for item in script_dict.get("resolved_threads") or []
+            if str(item).strip()
+        ][:3],
+        "relationship_delta": script_dict.get("relationship_delta") or {},
+        "arc_id": (ctx.get("arc_context") or {}).get("arc_id"),
+        "arc_day": (ctx.get("arc_context") or {}).get("arc_day"),
+        "active_villain": (ctx.get("arc_context") or {}).get("active_villain")
+        or ctx.get("villain_id"),
+        "arc_tension": (ctx.get("arc_context") or {}).get("arc_tension"),
         "must_continue_from": next_hook or final_summary,
     }
 
@@ -150,3 +165,105 @@ def load_previous_continuity(episode_date: str) -> dict[str, Any] | None:
     except Exception as exc:
         logger.warning("[continuity] previous continuity load failed: %s", exc)
     return None
+
+
+def detect_arc_pivot(
+    previous_episode: dict[str, Any] | None, arc_context: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Detect whether current arc context needs an explicit narrative pivot explanation."""
+    previous = previous_episode or {}
+    current = arc_context or {}
+    previous_villain = previous.get("active_villain") or previous.get("villain_id")
+    current_villain = current.get("active_villain") or current.get("villain_id")
+    previous_tension = _as_float(previous.get("arc_tension"))
+    current_tension = _as_float(current.get("arc_tension") or current.get("tension"))
+    reasons: list[str] = []
+    if previous_villain and current_villain and previous_villain != current_villain:
+        reasons.append("active_villain_changed")
+    if (
+        previous_tension is not None
+        and current_tension is not None
+        and abs(current_tension - previous_tension) >= 20
+    ):
+        reasons.append("arc_tension_jump")
+    return {
+        "pivot_required": bool(reasons),
+        "pivot_reasons": reasons,
+        "previous_active_villain": previous_villain,
+        "current_active_villain": current_villain,
+        "previous_arc_tension": previous_tension,
+        "current_arc_tension": current_tension,
+        "instruction": (
+            "P1-P2 must explain why the scene/villain/tension changed before escalating a new conflict."
+            if reasons
+            else "No explicit arc pivot explanation required."
+        ),
+    }
+
+
+def _as_float(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _merge_recent_window(bundles: list[dict[str, Any]]) -> dict[str, Any]:
+    primary = bundles[0] if bundles else None
+    recent_threads: list[str] = []
+    recurring_villains: list[str] = []
+    relationship_memory: dict[str, Any] = {}
+    for bundle in bundles:
+        for thread in bundle.get("unresolved_threads") or []:
+            text = str(thread).strip()
+            if text and text not in recent_threads:
+                recent_threads.append(text)
+        villain = bundle.get("active_villain") or bundle.get("villain_id")
+        if villain and villain not in recurring_villains:
+            recurring_villains.append(str(villain))
+        rel = bundle.get("relationship_delta") or {}
+        if isinstance(rel, dict):
+            relationship_memory.update(rel)
+    return {
+        "version": "continuity-window-1",
+        "primary_previous": primary,
+        "recent_threads": recent_threads[:5],
+        "recurring_villains": recurring_villains[:5],
+        "relationship_memory": relationship_memory,
+    }
+
+
+def load_continuity_window(episode_date: str, limit: int = 3) -> dict[str, Any]:
+    """Load a compact continuity window from recent prior published/assembled episodes."""
+    bundles: list[dict[str, Any]] = []
+    try:
+        from engine.common.supabase_client import icg_table
+
+        resp = (
+            icg_table("episode_assets")
+            .select(
+                "episode_date, episode_no, event_type, status, script_json, "
+                "battle_json, scenario_type, heroes_json"
+            )
+            .in_("status", ["published", "assembled"])
+            .lt("episode_date", episode_date)
+            .order("episode_date", desc=True)
+            .order("episode_no", desc=True)
+            .limit(limit * 2)
+            .execute()
+        )
+        rows = getattr(resp, "data", None)
+        if isinstance(rows, list):
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                bundle = bundle_from_episode_row(row)
+                if bundle:
+                    bundles.append(bundle)
+                if len(bundles) >= limit:
+                    break
+    except Exception as exc:
+        logger.warning("[continuity] continuity window load failed: %s", exc)
+    return _merge_recent_window(bundles)

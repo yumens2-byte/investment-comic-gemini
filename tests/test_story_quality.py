@@ -17,9 +17,7 @@ def _script_with_algo_claim() -> dict:
 
 def test_story_grounding_flags_unsupported_algo_trading_claim() -> None:
     context_pack = {
-        "top_evidence": [
-            {"id": "metric:VIX", "value": "VIX 15.7", "story_role": "volatility"}
-        ]
+        "top_evidence": [{"id": "metric:VIX", "value": "VIX 15.7", "story_role": "volatility"}]
     }
 
     warnings = validate_story_grounding(_script_with_algo_claim(), context_pack)
@@ -45,3 +43,32 @@ def test_story_grounding_allows_when_algo_evidence_is_supplied() -> None:
     }
 
     assert validate_story_grounding(_script_with_algo_claim(), context_pack, strict=True) == []
+
+
+def test_story_continuity_flags_missing_previous_hook_payoff() -> None:
+    from engine.narrative.story_quality import StoryContinuityError, validate_story_continuity
+
+    script = {
+        "panels": [
+            {"idx": 1, "narration": "새로운 전투가 시작됐다.", "key_text": "돌격!"},
+            {"idx": 2, "narration": "VIX가 흔들렸다."},
+        ]
+    }
+    context = {"previous_episode": {"next_hook": "검은 문은 아직 닫히지 않았다"}}
+
+    with pytest.raises(StoryContinuityError):
+        validate_story_continuity(script, context, strict=True)
+
+
+def test_story_continuity_passes_when_opening_mentions_previous_hook() -> None:
+    from engine.narrative.story_quality import validate_story_continuity
+
+    script = {
+        "panels": [
+            {"idx": 1, "narration": "검은 문은 아직 닫히지 않았고, 오늘의 VIX가 그 틈을 흔들었다."}
+        ]
+    }
+    context = {"previous_episode": {"next_hook": "검은 문은 아직 닫히지 않았다"}}
+    plan = {"panel_beats": [{"panel_idx": 1, "must_reference_previous": True}]}
+
+    assert validate_story_continuity(script, context, plan, strict=True) == []
