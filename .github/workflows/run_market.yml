@@ -218,6 +218,12 @@ jobs:
           echo "  CONTINUITY_STRICT_ENABLED       = $(flag_label "$CONTINUITY_STRICT_ENABLED")"
           echo "  NARRATIVE_CONTEXT_ENABLED       = $(flag_label "$NARRATIVE_CONTEXT_ENABLED")"
           echo "  STORY_PLANNER_ENABLED           = $(flag_label "$STORY_PLANNER_ENABLED")"
+          if [ "${CONTINUITY_STRICT_ENABLED,,}" = "true" ]; then
+            echo "⚠️  CONTINUITY_STRICT_ENABLED=true: previous-hook payoff failures will stop STEP 4."
+          fi
+          if [ "${NARRATIVE_CONTEXT_ENABLED,,}" = "true" ] && [ "${STORY_PLANNER_ENABLED,,}" = "true" ] && [ "${CONTINUITY_STRICT_ENABLED,,}" = "true" ]; then
+            echo "⚠️  all-true continuity mode detected. Prefer shadow pilot first if this is a rollout test."
+          fi
           DATE_ARG=()
           if [ -n "${TARGET_DATE}" ]; then DATE_ARG=(--date "${TARGET_DATE}"); fi
           python -m scripts.run_market --stage narrative "${DATE_ARG[@]}"

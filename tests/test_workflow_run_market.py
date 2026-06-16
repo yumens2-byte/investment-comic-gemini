@@ -64,3 +64,10 @@ def test_run_market_workflow_wires_arc_state_v3_flag() -> None:
     on_block = workflow.get("on") or workflow.get(True)
     assert "arc_state_v3" in on_block["workflow_dispatch"]["inputs"]
     assert "ARC_STATE_V3_ENABLED            =" in text
+
+
+def test_run_market_workflow_warns_for_all_true_continuity_mode() -> None:
+    text = _workflow_text()
+
+    assert "CONTINUITY_STRICT_ENABLED=true: previous-hook payoff failures will stop STEP 4" in text
+    assert "all-true continuity mode detected" in text
