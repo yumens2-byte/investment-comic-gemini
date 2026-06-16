@@ -1,6 +1,12 @@
 import pytest
 
 from scripts.run_market import (
+    _ensure_narrative_quality_inputs,
+    _validate_narrative_quality_inputs,
+)
+
+# Keep run_market helper imports in this single block.  Splitting the same helper
+# across multiple imports has previously caused deploy-time Ruff F811/I001 failures.
     _feature_flag_snapshot,
     _record_context_error,
     _validate_narrative_quality_inputs,
