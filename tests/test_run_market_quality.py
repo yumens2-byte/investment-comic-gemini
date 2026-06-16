@@ -2,6 +2,8 @@ import pytest
 
 from scripts.run_market import (
     _ensure_narrative_quality_inputs,
+    _feature_flag_snapshot,
+    _record_context_error,
     _validate_narrative_quality_inputs,
 )
 
@@ -94,3 +96,27 @@ def test_quality_inputs_do_not_require_optional_story_enrichment(monkeypatch) ->
     )
 
     assert rebuilt["narrative_context_pack"]["top_evidence"][0]["id"] == "metric:SPY"
+
+
+def test_feature_flag_snapshot_reports_narrative_quality_flags(monkeypatch) -> None:
+    monkeypatch.setenv("NARRATIVE_CONTEXT_ENABLED", "true")
+    monkeypatch.setenv("STORY_PLANNER_ENABLED", "false")
+    monkeypatch.setenv("CONTINUITY_STRICT_ENABLED", "true")
+
+    assert _feature_flag_snapshot() == {
+        "NARRATIVE_CONTEXT_ENABLED": True,
+        "STORY_PLANNER_ENABLED": False,
+        "CONTINUITY_STRICT_ENABLED": True,
+    }
+
+
+def test_record_context_error_keeps_original_ctx_immutable(monkeypatch) -> None:
+    monkeypatch.setenv("NARRATIVE_CONTEXT_ENABLED", "true")
+    ctx = {"event_type": "NORMAL"}
+
+    annotated = _record_context_error(ctx, "missing narrative_context_pack")
+
+    assert "_context_errors" not in ctx
+    assert annotated["event_type"] == "NORMAL"
+    assert annotated["_context_errors"][0]["message"] == "missing narrative_context_pack"
+    assert annotated["_context_errors"][0]["flags"]["NARRATIVE_CONTEXT_ENABLED"] is True
