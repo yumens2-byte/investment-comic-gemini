@@ -1,11 +1,11 @@
 import pytest
 
 from scripts.run_market import (
+    _ensure_narrative_quality_inputs,
     _feature_flag_snapshot,
     _record_context_error,
     _validate_narrative_quality_inputs,
 )
-from scripts.run_market import _ensure_narrative_quality_inputs, _validate_narrative_quality_inputs
 
 
 def _ctx() -> dict:
@@ -78,6 +78,8 @@ def test_feature_flag_snapshot_captures_continuity_flags(monkeypatch) -> None:
         "ARC_STATE_V3_ENABLED": False,
         "EPISODE_TYPE_V3_ENABLED": True,
     }
+
+
 def test_quality_inputs_rebuild_from_core_ctx_when_enabled(monkeypatch) -> None:
     monkeypatch.setenv("NARRATIVE_CONTEXT_ENABLED", "true")
     monkeypatch.setenv("STORY_PLANNER_ENABLED", "true")
