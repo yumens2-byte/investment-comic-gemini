@@ -131,6 +131,41 @@ def _env_flag_enabled(name: str) -> bool:
     return os.environ.get(name, "false").strip().lower() == "true"
 
 
+_CONTINUITY_FLAG_NAMES = (
+    "NARRATIVE_CONTEXT_ENABLED",
+    "STORY_PLANNER_ENABLED",
+    "CONTINUITY_STRICT_ENABLED",
+    "ARC_STATE_V3_ENABLED",
+    "EPISODE_TYPE_V3_ENABLED",
+)
+
+
+def _feature_flag_snapshot() -> dict[str, bool]:
+    """Capture continuity-critical flags for cross-stage diagnostics."""
+    return {name: _env_flag_enabled(name) for name in _CONTINUITY_FLAG_NAMES}
+
+
+def _record_context_error(ctx: dict, feature: str, exc: Exception, *, strict: bool) -> None:
+    """Attach recoverable context-generation errors to analysis_ctx_json."""
+    ctx.setdefault("context_errors", []).append(
+        {
+            "feature": feature,
+            "error_type": exc.__class__.__name__,
+            "error_message": str(exc),
+            "strict": strict,
+        }
+    )
+
+
+def _quality_gate_context(ctx: dict) -> str:
+    flags = ctx.get("feature_flags_snapshot") or _feature_flag_snapshot()
+    errors = ctx.get("context_errors") or []
+    return (
+        f" flags={flags}; context_errors={errors}; "
+        "stage가 all이 아니면 analysis stage를 동일 flag로 재실행하세요."
+    )
+
+
 def _validate_narrative_quality_inputs(ctx: dict) -> dict[str, int | bool]:
     """Fail fast when enabled narrative-quality pilot inputs were lost between stages."""
     narrative_enabled = _env_flag_enabled("NARRATIVE_CONTEXT_ENABLED")
@@ -141,12 +176,12 @@ def _validate_narrative_quality_inputs(ctx: dict) -> dict[str, int | bool]:
     if narrative_enabled and not context_pack:
         raise RuntimeError(
             "NARRATIVE_CONTEXT_ENABLED=true 이지만 analysis_ctx_json에 "
-            "narrative_context_pack이 없습니다. analysis stage를 같은 flag로 재실행하세요."
+            "narrative_context_pack이 없습니다." + _quality_gate_context(ctx)
         )
     if planner_enabled and not story_plan:
         raise RuntimeError(
-            "STORY_PLANNER_ENABLED=true 이지만 analysis_ctx_json에 story_beat_plan이 없습니다. "
-            "analysis stage를 같은 flag로 재실행하세요."
+            "STORY_PLANNER_ENABLED=true 이지만 analysis_ctx_json에 story_beat_plan이 없습니다."
+            + _quality_gate_context(ctx)
         )
 
     evidence_count = len(context_pack.get("top_evidence") or [])
@@ -154,11 +189,12 @@ def _validate_narrative_quality_inputs(ctx: dict) -> dict[str, int | bool]:
     if narrative_enabled and evidence_count == 0:
         raise RuntimeError(
             "Narrative Context Pack은 생성됐지만 top_evidence가 0개입니다. "
-            "시장 데이터 품질을 확인하세요."
+            "시장 데이터 품질을 확인하세요." + _quality_gate_context(ctx)
         )
     if planner_enabled and beat_count != 8:
         raise RuntimeError(
             f"Story Beat Plan panel_beats는 8개여야 합니다. 현재 {beat_count}개입니다."
+            + _quality_gate_context(ctx)
         )
 
     return {
@@ -898,6 +934,8 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
             "risk_trace_v3": risk_trace_v3,
         }
 
+        ctx["feature_flags_snapshot"] = _feature_flag_snapshot()
+
         if os.environ.get("CHARACTER_CANON_PROMPT_V2_ENABLED", "false").lower() == "true":
             try:
                 from engine.narrative.prompt_tpl import build_active_character_cards
@@ -988,6 +1026,14 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                     f"planner={'story_beat_plan' in ctx}",
                 )
             except Exception as _ctx_exc:
+                _record_context_error(
+                    ctx,
+                    "narrative_context_pack",
+                    _ctx_exc,
+                    strict=_env_flag_enabled("CONTINUITY_STRICT_ENABLED")
+                    or _env_flag_enabled("NARRATIVE_CONTEXT_ENABLED")
+                    or _env_flag_enabled("STORY_PLANNER_ENABLED"),
+                )
                 logger_inst.warning(
                     "STEP_3",
                     f"[NarrativeContext] 생성 실패 (파이프라인 계속): {_ctx_exc}",
