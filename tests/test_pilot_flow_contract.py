@@ -83,6 +83,33 @@ def test_pilot_context_plan_prompt_contract_survives_legacy_template(monkeypatch
     assert "news:fed-watch" in prompt
 
 
+def test_grounding_guardrails_are_present_when_context_pilot_is_disabled(monkeypatch) -> None:
+    """Unsupported algo-volume claims must be forbidden even without pilot context."""
+    monkeypatch.setattr(
+        "engine.common.notion_loader.load_narrative_user_template",
+        lambda: "Episode {{ episode_id }} / {{ scenario_type }} / {{ ending_tone }}",
+    )
+
+    prompt = render_user_prompt(
+        date="2026-06-16",
+        episode_id="ICG-2026-06-16-001",
+        event_type="NORMAL",
+        delta={"SPY": {"curr": 1.76, "pct": 1.76}},
+        battle_result={"outcome": "HERO_TACTICAL_VICTORY", "balance": 12},
+        hero_id="CHAR_HERO_001",
+        villain_id="CHAR_VILLAIN_005",
+        arc_context={"tension": 42},
+        scenario_type="ONE_VS_ONE",
+        ending_tone="OPTIMISTIC",
+        narrative_context_pack=None,
+        story_beat_plan=None,
+    )
+
+    assert "Always-on Market Grounding Guardrails" in prompt
+    assert "Do not claim algo-trading volume" in prompt
+    assert "Algorithm Reaper may appear as a fictional character" in prompt
+
+
 def test_pilot_grounding_gate_blocks_unsupported_algo_claims_until_evidence_exists() -> None:
     context_pack = _pilot_context_pack()
     script = {
