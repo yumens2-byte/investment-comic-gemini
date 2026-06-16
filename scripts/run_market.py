@@ -131,16 +131,25 @@ def _env_flag_enabled(name: str) -> bool:
     return os.environ.get(name, "false").strip().lower() == "true"
 
 
-_CONTINUITY_FLAG_NAMES = (
+_NARRATIVE_QUALITY_FLAG_NAMES = (
     "NARRATIVE_CONTEXT_ENABLED",
     "STORY_PLANNER_ENABLED",
     "CONTINUITY_STRICT_ENABLED",
-    "ARC_STATE_V3_ENABLED",
-    "EPISODE_TYPE_V3_ENABLED",
 )
 
 
 def _feature_flag_snapshot() -> dict[str, bool]:
+    """Return the narrative quality feature flags as booleans for logs/tests."""
+    return {name: _env_flag_enabled(name) for name in _NARRATIVE_QUALITY_FLAG_NAMES}
+
+
+def _record_context_error(ctx: dict, message: str) -> dict:
+    """Return a copy of ctx annotated with a narrative quality context error."""
+    annotated = dict(ctx)
+    errors = list(annotated.get("_context_errors") or [])
+    errors.append({"message": message, "flags": _feature_flag_snapshot()})
+    annotated["_context_errors"] = errors
+    return annotated
     """Capture continuity-critical flags for cross-stage diagnostics."""
     return {name: _env_flag_enabled(name) for name in _CONTINUITY_FLAG_NAMES}
 
