@@ -1,6 +1,9 @@
 import pytest
 
 from scripts.run_market import (
+    _ensure_narrative_quality_inputs,
+    _validate_narrative_quality_inputs,
+)
     _feature_flag_snapshot,
     _record_context_error,
     _validate_narrative_quality_inputs,
