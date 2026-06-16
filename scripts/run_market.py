@@ -205,6 +205,58 @@ def _validate_narrative_quality_inputs(ctx: dict) -> dict[str, int | bool]:
     }
 
 
+def _ensure_narrative_quality_inputs(ctx: dict) -> dict:
+    """Rebuild enabled narrative-quality inputs when a restored analysis ctx lacks them.
+
+    Multi-stage GitHub Actions runs persist ``analysis_ctx_json`` in STEP 3 and restore it
+    in STEP 4.  If pilot flags are enabled after STEP 3, or if STEP 3 saved a legacy ctx,
+    the strict STEP 4 quality gate used to fail even though the core market data needed to
+    build the pack is already present in ctx.  Rebuilding here keeps optional data gaps
+    (for example crypto basis/social sentiment outages) from being misreported as missing
+    required story inputs.
+    """
+    narrative_enabled = _env_flag_enabled("NARRATIVE_CONTEXT_ENABLED")
+    planner_enabled = _env_flag_enabled("STORY_PLANNER_ENABLED")
+    if not narrative_enabled and not planner_enabled:
+        return ctx
+
+    rebuilt_ctx = dict(ctx)
+    if narrative_enabled and not rebuilt_ctx.get("narrative_context_pack"):
+        from engine.analysis.story_context_builder import build_narrative_context_pack
+
+        rebuilt_ctx["narrative_context_pack"] = build_narrative_context_pack(
+            delta=rebuilt_ctx.get("delta") or {},
+            battle_result=rebuilt_ctx.get("battle_result") or {},
+            event_type=str(rebuilt_ctx.get("event_type") or "NORMAL"),
+            scenario_type=str(rebuilt_ctx.get("scenario_type") or "ONE_VS_ONE"),
+            ending_tone=str(rebuilt_ctx.get("ending_tone") or "TENSE"),
+            arc_context=rebuilt_ctx.get("arc_context") or {},
+            previous_episode=rebuilt_ctx.get("previous_episode"),
+        )
+
+    if planner_enabled and not rebuilt_ctx.get("story_beat_plan"):
+        from engine.narrative.story_planner import build_story_beat_plan
+
+        if not rebuilt_ctx.get("narrative_context_pack"):
+            raise RuntimeError(
+                "STORY_PLANNER_ENABLED=true 이지만 Story Beat Plan을 만들 "
+                "narrative_context_pack이 없습니다."
+            )
+        hero_id = str(rebuilt_ctx.get("hero_id") or "")
+        villain_id = str(rebuilt_ctx.get("villain_id") or "")
+        rebuilt_ctx["story_beat_plan"] = build_story_beat_plan(
+            narrative_context_pack=rebuilt_ctx["narrative_context_pack"],
+            hero_id=hero_id,
+            villain_id=villain_id,
+            battle_result=rebuilt_ctx.get("battle_result") or {},
+            scenario_type=str(rebuilt_ctx.get("scenario_type") or "ONE_VS_ONE"),
+            hero_ids=rebuilt_ctx.get("heroes") or ([hero_id] if hero_id else []),
+            villain_ids=rebuilt_ctx.get("villain_ids") or ([villain_id] if villain_id else []),
+        ).model_dump()
+
+    return rebuilt_ctx
+
+
 def _load_recent_scenarios(episode_date: str, limit: int = 7) -> list[str]:
     """
     최근 에피소드 시나리오 타입 목록 조회.
@@ -1013,6 +1065,7 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
     try:
         from engine.narrative.claude_client import generate_episode
 
+        ctx = _ensure_narrative_quality_inputs(ctx)
         quality = _validate_narrative_quality_inputs(ctx)
         logger_inst.info(
             "STEP_4",
