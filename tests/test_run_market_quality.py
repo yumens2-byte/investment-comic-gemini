@@ -1,6 +1,6 @@
 import pytest
 
-from scripts.run_market import _validate_narrative_quality_inputs
+from scripts.run_market import _ensure_narrative_quality_inputs, _validate_narrative_quality_inputs
 
 
 def _ctx() -> dict:
@@ -44,3 +44,47 @@ def test_quality_gate_fails_when_story_plan_is_incomplete(monkeypatch) -> None:
 
     with pytest.raises(RuntimeError, match="8개"):
         _validate_narrative_quality_inputs(ctx)
+
+
+def test_quality_inputs_rebuild_from_core_ctx_when_enabled(monkeypatch) -> None:
+    monkeypatch.setenv("NARRATIVE_CONTEXT_ENABLED", "true")
+    monkeypatch.setenv("STORY_PLANNER_ENABLED", "true")
+
+    rebuilt = _ensure_narrative_quality_inputs(
+        {
+            "event_type": "NORMAL",
+            "delta": {
+                "VIX": {"curr": 17.68, "pct": 2.1},
+                "SPY": {"curr": 1.76, "pct": 1.76},
+            },
+            "battle_result": {"outcome": "HERO_TACTICAL_VICTORY", "balance": 12},
+            "hero_id": "CHAR_HERO_001",
+            "villain_id": "CHAR_VILLAIN_001",
+            "villain_ids": ["CHAR_VILLAIN_001"],
+            "scenario_type": "ONE_VS_ONE",
+            "ending_tone": "TENSE",
+            "arc_context": {"tension": 40},
+            "heroes": ["CHAR_HERO_001"],
+        }
+    )
+
+    summary = _validate_narrative_quality_inputs(rebuilt)
+    assert summary["evidence_count"] > 0
+    assert summary["beat_count"] == 8
+
+
+def test_quality_inputs_do_not_require_optional_story_enrichment(monkeypatch) -> None:
+    monkeypatch.setenv("NARRATIVE_CONTEXT_ENABLED", "true")
+    monkeypatch.setenv("STORY_PLANNER_ENABLED", "false")
+
+    rebuilt = _ensure_narrative_quality_inputs(
+        {
+            "event_type": "NORMAL",
+            "delta": {"SPY": {"curr": 1.76, "pct": 1.76}},
+            "battle_result": {"outcome": "DRAW", "balance": 0},
+            "hero_id": "CHAR_HERO_001",
+            "villain_id": "CHAR_VILLAIN_001",
+        }
+    )
+
+    assert rebuilt["narrative_context_pack"]["top_evidence"][0]["id"] == "metric:SPY"
