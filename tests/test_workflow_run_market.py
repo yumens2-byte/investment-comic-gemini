@@ -69,5 +69,6 @@ def test_run_market_workflow_wires_arc_state_v3_flag() -> None:
 def test_run_market_workflow_warns_for_all_true_continuity_mode() -> None:
     text = _workflow_text()
 
-    assert "CONTINUITY_STRICT_ENABLED=true: previous-hook payoff failures will stop STEP 4" in text
+    assert "previous-hook payoff failures trigger one repair retry" in text
+    assert "CONTINUITY_STRICT_HARD_FAIL=true to stop STEP 4 after repair fails" in text
     assert "all-true continuity mode detected" in text
