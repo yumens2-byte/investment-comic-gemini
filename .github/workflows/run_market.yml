@@ -64,6 +64,10 @@ on:
         description: 'Pilot StoryBeatPlan 2-pass planner (true/false/auto)'
         required: false
         default: 'auto'
+      continuity_strict:
+        description: 'Strict previous-episode continuity gate (true/false/auto)'
+        required: false
+        default: 'auto'
 
 permissions:
   contents: read
@@ -116,6 +120,7 @@ jobs:
       # ── Narrative Context Pilot Flags (inputs > vars > 'false') ─────────
       NARRATIVE_CONTEXT_ENABLED: ${{ (inputs.narrative_context != '' && inputs.narrative_context != 'auto') && inputs.narrative_context || vars.NARRATIVE_CONTEXT_ENABLED || 'false' }}
       STORY_PLANNER_ENABLED: ${{ (inputs.story_planner != '' && inputs.story_planner != 'auto') && inputs.story_planner || vars.STORY_PLANNER_ENABLED || 'false' }}
+      CONTINUITY_STRICT_ENABLED: ${{ (inputs.continuity_strict != '' && inputs.continuity_strict != 'auto') && inputs.continuity_strict || vars.CONTINUITY_STRICT_ENABLED || 'false' }}
 
       PYTHONPATH: .
       ICG_ROLLOUT_VERSION: narrative-context-story-quality-v2
@@ -210,8 +215,15 @@ jobs:
           echo "  VILLAIN_SIGNATURE_BONUS_ENABLED = $(flag_label "$VILLAIN_SIGNATURE_BONUS_ENABLED")"
           echo "  EMERGENCE_DEFICIT_ENABLED       = $(flag_label "$EMERGENCE_DEFICIT_ENABLED")"
           echo "  ARC_STATE_V3_ENABLED            = $(flag_label "$ARC_STATE_V3_ENABLED")"
+          echo "  CONTINUITY_STRICT_ENABLED       = $(flag_label "$CONTINUITY_STRICT_ENABLED")"
           echo "  NARRATIVE_CONTEXT_ENABLED       = $(flag_label "$NARRATIVE_CONTEXT_ENABLED")"
           echo "  STORY_PLANNER_ENABLED           = $(flag_label "$STORY_PLANNER_ENABLED")"
+          if [ "${CONTINUITY_STRICT_ENABLED,,}" = "true" ]; then
+            echo "⚠️  CONTINUITY_STRICT_ENABLED=true: previous-hook payoff failures will stop STEP 4."
+          fi
+          if [ "${NARRATIVE_CONTEXT_ENABLED,,}" = "true" ] && [ "${STORY_PLANNER_ENABLED,,}" = "true" ] && [ "${CONTINUITY_STRICT_ENABLED,,}" = "true" ]; then
+            echo "⚠️  all-true continuity mode detected. Prefer shadow pilot first if this is a rollout test."
+          fi
           DATE_ARG=()
           if [ -n "${TARGET_DATE}" ]; then DATE_ARG=(--date "${TARGET_DATE}"); fi
           python -m scripts.run_market --stage narrative "${DATE_ARG[@]}"

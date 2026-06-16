@@ -129,6 +129,45 @@ Ending Tone: **{{ ending_tone }}**
 - market_ref must cite supplied evidence only: use metric names/numbers from Evidence Cards, or a supplied news/event card.
 - Do not mention algo-trading volume, algo cascade detection, abnormal trading spikes, or cascade collapse unless an Evidence Card explicitly says so. Algorithm Reaper can appear as a character, but not as a real market data claim.
 {% endif %}
+{% if narrative_context_pack.previous_episode %}
+### Previous Episode Continuity (must pay off before starting a new conflict)
+- source_episode_id: {{ narrative_context_pack.previous_episode.source_episode_id }}
+- title: {{ narrative_context_pack.previous_episode.title }}
+- previous_final_panel: {{ narrative_context_pack.previous_episode.final_panel_summary }}
+- previous_next_hook: {{ narrative_context_pack.previous_episode.next_hook }}
+- must_continue_from: {{ narrative_context_pack.previous_episode.must_continue_from }}
+{% if narrative_context_pack.previous_episode.unresolved_threads %}
+- unresolved_threads:
+{% for thread in narrative_context_pack.previous_episode.unresolved_threads %}
+  - {{ thread }}
+{% endfor %}
+{% endif %}
+{% if narrative_context_pack.previous_episode.relationship_delta %}
+- relationship_delta:
+{% for pair, delta in narrative_context_pack.previous_episode.relationship_delta.items() %}
+  - {{ pair }} = {{ delta }}
+{% endfor %}
+- HARD RULE: If these characters appear, their dialogue tone must reflect relationship_delta.
+{% endif %}
+{% if narrative_context_pack.continuity_window and narrative_context_pack.continuity_window.recent_threads %}
+- long_running_threads:
+{% for thread in narrative_context_pack.continuity_window.recent_threads[:3] %}
+  - {{ thread }}
+{% endfor %}
+{% endif %}
+{% if narrative_context_pack.arc_pivot and narrative_context_pack.arc_pivot.pivot_required %}
+- arc_pivot_required: true
+- arc_pivot_reasons: {{ narrative_context_pack.arc_pivot.pivot_reasons | join(', ') }}
+- arc_pivot_instruction: {{ narrative_context_pack.arc_pivot.instruction }}
+{% endif %}
+{% if narrative_context_pack.continuity_directives %}
+- continuity_directives:
+{% for directive in narrative_context_pack.continuity_directives %}
+  - {{ directive }}
+{% endfor %}
+{% endif %}
+- HARD RULE: Panel 1 or Panel 2 must explicitly acknowledge previous_next_hook or must_continue_from in narration, dialogue, or market_ref.
+{% endif %}
 
 {% endif %}
 

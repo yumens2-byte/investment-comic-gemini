@@ -62,6 +62,7 @@ def build_story_beat_plan(
     foreshadow = narrative_context_pack.get("foreshadow") or []
     next_hook = str(foreshadow[0]) if foreshadow else "The next market gate remains unresolved."
     previous_episode = narrative_context_pack.get("previous_episode") or {}
+    arc_pivot = narrative_context_pack.get("arc_pivot") or {}
     previous_hook = str(previous_episode.get("next_hook") or "").strip()
     previous_final = str(previous_episode.get("final_panel_summary") or "").strip()
     continuity_seed = previous_hook or previous_final
@@ -107,6 +108,15 @@ def build_story_beat_plan(
             must_reference_previous = True
             dialogue_intent = f"Open by paying off the previous hook before today's market cause: {continuity_seed}"
             emotional_shift = "Connect yesterday's unresolved tension to today's opening pressure."
+        if arc_pivot.get("pivot_required") and idx == 2:
+            reasons = ", ".join(str(item) for item in arc_pivot.get("pivot_reasons") or [])
+            continuity_payoff = f"Explain arc pivot before escalation: {reasons}"
+            must_reference_previous = True
+            dialogue_intent = str(
+                arc_pivot.get("instruction")
+                or "Explain why the scene, villain, or tension changed before escalating."
+            )
+            emotional_shift = "Bridge prior continuity into today's changed arc state."
 
         if function == "NEXT_HOOK":
             dialogue_intent = f"Foreshadow: {next_hook}"
@@ -118,7 +128,9 @@ def build_story_beat_plan(
             "Do not add villains outside the supplied villain_ids.",
         ]
         if continuity_seed:
-            forbidden.append("Do not start a completely new conflict before acknowledging previous_episode.next_hook.")
+            forbidden.append(
+                "Do not start a completely new conflict before acknowledging previous_episode.next_hook."
+            )
 
         beats.append(
             StoryBeat(
