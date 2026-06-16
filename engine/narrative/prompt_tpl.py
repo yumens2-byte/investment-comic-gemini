@@ -216,6 +216,30 @@ def _append_story_beat_plan_fallback(rendered: str, story_beat_plan: dict | None
     return rendered + "\n" + "\n".join(lines)
 
 
+def _append_always_on_grounding_guardrails(rendered: str) -> str:
+    """Append factuality guardrails that must survive disabled pilot context.
+
+    The Narrative Context Pack has richer evidence cards, but the production
+    workflow can run with NARRATIVE_CONTEXT_ENABLED=false.  In that mode Claude
+    still receives market deltas and may choose the Algorithm Reaper motif; make
+    sure it does not turn that motif into unsupported real-market claims.
+    """
+    marker = "Always-on Market Grounding Guardrails"
+    if marker in rendered:
+        return rendered
+    lines = [
+        "",
+        f"## {marker}",
+        "- market_ref must cite only supplied delta numbers or supplied evidence cards.",
+        "- Do not claim algo-trading volume, abnormal trading spikes, algo cascade "
+        "detection, cascade collapse, or circuit-driven order flow unless supplied "
+        "evidence explicitly states it.",
+        "- Algorithm Reaper may appear as a fictional character/metaphor, but not as "
+        "a real market-data source or measured trading-volume fact.",
+    ]
+    return rendered + "\n" + "\n".join(lines)
+
+
 def render_user_prompt(
     date: str,
     episode_id: str,
@@ -346,6 +370,7 @@ def render_user_prompt(
     rendered = _append_narrative_context_fallback(rendered, narrative_context_pack)
     rendered = _append_story_beat_plan_fallback(rendered, story_beat_plan)
     rendered = _append_character_cards_fallback(rendered, active_character_cards)
+    rendered = _append_always_on_grounding_guardrails(rendered)
     return rendered
 
 
