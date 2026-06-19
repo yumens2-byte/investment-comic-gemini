@@ -225,6 +225,7 @@ def generate_episode(
     story_beat_plan: dict | None = None,
     active_character_cards: list[dict] | None = None,
     villain_ids: list[str] | None = None,
+    continuity_repair_instructions: str | None = None,
 ) -> EpisodeScript:
     """
     Claude API를 호출하여 EpisodeScript를 생성.
@@ -349,6 +350,11 @@ def generate_episode(
             "\n\n## Story Beat Plan (Pilot — follow this 8-panel contract)\n"
             + json.dumps(story_beat_plan, ensure_ascii=False, indent=2)
             + "\n"
+        )
+    if continuity_repair_instructions:
+        user_prompt += (
+            "\n\n## Continuity Repair Instructions (STRICT — preserve market facts)\n"
+            f"{continuity_repair_instructions.strip()}\n"
         )
 
     last_error: Exception | None = None

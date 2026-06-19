@@ -326,3 +326,25 @@ CONTINUITY_STRICT_ENABLED=true
 3. score가 안정적으로 70 이상이면 `continuity_strict=true`를 켠다.
 4. Phase 2.3 부가 플래그는 한 번에 전부 true로 켜지 말고 `narrative_depth -> pair_tension -> crowd_modifier -> signature/emergence` 순서로 켠다.
 5. all-true는 최종 회귀 테스트용으로만 사용한다.
+
+## 9. 2026-06-16 strict continuity repair 구현 결과
+
+### 9.1 확정한 런타임 실패 경로
+
+`CONTINUITY_STRICT_ENABLED=true`에서 Claude 초안이 이전 에피소드 hook/thread를 P1~P2에서 충분히 회수하지 못하면 `StoryContinuityError`가 발생하며 STEP 4가 즉시 실패한다. 배포 자체는 성공해도 `run_market` 수동 실행 또는 all-true 파일럿에서 중단될 수 있는 경로다.
+
+### 9.2 적용한 상세 설계
+
+1. STEP 4 최초 초안에 대해 기존 continuity quality payload를 먼저 산출한다.
+2. strict continuity gate가 실패하면 전체 파이프라인을 즉시 종료하지 않고 1회 한정 repair retry를 수행한다.
+3. repair prompt는 이전 실패 점수, missing requirement, warning, previous source episode id를 포함한다.
+4. repair prompt는 시장 사실, `event_type`, `battle_result`, `scenario_type`, 캐릭터 ID, 8패널 구조를 바꾸지 말고 P1~P2 continuity payoff만 보정하도록 제한한다.
+5. repair 결과도 동일한 strict gate로 재검증한다. 재검증 실패 시에는 기존처럼 실패시켜 publish 오염을 막는다.
+6. 통과한 repair 결과에는 `_continuity_quality.repair_attempted=true`와 `_continuity_quality.repair_reason`을 남겨 운영 로그/DB에서 원인 추적이 가능하게 한다.
+
+### 9.3 회귀 테스트 범위
+
+- repair prompt가 시장 사실 보존 계약과 누락 requirement를 포함하는지 검증한다.
+- STEP 4 strict continuity failure에서 Claude generation이 정확히 한 번 추가 호출되는지 검증한다.
+- repair 호출에 `continuity_repair_instructions`가 전달되는지 검증한다.
+- repair 성공 산출물이 최종 script로 저장되고 `_continuity_quality.repair_attempted=true`가 남는지 검증한다.
