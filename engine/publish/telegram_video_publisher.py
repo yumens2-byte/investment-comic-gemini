@@ -30,6 +30,8 @@ import os
 from pathlib import Path
 from typing import Optional
 
+import requests
+
 VERSION = "1.0.0"
 logger = logging.getLogger(__name__)
 
@@ -139,34 +141,30 @@ def _send_video(
         f"episode={episode_id} size={size_mb:.1f}MB"
     )
 
-    # TODO: actual Telegram sendVideo API call
-    # from telegram import Bot
-    # bot = Bot(token=bot_token)
-    # with open(video_path, "rb") as f:
-    #     msg = bot.send_video(
-    #         chat_id=chat_id,
-    #         video=f,
-    #         caption=caption,
-    #         parse_mode="HTML",
-    #         supports_streaming=True,
-    #         width=1080,
-    #         height=1920,
-    #         duration=24,
-    #     )
-    # return {
-    #     "message_id": msg.message_id,
-    #     "chat_id": chat_id,
-    #     "published_at": msg.date.isoformat(),
-    #     "channel_type": channel_type,
-    # }
+    url = f"https://api.telegram.org/bot{bot_token}/sendVideo"
+    with open(video_path, "rb") as video_file:
+        response = requests.post(
+            url,
+            data={
+                "chat_id": chat_id,
+                "caption": caption[:MAX_CAPTION_LEN],
+                "parse_mode": "HTML",
+                "supports_streaming": "true",
+            },
+            files={"video": video_file},
+            timeout=60,
+        )
+    response.raise_for_status()
+    payload = response.json()
+    result = payload.get("result", {}) if isinstance(payload, dict) else {}
 
-    logger.info(f"[telegram_publisher] {channel_type} publish done (SKELETON — implement in V5)")
+    logger.info(f"[telegram_publisher] {channel_type} publish done")
     return {
-        "message_id": None,
+        "message_id": result.get("message_id"),
         "chat_id": chat_id,
-        "published_at": None,
+        "published_at": result.get("date"),
         "channel_type": channel_type,
-        "status": "skeleton",
+        "status": "published",
     }
 
 

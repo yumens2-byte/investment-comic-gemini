@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import re
 import sys
 import time
@@ -114,13 +115,14 @@ def main() -> None:
 
     episode_date = args.date or _parse_date(args.episode)
 
-    import os
-
     from engine.common.logger import StepLogger, get_run_id
     from engine.common.supabase_client import icg_table
+    from engine.publish.battle_video_publish import build_battle_video_plan
     from engine.publish.history_writer import record_publish
     from engine.publish.telegram_publisher import publish_episode_telegram
+    from engine.publish.telegram_video_publisher import publish_to_free_channel
     from engine.publish.x_publisher import publish_episode_x
+    from engine.publish.x_video_publisher import publish_video_to_x
 
     dry_run = os.environ.get("DRY_RUN", "true").lower() != "false"
 
@@ -213,6 +215,12 @@ def main() -> None:
         sys.exit(1)
 
     channels = args.channels.lower().split(",")
+    battle_video_plan = build_battle_video_plan(
+        row=row,
+        event_type=event_type,
+        script_dict=script_dict,
+        channels=channels,
+    )
     tweet_ids: list[str] = []
     telegram_sent = False
 
@@ -230,8 +238,6 @@ def main() -> None:
 
     # Telegram 발행
     if "telegram" in channels or "all" in channels:
-        import os
-
         tg_channels = []
         free_id = os.environ.get("TELEGRAM_FREE_CHANNEL_ID", "")
         if free_id:
@@ -244,6 +250,57 @@ def main() -> None:
             sl.step_done("STEP_8_TG", ts, f"결과: {results}")
         except Exception as exc:
             sl.step_fail("STEP_8_TG", ts, exc)
+
+    # Optional battle-scene video publishing.
+    # Existing image/PIL publishing above remains the canonical comic upload path; this
+    # only appends a video post when the episode is a battle event and a video asset is
+    # attached to episode_assets. Any failure is logged to STEP_8_*_VIDEO and does not
+    # roll back the already-completed image/PIL publication.
+    if not battle_video_plan.enabled:
+        sl.info("STEP_8_VIDEO", f"전투씬 영상 스킵 reason={battle_video_plan.reason}")
+    else:
+        assert battle_video_plan.video_path is not None
+        battle_video_path = battle_video_plan.video_path
+        if "telegram" in battle_video_plan.channels or "all" in battle_video_plan.channels:
+            ts = sl.step_start("STEP_8_TG_VIDEO", "Telegram 전투씬 영상 발행")
+            try:
+                if dry_run:
+                    logger.info(
+                        "[telegram_video] DRY_RUN — 채널에 전투씬 영상 발행 시뮬레이션: %s",
+                        battle_video_path,
+                    )
+                else:
+                    publish_to_free_channel(
+                        video_path=str(battle_video_path),
+                        episode_id=episode_id,
+                        title=battle_video_plan.telegram_title,
+                        hashtags=list(battle_video_plan.hashtags),
+                        teaser_line=battle_video_plan.telegram_teaser,
+                        paid_channel_invite_link=os.environ.get("TELEGRAM_PAID_INVITE_LINK"),
+                    )
+                sl.step_done("STEP_8_TG_VIDEO", ts, f"video={battle_video_path}")
+            except Exception as exc:
+                sl.step_fail("STEP_8_TG_VIDEO", ts, exc)
+
+        if "x" in battle_video_plan.channels or "all" in battle_video_plan.channels:
+            ts = sl.step_start("STEP_8_X_VIDEO", "X 전투씬 영상 발행")
+            try:
+                if dry_run:
+                    logger.info(
+                        "[x_video] DRY_RUN — 전투씬 영상 발행 시뮬레이션: %s",
+                        battle_video_path,
+                    )
+                else:
+                    result = publish_video_to_x(
+                        video_path=str(battle_video_path),
+                        caption=battle_video_plan.x_caption,
+                        episode_id=episode_id,
+                    )
+                    if result.get("tweet_id"):
+                        tweet_ids.append(str(result["tweet_id"]))
+                sl.step_done("STEP_8_X_VIDEO", ts, f"video={battle_video_path}")
+            except Exception as exc:
+                sl.step_fail("STEP_8_X_VIDEO", ts, exc)
 
     # 발행 이력 기록
     runtime = round(time.monotonic() - ts_total, 1)
