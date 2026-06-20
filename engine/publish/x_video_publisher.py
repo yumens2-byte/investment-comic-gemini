@@ -22,10 +22,11 @@ Requirements:
   X_API_KEY (env)
   X_API_SECRET (env)
   X_ACCESS_TOKEN (env)
-  X_ACCESS_SECRET (env)
+  X_ACCESS_SECRET or X_ACCESS_TOKEN_SECRET (env)
 """
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -75,54 +76,48 @@ def publish_video_to_x(
         )
         caption = caption[: MAX_CAPTION_LEN - 3] + "..."
 
-    for key in ("X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_SECRET"):
+    access_secret = os.environ.get("X_ACCESS_SECRET") or os.environ.get("X_ACCESS_TOKEN_SECRET")
+    for key in ("X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN"):
         if not os.environ.get(key):
             raise XVideoPublishError(f"{key} env not set")
+    if not access_secret:
+        raise XVideoPublishError("X_ACCESS_SECRET or X_ACCESS_TOKEN_SECRET env not set")
 
     logger.info(
         f"[x_video_publisher] v{VERSION} X video publish start: "
         f"episode={episode_id} size={size_mb:.1f}MB"
     )
 
-    # TODO: actual chunked upload via tweepy v4
-    # import tweepy
-    # auth = tweepy.OAuth1UserHandler(
-    #     os.environ["X_API_KEY"],
-    #     os.environ["X_API_SECRET"],
-    #     os.environ["X_ACCESS_TOKEN"],
-    #     os.environ["X_ACCESS_SECRET"],
-    # )
-    # api_v1 = tweepy.API(auth)  # v1.1 API for media upload (chunked)
-    #
-    # # 1. INIT + APPEND + FINALIZE via media_upload(chunked=True)
-    # media = api_v1.media_upload(
-    #     filename=video_path,
-    #     media_category="tweet_video",
-    #     chunked=True,
-    #     wait_for_async_finalize=True,
-    # )
-    # media_id = media.media_id
-    #
-    # # 2. Post tweet with media_id via v2 API
-    # client = tweepy.Client(
-    #     consumer_key=os.environ["X_API_KEY"],
-    #     consumer_secret=os.environ["X_API_SECRET"],
-    #     access_token=os.environ["X_ACCESS_TOKEN"],
-    #     access_token_secret=os.environ["X_ACCESS_SECRET"],
-    # )
-    # response = client.create_tweet(text=caption, media_ids=[media_id])
-    # tweet_id = response.data["id"]
-    #
-    # return {
-    #     "tweet_id": tweet_id,
-    #     "media_id": media_id,
-    #     "published_at": time.time(),
-    # }
+    import tweepy
 
-    logger.info("[x_video_publisher] X video publish done (SKELETON — implement in V5)")
+    auth = tweepy.OAuth1UserHandler(
+        os.environ["X_API_KEY"],
+        os.environ["X_API_SECRET"],
+        os.environ["X_ACCESS_TOKEN"],
+        access_secret,
+    )
+    api_v1 = tweepy.API(auth)
+    media = api_v1.media_upload(
+        filename=video_path,
+        media_category="tweet_video",
+        chunked=True,
+        wait_for_async_finalize=True,
+    )
+    media_id = str(media.media_id)
+
+    client = tweepy.Client(
+        consumer_key=os.environ["X_API_KEY"],
+        consumer_secret=os.environ["X_API_SECRET"],
+        access_token=os.environ["X_ACCESS_TOKEN"],
+        access_token_secret=access_secret,
+    )
+    response = client.create_tweet(text=caption, media_ids=[media_id])
+    tweet_id = str(response.data["id"])
+
+    logger.info("[x_video_publisher] X video publish done")
     return {
-        "tweet_id": None,
-        "media_id": None,
-        "published_at": None,
-        "status": "skeleton",
+        "tweet_id": tweet_id,
+        "media_id": media_id,
+        "published_at": time.time(),
+        "status": "published",
     }
