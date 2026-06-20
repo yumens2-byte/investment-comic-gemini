@@ -321,10 +321,11 @@ def step_data(episode_date: str, logger_inst) -> None:
             market_fetcher,
             sentiment_fetcher,
         )
+        from engine.data.critical_fallback_resolver import resolve_critical_fallbacks
         from engine.data.snapshot_writer import (
             build_snapshot_payload,
             enforce_critical_quality,
-            upsert,
+            upsert_payload,
         )
 
         fred = fred_fetcher.fetch_all(episode_date)
@@ -364,20 +365,33 @@ def step_data(episode_date: str, logger_inst) -> None:
             extended_data or None,
         )
 
+        resolved_payload, data_quality = resolve_critical_fallbacks(
+            snapshot_date=episode_date,
+            payload=snapshot_payload,
+        )
+        resolved_payload["data_quality"] = data_quality
+
         if os.environ.get("CRITICAL_DATA_GATE_ENABLED", "true").lower() == "true":
             quality = enforce_critical_quality(
-                snapshot_payload,
+                resolved_payload,
                 context=f"STEP_2 date={episode_date}",
             )
             logger_inst.info(
                 "STEP_2",
                 "[CriticalDataGate] 통과 "
-                f"missing={len(quality['missing'])} optional={len(quality['optional_missing'])}",
+                f"missing={len(quality['missing'])} "
+                f"optional={len(quality['optional_missing'])} "
+                f"fallback={len(data_quality.get('fallbacks', []))} "
+                f"status={data_quality.get('status')}",
             )
         else:
+            data_quality["critical_gate_override"] = True
+            data_quality["override_reason"] = "env CRITICAL_DATA_GATE_ENABLED=false"
+            data_quality["missing_at_override"] = data_quality.get("missing_after", [])
+            resolved_payload["data_quality"] = data_quality
             logger_inst.warning("STEP_2", "[CriticalDataGate] 비활성화 — 운영 override 적용")
 
-        upsert(episode_date, fred, market, fg, crypto, sentiment, extended_data or None)
+        upsert_payload(episode_date, resolved_payload)
 
         logger_inst.step_done("STEP_2", ts, "daily_snapshots upsert 완료")
     except Exception as exc:

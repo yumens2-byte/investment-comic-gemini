@@ -44,6 +44,7 @@ _EXTENDED_FIELDS: tuple[str, ...] = (
     "event_calendar",
     "news_items",
     "signal_quality",
+    "data_quality",
 )
 
 _CRITICAL_FIELDS: tuple[str, ...] = (
@@ -133,6 +134,43 @@ def enforce_critical_quality(payload: dict, *, context: str = "") -> dict[str, l
     if critical_missing:
         raise CriticalDataMissingError(critical_missing, context=context, quality=quality)
     return quality
+
+
+def upsert_payload(snapshot_date: str, payload: dict[str, Any]) -> None:
+    """Upsert a canonical daily_snapshots payload without re-merging fetcher parts."""
+    from engine.common.supabase_client import upsert_snapshot
+
+    upsert_snapshot(snapshot_date, payload)
+
+    quality = summarize_quality(payload)
+    non_null = sum(1 for v in payload.values() if v is not None)
+    logger.info(
+        "[snapshot_writer] upsert 완료 date=%s 필드=%d/%d missing=%d",
+        snapshot_date,
+        non_null,
+        len(payload),
+        len(quality["missing"]),
+    )
+    if quality["critical_missing"]:
+        logger.warning(
+            "[snapshot_writer] CRITICAL 데이터 누락 date=%s fields=%s",
+            snapshot_date,
+            quality["critical_missing"],
+        )
+    if quality["optional_missing"]:
+        logger.warning(
+            "[snapshot_writer] 보조/스토리 강화 데이터 누락 date=%s fields=%s",
+            snapshot_date,
+            quality["optional_missing"],
+        )
+
+    present_extended = [key for key in _EXTENDED_FIELDS if key in payload]
+    if present_extended:
+        logger.info(
+            "[snapshot_writer] 확장 데이터 포함 date=%s fields=%s",
+            snapshot_date,
+            present_extended,
+        )
 
 
 def upsert(
