@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from engine.common.retry import api_retry
 
@@ -37,7 +37,13 @@ _SERIES: dict[str, str] = {
 
 
 @api_retry()
-def _fetch_series(fred_client, series_id: str, lookback_days: int = 10) -> float | None:
+def _fetch_series(
+    fred_client,
+    series_id: str,
+    lookback_days: int = 10,
+    *,
+    target_date: str | None = None,
+) -> float | None:
     """
     FRED 단일 시리즈에서 최근 유효값(NaN 제외) 반환.
 
@@ -49,7 +55,10 @@ def _fetch_series(fred_client, series_id: str, lookback_days: int = 10) -> float
     Returns:
         최근 유효값 또는 None.
     """
-    end = date.today()
+    if target_date:
+        end = datetime.fromisoformat(target_date[:10]).date()
+    else:
+        end = date.today()
     start = end - timedelta(days=lookback_days)
 
     data = fred_client.get_series(
@@ -72,7 +81,7 @@ def fetch_all(target_date: str | None = None) -> dict[str, float | None]:
     모든 FRED 지표 수집.
 
     Args:
-        target_date: 'YYYY-MM-DD' 형식 (미사용, 인터페이스 일관성용).
+        target_date: 'YYYY-MM-DD' 형식. 지정 시 해당 날짜 기준 lookback 조회.
 
     Returns:
         icg.daily_snapshots 컬럼명 → 값 딕셔너리.
@@ -92,7 +101,7 @@ def fetch_all(target_date: str | None = None) -> dict[str, float | None]:
 
     for col_name, series_id in _SERIES.items():
         try:
-            value = _fetch_series(fred, series_id)
+            value = _fetch_series(fred, series_id, target_date=target_date)
             result[col_name] = value
             logger.info("[FRED] %s(%s) = %s", col_name, series_id, value)
         except Exception as exc:
