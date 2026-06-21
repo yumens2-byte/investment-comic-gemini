@@ -5,6 +5,7 @@ from engine.publish.battle_video_publish import (
     build_battle_video_plan,
     build_battle_video_x_caption,
     extract_battle_video_path,
+    has_battle_scene,
     is_battle_video_event,
 )
 from scripts.run_publish import MAJOR_EVENT_TYPES
@@ -16,6 +17,22 @@ def test_battle_video_event_set_is_narrower_than_major_events():
     assert is_battle_video_event("SHOCK") is False
     assert is_battle_video_event("NORMAL") is False
     assert BATTLE_VIDEO_EVENT_TYPES.issubset(MAJOR_EVENT_TYPES)
+
+
+def test_has_battle_scene_includes_normal_one_vs_one_episode():
+    assert has_battle_scene(
+        {"scenario_type": "ONE_VS_ONE", "battle_json": {"outcome": "HERO_TACTICAL_VICTORY"}},
+        "NORMAL",
+        {},
+    ) is True
+
+
+def test_has_battle_scene_excludes_no_battle_episode():
+    assert has_battle_scene(
+        {"scenario_type": "NO_BATTLE", "battle_json": {"outcome": "PEACEFUL_GROWTH"}},
+        "NORMAL",
+        {},
+    ) is False
 
 
 def test_extract_battle_video_path_accepts_direct_and_nested_shapes():
@@ -53,6 +70,18 @@ def test_build_battle_video_plan_is_disabled_without_affecting_image_flow(tmp_pa
 
     assert plan.enabled is False
     assert plan.reason == "video_file_missing"
+
+
+def test_build_battle_video_plan_reports_missing_asset_for_normal_combat_episode():
+    plan = build_battle_video_plan(
+        row={"scenario_type": "ONE_VS_ONE", "battle_json": {"outcome": "HERO_TACTICAL_VICTORY"}},
+        event_type="NORMAL",
+        script_dict={},
+        channels=["x"],
+    )
+
+    assert plan.enabled is False
+    assert plan.reason == "video_asset_missing"
 
 
 def test_build_battle_video_plan_ready_for_existing_video(tmp_path):

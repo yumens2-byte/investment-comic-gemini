@@ -6,6 +6,9 @@
 
 ## 적용 범위
 
+- 적용 대상: `BATTLE`, `BATTLE_PLUS`, `BATTLE_PLUS_FORM2`, `BATTLE_PLUS_FORM3` 이벤트 또는 `ONE_VS_ONE`/`ALLIANCE`처럼 실제 전투씬이 있는 에피소드
+- 적용 채널: `telegram`, `x`, `all`
+- 비적용 대상: `NO_BATTLE`, `PEACEFUL_GROWTH` 등 실제 전투씬이 없는 에피소드
 - 적용 이벤트: `BATTLE`, `BATTLE_PLUS`, `BATTLE_PLUS_FORM2`, `BATTLE_PLUS_FORM3`
 - 적용 채널: `telegram`, `x`, `all`
 - 비적용 이벤트(`SHOCK`, `AFTERMATH`, `NORMAL` 등)는 기존 이미지/PIL 경로만 실행한다.
