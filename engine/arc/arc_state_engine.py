@@ -17,12 +17,20 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from datetime import datetime, timezone
 from typing import Any
 
 VERSION = "1.0.0"
 
 logger = logging.getLogger(__name__)
+
+_ARC_STATE_SCHEMA_OPTIONAL_FIELDS = frozenset({
+    "pair_tension",
+    "edt_pressure",
+    "emergence_deficit_days",
+    "zero_block_just_appeared",
+})
 
 # ── 상수 ────────────────────────────────────────────────────────────────────
 
@@ -83,6 +91,37 @@ _CROWD_F_G_MAP = [
 
 # ── 로드 / 저장 ──────────────────────────────────────────────────────────────
 
+def _missing_schema_column_from_error(exc: Exception) -> str | None:
+    """Extract a PostgREST schema-cache missing-column name from an exception."""
+    text = str(exc)
+    if "PGRST204" not in text and "Could not find" not in text:
+        return None
+    match = re.search(r"Could not find the '([^']+)' column", text)
+    if not match:
+        return None
+    return match.group(1)
+
+
+def _upsert_arc_state_schema_compatible(state: dict[str, Any]) -> list[str]:
+    """Upsert arc_state, retrying without optional columns missing in DB schema."""
+    from engine.common.supabase_client import icg_table
+
+    remaining = dict(state)
+    stripped: list[str] = []
+    while True:
+        try:
+            icg_table("arc_state").upsert(remaining, on_conflict="id").execute()
+            return stripped
+        except Exception as exc:
+            missing_column = _missing_schema_column_from_error(exc)
+            if not missing_column or missing_column not in remaining:
+                raise
+            if missing_column not in _ARC_STATE_SCHEMA_OPTIONAL_FIELDS:
+                raise
+            stripped.append(missing_column)
+            remaining.pop(missing_column, None)
+
+
 def load_arc_state() -> dict[str, Any]:
     """
     Supabase icg.arc_state (id=1) 에서 현재 아크 상태 로드.
@@ -126,12 +165,16 @@ def save_arc_state(state: dict[str, Any]) -> bool:
         True if 성공.
     """
     try:
-        from engine.common.supabase_client import icg_table
-
         state["updated_at"] = datetime.now(tz=timezone.utc).isoformat()
         state["id"] = 1  # 단일 행 보장
 
-        icg_table("arc_state").upsert(state, on_conflict="id").execute()
+        stripped = _upsert_arc_state_schema_compatible(state)
+        if stripped:
+            logger.warning(
+                "[ArcStateEngine] arc_state DB schema missing optional columns; "
+                "saved without fields=%s. Apply pending migrations.",
+                stripped,
+            )
         logger.info(
             "[ArcStateEngine] 저장 완료 "
             "(villain=%s arc_day=%d tension=%d)",
