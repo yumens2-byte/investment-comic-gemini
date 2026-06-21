@@ -314,7 +314,6 @@ def main() -> None:
 
     # Telegram 발행
     if _channel_requested(channels, "telegram"):
-    if "telegram" in channels or "all" in channels:
         tg_channels = []
         free_id = os.environ.get("TELEGRAM_FREE_CHANNEL_ID", "")
         if free_id:
@@ -339,7 +338,6 @@ def main() -> None:
         assert battle_video_plan.video_path is not None
         battle_video_path = battle_video_plan.video_path
         if _channel_requested(list(battle_video_plan.channels), "telegram"):
-        if "telegram" in battle_video_plan.channels or "all" in battle_video_plan.channels:
             ts = sl.step_start("STEP_8_TG_VIDEO", "Telegram 전투씬 영상 발행")
             try:
                 if dry_run:
@@ -361,7 +359,6 @@ def main() -> None:
                 sl.step_fail("STEP_8_TG_VIDEO", ts, exc)
 
         if _channel_requested(list(battle_video_plan.channels), "x"):
-        if "x" in battle_video_plan.channels or "all" in battle_video_plan.channels:
             ts = sl.step_start("STEP_8_X_VIDEO", "X 전투씬 영상 발행")
             try:
                 if dry_run:
