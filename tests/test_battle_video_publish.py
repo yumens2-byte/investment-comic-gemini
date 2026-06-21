@@ -101,3 +101,36 @@ def test_build_battle_video_plan_ready_for_existing_video(tmp_path):
     assert plan.channels == ("telegram", "x")
     assert plan.x_caption == "cover\n\n🎬 전투씬 영상\n\n#ICG"
     assert plan.telegram_teaser == "teaser"
+
+
+def test_run_publish_merges_video_assets_row_into_episode_row():
+    from scripts.run_publish import _merge_video_asset_row
+
+    merged = _merge_video_asset_row(
+        {"episode_id": "ICG-2026-06-21-002"},
+        {
+            "episode_id": "ICG-2026-06-21-002",
+            "cut1_video_uri": "output/videos/ICG-2026-06-21-002/cut1.mp4",
+        },
+    )
+
+    assert merged["cut1_video_uri"] == "output/videos/ICG-2026-06-21-002/cut1.mp4"
+    assert merged["video_assets"]["cut1_video_uri"] == "output/videos/ICG-2026-06-21-002/cut1.mp4"
+    assert extract_battle_video_path(merged) == Path("output/videos/ICG-2026-06-21-002/cut1.mp4")
+
+
+def test_run_publish_adds_downloaded_local_video_when_db_path_missing(tmp_path, monkeypatch):
+    from scripts.run_publish import _merge_local_video_path
+
+    monkeypatch.chdir(tmp_path)
+    video = tmp_path / "output" / "videos" / "ICG-2026-06-21-002" / "cut1.mp4"
+    video.parent.mkdir(parents=True)
+    video.write_bytes(b"fake mp4")
+
+    merged = _merge_local_video_path(
+        {"episode_id": "ICG-2026-06-21-002"},
+        "ICG-2026-06-21-002",
+    )
+
+    assert merged["video_path"] == "output/videos/ICG-2026-06-21-002/cut1.mp4"
+    assert extract_battle_video_path(merged) == Path("output/videos/ICG-2026-06-21-002/cut1.mp4")

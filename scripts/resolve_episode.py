@@ -3,7 +3,7 @@ scripts/resolve_episode.py
 publish_sns.yml pre-check job에서 사용.
 
 Supabase icg.episode_assets에서 발행 대상 에피소드를 결정하고,
-episode_id + slides_run_id를 GITHUB_OUTPUT으로 출력.
+episode_id + slides_run_id + video_run_id를 GITHUB_OUTPUT으로 출력.
 
 사용법:
   python -m scripts.resolve_episode                              # 최신 assembled 자동 선택
@@ -12,6 +12,7 @@ episode_id + slides_run_id를 GITHUB_OUTPUT으로 출력.
 출력 (stdout, GITHUB_OUTPUT):
   episode_id=ICG-2026-04-22-001
   slides_run_id=24732746246
+  video_run_id=24732749999
 """
 
 from __future__ import annotations
@@ -41,14 +42,43 @@ def _parse_episode_id(episode_id: str) -> tuple[str, int]:
     return m.group(1), int(m.group(2))
 
 
+def _lookup_video_run_id(episode_id: str) -> str:
+    """Return the explicitly stored video artifact run id for this episode.
+
+    Security note: do not scan/download arbitrary repository artifacts here.  The
+    publish workflow should only download a video artifact when the video pipeline
+    stored the exact GitHub Actions run id in icg.video_assets.
+    """
+    try:
+        from engine.common.supabase_client import icg_table
+
+        rows = (
+            icg_table("video_assets")
+            .select("*")
+            .eq("episode_id", episode_id)
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if rows.data:
+            row = rows.data[0]
+            for key in ("artifact_run_id", "video_run_id", "run_id", "github_run_id"):
+                value = row.get(key)
+                if value:
+                    return str(value)
+    except Exception as exc:  # noqa: BLE001 - optional video table/schema must not block publishing
+        logger.info("video_assets run id lookup skipped: %s", exc)
+    return ""
+
+
 def resolve(episode_id_input: str) -> dict:
     """
     episode_id 입력 시: 해당 에피소드 조회
     미입력 시: 최신 assembled 에피소드 자동 선택
 
     Returns:
-        {"episode_id": str, "slides_run_id": str}
-        slides_run_id는 DB에 NULL이면 빈 문자열 ("")
+        {"episode_id": str, "slides_run_id": str, "video_run_id": str}
+        slides_run_id/video_run_id는 없으면 빈 문자열 ("")
     """
     from engine.common.supabase_client import icg_table
 
@@ -84,6 +114,7 @@ def resolve(episode_id_input: str) -> dict:
         return {
             "episode_id":    episode_id_input,
             "slides_run_id": row.get("slides_run_id") or "",
+            "video_run_id":  _lookup_video_run_id(episode_id_input),
         }
 
     # 미입력 — 최신 assembled 자동 선택
@@ -106,6 +137,7 @@ def resolve(episode_id_input: str) -> dict:
             return {
                 "episode_id":    ep_id,
                 "slides_run_id": row.get("slides_run_id") or "",
+                "video_run_id":  _lookup_video_run_id(ep_id),
             }
 
     logger.error("발행 가능한 에피소드 없음 (status=assembled 없음)")
@@ -124,11 +156,13 @@ def main() -> None:
     # publish_sns.yml: `python -m scripts.resolve_episode ... >> $GITHUB_OUTPUT`
     print(f"episode_id={result['episode_id']}")
     print(f"slides_run_id={result['slides_run_id']}")
+    print(f"video_run_id={result.get('video_run_id', '')}")
 
     logger.info(
-        "episode_id=%s slides_run_id=%s",
+        "episode_id=%s slides_run_id=%s video_run_id=%s",
         result["episode_id"],
-        result["slides_run_id"] or "(없음 — 아티팩트 다운로드 skip)",
+        result["slides_run_id"] or "(없음 — 슬라이드 아티팩트 다운로드 skip)",
+        result.get("video_run_id") or "(없음 — 비디오 아티팩트 다운로드 skip)",
     )
 
 

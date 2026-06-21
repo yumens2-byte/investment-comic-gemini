@@ -33,6 +33,7 @@ jobs:
     outputs:
       episode_id:    ${{ steps.resolve.outputs.episode_id }}
       slides_run_id: ${{ steps.resolve.outputs.slides_run_id }}
+      video_run_id:  ${{ steps.resolve.outputs.video_run_id }}
     env:
       DRY_RUN:      "false"
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -115,11 +116,24 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ needs.pre-check.outputs.slides_run_id }}
 
-      - name: Check slides availability
+      - name: Download Video Artifact (from Video Trailer run)
+        if: needs.pre-check.outputs.video_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          pattern: video-*
+          path: .
+          merge-multiple: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ needs.pre-check.outputs.video_run_id }}
+
+      - name: Check publish assets availability
         run: |
           echo "=== 슬라이드 파일 확인 ==="
           find output/episodes -name "S*.png" 2>/dev/null | sort || echo "슬라이드 없음"
+          echo "=== 비디오 파일 확인 ==="
+          find output/videos -name "*.mp4" 2>/dev/null | sort || echo "비디오 없음"
           echo "=== episode_id: ${{ needs.pre-check.outputs.episode_id }} ==="
+          echo "=== video_run_id: ${{ needs.pre-check.outputs.video_run_id }} ==="
 
       - name: Anti-bot random delay
         run: |

@@ -4,8 +4,6 @@ This module is intentionally isolated from the existing image/PIL comic publishi
 flow.  It only plans an additional mp4 post for episodes that actually contain a
 battle scene when a video asset is present; callers should continue to publish the
 image slides first.
-flow.  It only plans and executes an additional mp4 post for battle events when a
-video asset is present; callers should continue to publish the image slides first.
 """
 
 from __future__ import annotations
@@ -84,18 +82,26 @@ def extract_battle_video_path(row: dict[str, Any]) -> Path | None:
     """Extract an optional battle-scene mp4 path from evolving asset shapes.
 
     Supported shapes are deliberately explicit and backwards-compatible:
-    - top-level: battle_video_path, final_video_path, video_path
+    - top-level: battle_video_path, final_video_path, video_path, cut1_video_uri
     - nested JSON: battle_video_json/video_json/video_assets with path,
-      video_path, final_mp4_path, final_video_path, video_uri, or uri
+      video_path, final_mp4_path, final_video_path, cut1_video_uri, video_uri, or uri
     """
-    direct_keys = ("battle_video_path", "final_video_path", "video_path")
+    direct_keys = ("battle_video_path", "final_video_path", "video_path", "cut1_video_uri")
     for key in direct_keys:
         value = row.get(key)
         if isinstance(value, str) and value.strip():
             return Path(value)
 
     json_keys = ("battle_video_json", "video_json", "video_assets")
-    path_keys = ("path", "video_path", "final_mp4_path", "final_video_path", "video_uri", "uri")
+    path_keys = (
+        "path",
+        "video_path",
+        "final_mp4_path",
+        "final_video_path",
+        "cut1_video_uri",
+        "video_uri",
+        "uri",
+    )
     for key in json_keys:
         value = row.get(key)
         if not isinstance(value, dict):
@@ -126,8 +132,6 @@ def build_battle_video_plan(
     """Plan optional battle-video publication without touching image slide flow."""
     if not has_battle_scene(row, event_type, script_dict):
         return BattleVideoPublishPlan(enabled=False, reason="not_battle_scene")
-    if not is_battle_video_event(event_type):
-        return BattleVideoPublishPlan(enabled=False, reason="not_battle_event")
 
     video_path = extract_battle_video_path(row)
     if not video_path:
