@@ -82,18 +82,26 @@ def extract_battle_video_path(row: dict[str, Any]) -> Path | None:
     """Extract an optional battle-scene mp4 path from evolving asset shapes.
 
     Supported shapes are deliberately explicit and backwards-compatible:
-    - top-level: battle_video_path, final_video_path, video_path
+    - top-level: battle_video_path, final_video_path, video_path, cut1_video_uri
     - nested JSON: battle_video_json/video_json/video_assets with path,
-      video_path, final_mp4_path, final_video_path, video_uri, or uri
+      video_path, final_mp4_path, final_video_path, cut1_video_uri, video_uri, or uri
     """
-    direct_keys = ("battle_video_path", "final_video_path", "video_path")
+    direct_keys = ("battle_video_path", "final_video_path", "video_path", "cut1_video_uri")
     for key in direct_keys:
         value = row.get(key)
         if isinstance(value, str) and value.strip():
             return Path(value)
 
     json_keys = ("battle_video_json", "video_json", "video_assets")
-    path_keys = ("path", "video_path", "final_mp4_path", "final_video_path", "video_uri", "uri")
+    path_keys = (
+        "path",
+        "video_path",
+        "final_mp4_path",
+        "final_video_path",
+        "cut1_video_uri",
+        "video_uri",
+        "uri",
+    )
     for key in json_keys:
         value = row.get(key)
         if not isinstance(value, dict):

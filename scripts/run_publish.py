@@ -85,6 +85,86 @@ def _channel_requested(channels: list[str], channel: str) -> bool:
     return channel in channels or "all" in channels
 
 
+def _merge_video_asset_row(row: dict, video_row: dict) -> dict:
+    """Return episode row enriched with optional icg.video_assets path fields."""
+    if not video_row:
+        return row
+
+    merged = dict(row)
+    video_json = dict(merged.get("video_assets") or {})
+    for key in (
+        "battle_video_path",
+        "final_video_path",
+        "video_path",
+        "cut1_video_uri",
+        "final_mp4_path",
+        "video_uri",
+    ):
+        value = video_row.get(key)
+        if value and not merged.get(key):
+            merged[key] = value
+        if value:
+            video_json.setdefault(key, value)
+
+    if video_json:
+        merged["video_assets"] = video_json
+    return merged
+
+
+def _load_video_asset_row(icg_table, episode_id: str, episode_date: str) -> dict:
+    """Best-effort lookup of a separately generated video asset for this episode."""
+    try:
+        rows = (
+            icg_table("video_assets")
+            .select("*")
+            .eq("episode_id", episode_id)
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if rows.data:
+            return rows.data[0]
+    except Exception as exc:  # noqa: BLE001 - optional video add-on must not block images
+        logger.info("[run_publish] video_assets episode_id lookup skipped: %s", exc)
+
+    try:
+        rows = (
+            icg_table("video_assets")
+            .select("*")
+            .eq("episode_date", episode_date)
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if rows.data:
+            return rows.data[0]
+    except Exception as exc:  # noqa: BLE001 - optional video add-on must not block images
+        logger.info("[run_publish] video_assets episode_date lookup skipped: %s", exc)
+
+    return {}
+
+
+def _merge_local_video_path(row: dict, episode_id: str) -> dict:
+    """Attach a downloaded local mp4 when DB metadata has no explicit video path."""
+    if any(row.get(key) for key in ("battle_video_path", "final_video_path", "video_path", "cut1_video_uri")):
+        return row
+
+    candidates = [
+        Path("output") / "videos" / episode_id / "final.mp4",
+        Path("output") / "videos" / episode_id / "cut1.mp4",
+    ]
+    candidates.extend(sorted((Path("output") / "videos" / episode_id).glob("*.mp4")))
+    for candidate in candidates:
+        if candidate.exists():
+            merged = dict(row)
+            merged["video_path"] = str(candidate)
+            video_json = dict(merged.get("video_assets") or {})
+            video_json.setdefault("video_path", str(candidate))
+            merged["video_assets"] = video_json
+            return merged
+    return row
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="ICG SNS 발행 (STEP 8)")
     parser.add_argument("--episode", help="에피소드 ID")
@@ -153,9 +233,11 @@ def main() -> None:
         sys.exit(1)
 
     row = rows.data[0]
+    episode_id = args.episode or f"ICG-{episode_date}-001"
+    row = _merge_video_asset_row(row, _load_video_asset_row(icg_table, episode_id, episode_date))
+    row = _merge_local_video_path(row, episode_id)
     event_type = row.get("event_type", "NORMAL")
     script_dict = row.get("script_json", {})
-    episode_id = args.episode or f"ICG-{episode_date}-001"
 
     unknown_major, missing_major = validate_major_event_types()
     if unknown_major:

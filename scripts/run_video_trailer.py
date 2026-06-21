@@ -300,6 +300,53 @@ def _get_supabase_client():
     return create_client(url, key)
 
 
+
+def _is_missing_video_column_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "artifact_run_id" in message and ("column" in message or "schema" in message)
+
+
+def _safe_video_assets_upsert(sb, payload: dict, *, context: str):
+    """Upsert video_assets, retrying without optional artifact_run_id on old schemas."""
+    try:
+        return sb.schema("icg").table("video_assets").upsert(
+            payload,
+            on_conflict="episode_id",
+        ).execute()
+    except Exception as exc:
+        if "artifact_run_id" in payload and _is_missing_video_column_error(exc):
+            fallback = dict(payload)
+            fallback.pop("artifact_run_id", None)
+            logger.warning(
+                "[%s] video_assets.artifact_run_id column missing; retrying without artifact link",
+                context,
+            )
+            return sb.schema("icg").table("video_assets").upsert(
+                fallback,
+                on_conflict="episode_id",
+            ).execute()
+        raise
+
+
+def _safe_video_assets_update(sb, episode_id: str, payload: dict, *, context: str):
+    """Update video_assets, retrying without optional artifact_run_id on old schemas."""
+    try:
+        return sb.schema("icg").table("video_assets").update(payload).eq(
+            "episode_id", episode_id
+        ).execute()
+    except Exception as exc:
+        if "artifact_run_id" in payload and _is_missing_video_column_error(exc):
+            fallback = dict(payload)
+            fallback.pop("artifact_run_id", None)
+            logger.warning(
+                "[%s] video_assets.artifact_run_id column missing; retrying without artifact link",
+                context,
+            )
+            return sb.schema("icg").table("video_assets").update(fallback).eq(
+                "episode_id", episode_id
+            ).execute()
+        raise
+
 def stage_persist_init():
     """STEP 5V: icg.video_assets UPSERT (status='generating')."""
     logger.info("[5V] persist init to icg.video_assets")
@@ -323,14 +370,10 @@ def stage_persist_init():
         "episode_date": today_str,
         "scenario_type": scenario_type,
         "status": "generating",
+        "artifact_run_id": os.environ.get("GITHUB_RUN_ID"),
     }
     try:
-        result = (
-            sb.schema("icg")
-            .table("video_assets")
-            .upsert(payload, on_conflict="episode_id")
-            .execute()
-        )
+        result = _safe_video_assets_upsert(sb, payload, context="5V")
         logger.debug(f"[5V] upsert result rows: {len(result.data or [])}")
     except Exception as e:
         logger.exception(f"[5V] Supabase upsert failed: {e}")
@@ -436,13 +479,17 @@ def stage_veo():
     if not dry_run:
         sb = _get_supabase_client()
         try:
-            sb.schema("icg").table("video_assets").update(
+            _safe_video_assets_update(
+                sb,
+                episode_id,
                 {
                     "cut1_video_uri": gen_result["video_uri"],
                     "veo_cost_usd": gen_result["cost_usd"],
                     "generation_ms": gen_result["generation_ms"],
-                }
-            ).eq("episode_id", episode_id).execute()
+                    "artifact_run_id": os.environ.get("GITHUB_RUN_ID"),
+                },
+                context="6V",
+            )
             logger.info(f"[6V] Supabase updated: episode_id={episode_id}")
         except Exception as e:
             logger.exception(f"[6V] Supabase update failed (video saved locally): {e}")
