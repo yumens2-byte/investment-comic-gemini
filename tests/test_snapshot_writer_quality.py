@@ -1,6 +1,10 @@
 import pytest
 
-from engine.data.snapshot_writer import enforce_critical_quality, summarize_quality
+from engine.data.snapshot_writer import (
+    enforce_critical_quality,
+    summarize_quality,
+    upsert_payload,
+)
 
 
 def _complete_payload() -> dict:
@@ -71,3 +75,29 @@ def test_enforce_critical_quality_allows_optional_missing() -> None:
     payload["btc_sentiment_state"] = "Unknown"
 
     enforce_critical_quality(payload, context="optional sentiment missing")
+
+
+def test_upsert_payload_retries_without_missing_optional_schema_column(monkeypatch) -> None:
+    import sys
+
+    sb = sys.modules["engine.common.supabase_client"]
+    calls = []
+
+    def fake_upsert_snapshot(snapshot_date: str, payload: dict):
+        calls.append((snapshot_date, dict(payload)))
+        if len(calls) == 1:
+            raise RuntimeError(
+                "{'message': \"Could not find the 'data_quality' column of "
+                "'daily_snapshots' in the schema cache\", 'code': 'PGRST204'}"
+            )
+
+    monkeypatch.setattr(sb, "upsert_snapshot", fake_upsert_snapshot)
+
+    payload = _complete_payload()
+    payload["data_quality"] = {"status": "complete"}
+
+    upsert_payload("2026-06-21", payload)
+
+    assert len(calls) == 2
+    assert "data_quality" in calls[0][1]
+    assert "data_quality" not in calls[1][1]

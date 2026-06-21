@@ -8,6 +8,7 @@ UNIQUE KEY: snapshot_date
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date
 from typing import Any
 
@@ -136,11 +137,52 @@ def enforce_critical_quality(payload: dict, *, context: str = "") -> dict[str, l
     return quality
 
 
-def upsert_payload(snapshot_date: str, payload: dict[str, Any]) -> None:
-    """Upsert a canonical daily_snapshots payload without re-merging fetcher parts."""
+def _missing_schema_column_from_error(exc: Exception) -> str | None:
+    """Extract a PostgREST schema-cache missing-column name from an exception."""
+    text = str(exc)
+    if "PGRST204" not in text and "Could not find" not in text:
+        return None
+    match = re.search(r"Could not find the '([^']+)' column", text)
+    if not match:
+        return None
+    return match.group(1)
+
+
+def _upsert_snapshot_schema_compatible(snapshot_date: str, payload: dict[str, Any]) -> None:
+    """Upsert snapshot payload, retrying without additive columns absent from DB schema.
+
+    GitHub Actions can run code ahead of a Supabase migration/schema-cache refresh. In
+    that case PostgREST returns PGRST204 for a newly-added optional column such as
+    data_quality. The core market snapshot must still be saved, so we strip only the
+    reported additive column and retry. Required/base columns remain fail-fast.
+    """
     from engine.common.supabase_client import upsert_snapshot
 
-    upsert_snapshot(snapshot_date, payload)
+    remaining = dict(payload)
+    stripped: list[str] = []
+    while True:
+        try:
+            upsert_snapshot(snapshot_date, remaining)
+            if stripped:
+                logger.warning(
+                    "[snapshot_writer] DB schema missing optional columns; "
+                    "upsert retried without fields=%s. Apply pending migrations.",
+                    stripped,
+                )
+            return
+        except Exception as exc:
+            missing_column = _missing_schema_column_from_error(exc)
+            if not missing_column or missing_column not in remaining:
+                raise
+            if missing_column not in _EXTENDED_FIELDS:
+                raise
+            stripped.append(missing_column)
+            remaining.pop(missing_column, None)
+
+
+def upsert_payload(snapshot_date: str, payload: dict[str, Any]) -> None:
+    """Upsert a canonical daily_snapshots payload without re-merging fetcher parts."""
+    _upsert_snapshot_schema_compatible(snapshot_date, payload)
 
     quality = summarize_quality(payload)
     non_null = sum(1 for v in payload.values() if v is not None)
@@ -194,8 +236,6 @@ def upsert(
         sentiment_data: sentiment_fetcher.fetch_all() 결과.
         extended_data: optional P0/P1 enrichment JSONB fields.
     """
-    from engine.common.supabase_client import upsert_snapshot
-
     payload = build_snapshot_payload(
         fred_data,
         market_data,
@@ -206,7 +246,7 @@ def upsert(
     )
 
     # None 값은 Supabase에 그대로 null 저장 (허용)
-    upsert_snapshot(snapshot_date, payload)
+    _upsert_snapshot_schema_compatible(snapshot_date, payload)
 
     quality = summarize_quality(payload)
     non_null = sum(1 for v in payload.values() if v is not None)

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import re
 import sys
 import time
@@ -80,11 +81,20 @@ def _parse_date(episode_id: str) -> str:
     return m.group(1)
 
 
+def _channel_requested(channels: list[str], channel: str) -> bool:
+    return channel in channels or "all" in channels
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="ICG SNS 발행 (STEP 8)")
     parser.add_argument("--episode", help="에피소드 ID")
     parser.add_argument("--date", help="날짜 (YYYY-MM-DD)")
     parser.add_argument("--channels", default="telegram", help="발행 채널 (telegram/x/all)")
+    parser.add_argument(
+        "--video-only",
+        action="store_true",
+        help="이미지 재발행 없이 연결된 전투씬 영상 add-on만 발행",
+    )
     args = parser.parse_args()
 
     # episode / date 미입력 시 Supabase 최신 assembled 에피소드 자동 선택
@@ -114,13 +124,14 @@ def main() -> None:
 
     episode_date = args.date or _parse_date(args.episode)
 
-    import os
-
     from engine.common.logger import StepLogger, get_run_id
     from engine.common.supabase_client import icg_table
+    from engine.publish.battle_video_publish import build_battle_video_plan
     from engine.publish.history_writer import record_publish
     from engine.publish.telegram_publisher import publish_episode_telegram
+    from engine.publish.telegram_video_publisher import publish_to_free_channel
     from engine.publish.x_publisher import publish_episode_x
+    from engine.publish.x_video_publisher import publish_video_to_x
 
     dry_run = os.environ.get("DRY_RUN", "true").lower() != "false"
 
@@ -167,7 +178,7 @@ def main() -> None:
     # 1) 이미 published 상태면 차단 (FORCE_REPUBLISH=true 환경변수로만 우회)
     current_status = row.get("status", "")
     force_republish = os.environ.get("FORCE_REPUBLISH", "false").lower() == "true"
-    if current_status == "published" and not force_republish:
+    if current_status == "published" and not force_republish and not args.video_only:
         sl.error(
             "STEP_8",
             f"🛑 중복 발행 차단 — episode={episode_id} status=published 이미 발행됨. "
@@ -188,7 +199,7 @@ def main() -> None:
             .limit(1)
             .execute()
         )
-        if dup_rows.data and not force_republish:
+        if dup_rows.data and not force_republish and not args.video_only:
             existing = dup_rows.data[0]
             sl.error(
                 "STEP_8",
@@ -204,6 +215,73 @@ def main() -> None:
     except Exception as exc:
         sl.warning("STEP_8", f"published_comics 중복 체크 실패 (진행): {exc}")
 
+    channels = args.channels.lower().split(",")
+    battle_video_plan = build_battle_video_plan(
+        row=row,
+        event_type=event_type,
+        script_dict=script_dict,
+        channels=channels,
+    )
+    tweet_ids: list[str] = []
+    telegram_sent = False
+
+    ts_total = time.monotonic()
+    sl.info(
+        "STEP_8",
+        f"발행 시작 channels={channels} dry_run={dry_run} video_only={args.video_only}",
+    )
+
+    # --video-only는 이미 이미지가 발행된 뒤 전투씬 mp4만 추가 업로드할 때 사용한다.
+    # published 중복 방어와 slides_json 요구사항을 우회하지만, 아래 video plan은 그대로 검증한다.
+    if args.video_only:
+        if not battle_video_plan.enabled:
+            sl.info("STEP_8_VIDEO", f"전투씬 영상 스킵 reason={battle_video_plan.reason}")
+        else:
+            assert battle_video_plan.video_path is not None
+            battle_video_path = battle_video_plan.video_path
+            if _channel_requested(list(battle_video_plan.channels), "telegram"):
+                ts = sl.step_start("STEP_8_TG_VIDEO", "Telegram 전투씬 영상 발행")
+                try:
+                    if dry_run:
+                        logger.info(
+                            "[telegram_video] DRY_RUN — 채널에 전투씬 영상 발행 시뮬레이션: %s",
+                            battle_video_path,
+                        )
+                    else:
+                        publish_to_free_channel(
+                            video_path=str(battle_video_path),
+                            episode_id=episode_id,
+                            title=battle_video_plan.telegram_title,
+                            hashtags=list(battle_video_plan.hashtags),
+                            teaser_line=battle_video_plan.telegram_teaser,
+                            paid_channel_invite_link=os.environ.get("TELEGRAM_PAID_INVITE_LINK"),
+                        )
+                    sl.step_done("STEP_8_TG_VIDEO", ts, f"video={battle_video_path}")
+                except Exception as exc:
+                    sl.step_fail("STEP_8_TG_VIDEO", ts, exc)
+
+            if _channel_requested(list(battle_video_plan.channels), "x"):
+                ts = sl.step_start("STEP_8_X_VIDEO", "X 전투씬 영상 발행")
+                try:
+                    if dry_run:
+                        logger.info(
+                            "[x_video] DRY_RUN — 전투씬 영상 발행 시뮬레이션: %s",
+                            battle_video_path,
+                        )
+                    else:
+                        publish_video_to_x(
+                            video_path=str(battle_video_path),
+                            caption=battle_video_plan.x_caption,
+                            episode_id=episode_id,
+                        )
+                    sl.step_done("STEP_8_X_VIDEO", ts, f"video={battle_video_path}")
+                except Exception as exc:
+                    sl.step_fail("STEP_8_X_VIDEO", ts, exc)
+        runtime = round(time.monotonic() - ts_total, 1)
+        sl.info("STEP_8", f"전투씬 영상 전용 발행 완료 runtime={runtime}s")
+        logger.info("✅ 전투씬 영상 전용 발행 완료 episode_id=%s", episode_id)
+        return
+
     # 슬라이드 경로 복원
     slides_json = row.get("slides_json", [])
     slides = [Path(s["path"]) for s in slides_json if isinstance(s, dict) and s.get("path")]
@@ -212,15 +290,8 @@ def main() -> None:
         sl.error("STEP_8", "슬라이드 없음 — run_resume 먼저 실행")
         sys.exit(1)
 
-    channels = args.channels.lower().split(",")
-    tweet_ids: list[str] = []
-    telegram_sent = False
-
-    ts_total = time.monotonic()
-    sl.info("STEP_8", f"발행 시작 channels={channels} dry_run={dry_run}")
-
     # X 발행
-    if "x" in channels or "all" in channels:
+    if _channel_requested(channels, "x"):
         ts = sl.step_start("STEP_8_X", "X 발행")
         try:
             tweet_ids = publish_episode_x(script_dict, slides, dry_run=dry_run)
@@ -229,9 +300,7 @@ def main() -> None:
             sl.step_fail("STEP_8_X", ts, exc)
 
     # Telegram 발행
-    if "telegram" in channels or "all" in channels:
-        import os
-
+    if _channel_requested(channels, "telegram"):
         tg_channels = []
         free_id = os.environ.get("TELEGRAM_FREE_CHANNEL_ID", "")
         if free_id:
@@ -244,6 +313,57 @@ def main() -> None:
             sl.step_done("STEP_8_TG", ts, f"결과: {results}")
         except Exception as exc:
             sl.step_fail("STEP_8_TG", ts, exc)
+
+    # Optional battle-scene video publishing.
+    # Existing image/PIL publishing above remains the canonical comic upload path; this
+    # only appends a video post when the episode is a battle event and a video asset is
+    # attached to episode_assets. Any failure is logged to STEP_8_*_VIDEO and does not
+    # roll back the already-completed image/PIL publication.
+    if not battle_video_plan.enabled:
+        sl.info("STEP_8_VIDEO", f"전투씬 영상 스킵 reason={battle_video_plan.reason}")
+    else:
+        assert battle_video_plan.video_path is not None
+        battle_video_path = battle_video_plan.video_path
+        if _channel_requested(list(battle_video_plan.channels), "telegram"):
+            ts = sl.step_start("STEP_8_TG_VIDEO", "Telegram 전투씬 영상 발행")
+            try:
+                if dry_run:
+                    logger.info(
+                        "[telegram_video] DRY_RUN — 채널에 전투씬 영상 발행 시뮬레이션: %s",
+                        battle_video_path,
+                    )
+                else:
+                    publish_to_free_channel(
+                        video_path=str(battle_video_path),
+                        episode_id=episode_id,
+                        title=battle_video_plan.telegram_title,
+                        hashtags=list(battle_video_plan.hashtags),
+                        teaser_line=battle_video_plan.telegram_teaser,
+                        paid_channel_invite_link=os.environ.get("TELEGRAM_PAID_INVITE_LINK"),
+                    )
+                sl.step_done("STEP_8_TG_VIDEO", ts, f"video={battle_video_path}")
+            except Exception as exc:
+                sl.step_fail("STEP_8_TG_VIDEO", ts, exc)
+
+        if _channel_requested(list(battle_video_plan.channels), "x"):
+            ts = sl.step_start("STEP_8_X_VIDEO", "X 전투씬 영상 발행")
+            try:
+                if dry_run:
+                    logger.info(
+                        "[x_video] DRY_RUN — 전투씬 영상 발행 시뮬레이션: %s",
+                        battle_video_path,
+                    )
+                else:
+                    result = publish_video_to_x(
+                        video_path=str(battle_video_path),
+                        caption=battle_video_plan.x_caption,
+                        episode_id=episode_id,
+                    )
+                    if result.get("tweet_id"):
+                        tweet_ids.append(str(result["tweet_id"]))
+                sl.step_done("STEP_8_X_VIDEO", ts, f"video={battle_video_path}")
+            except Exception as exc:
+                sl.step_fail("STEP_8_X_VIDEO", ts, exc)
 
     # 발행 이력 기록
     runtime = round(time.monotonic() - ts_total, 1)
