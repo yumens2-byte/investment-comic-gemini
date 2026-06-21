@@ -145,6 +145,11 @@ def _feature_flag_snapshot() -> dict[str, bool]:
     return {name: _env_flag_enabled(name) for name in _CONTINUITY_FLAG_NAMES}
 
 
+def _continuity_hard_fail_enabled() -> bool:
+    """Return whether strict continuity should abort STEP 4 after repair is exhausted."""
+    return os.environ.get("CONTINUITY_STRICT_HARD_FAIL", "false").strip().lower() == "true"
+
+
 def _record_context_error(ctx: dict, feature: str, exc: Exception, *, strict: bool) -> None:
     """Attach recoverable context-generation errors to analysis_ctx_json."""
     ctx.setdefault("context_errors", []).append(
@@ -255,6 +260,26 @@ def _ensure_narrative_quality_inputs(ctx: dict) -> dict:
         ).model_dump()
 
     return rebuilt_ctx
+
+
+def _build_continuity_repair_instructions(script_dict: dict, continuity_payload: dict) -> str:
+    """Build a constrained one-shot repair prompt for strict continuity failures."""
+    missing = continuity_payload.get("missing_requirements") or []
+    warnings = continuity_payload.get("warnings") or []
+    return (
+        "Previous draft failed the strict continuity gate.\n"
+        f"- continuity_score: {continuity_payload.get('total_score', 0):.1f}/100\n"
+        f"- status: {continuity_payload.get('status', 'unknown')}\n"
+        f"- previous_source_episode_id: "
+        f"{continuity_payload.get('previous_source_episode_id') or 'unknown'}\n"
+        f"- missing_requirements: {', '.join(missing) if missing else 'none'}\n"
+        f"- warnings: {'; '.join(warnings) if warnings else 'none'}\n\n"
+        "Revise only the narrative continuity payoff:\n"
+        "1. Panel 1 or 2 must explicitly acknowledge the previous episode hook/thread.\n"
+        "2. Preserve supplied market facts, event_type, battle_result, scenario_type, "
+        "hero/villain IDs, and the 8-panel structure.\n"
+        "3. Return the full EpisodeScript JSON only."
+    )
 
 
 def _load_recent_scenarios(episode_date: str, limit: int = 7) -> list[str]:
@@ -1092,30 +1117,32 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
             ),
         )
 
-        script = generate_episode(
-            date=episode_date,
-            episode_id=episode_id,
-            event_type=ctx["event_type"],
-            delta=ctx["delta"],
-            battle_result=ctx["battle_result"],
-            hero_id=ctx["hero_id"],
-            villain_id=ctx["villain_id"],
-            arc_context=ctx["arc_context"],
+        generation_kwargs = {
+            "date": episode_date,
+            "episode_id": episode_id,
+            "event_type": ctx["event_type"],
+            "delta": ctx["delta"],
+            "battle_result": ctx["battle_result"],
+            "hero_id": ctx["hero_id"],
+            "villain_id": ctx["villain_id"],
+            "arc_context": ctx["arc_context"],
             # v2.0 신규 파라미터 (기존 generate_episode가 **kwargs 수용 시 자동 전달)
-            scenario_type=ctx.get("scenario_type", "ONE_VS_ONE"),
-            ending_tone=ctx.get("ending_tone", "TENSE"),
-            heroes=ctx.get("heroes", [ctx["hero_id"]]),
+            "scenario_type": ctx.get("scenario_type", "ONE_VS_ONE"),
+            "ending_tone": ctx.get("ending_tone", "TENSE"),
+            "heroes": ctx.get("heroes", [ctx["hero_id"]]),
             # Step 3-Story 신규 파라미터 (2026-04-22 보정)
-            guest_character_prompt=ctx.get("guest_character_prompt", ""),
+            "guest_character_prompt": ctx.get("guest_character_prompt", ""),
             # Narrative Context Pilot (2026-06-01)
-            narrative_context_pack=ctx.get("narrative_context_pack"),
-            story_beat_plan=ctx.get("story_beat_plan"),
-            active_character_cards=ctx.get("active_character_cards"),
-            villain_ids=ctx.get("villain_ids"),
-        )
+            "narrative_context_pack": ctx.get("narrative_context_pack"),
+            "story_beat_plan": ctx.get("story_beat_plan"),
+            "active_character_cards": ctx.get("active_character_cards"),
+            "villain_ids": ctx.get("villain_ids"),
+        }
+        script = generate_episode(**generation_kwargs)
         script_dict = script.model_dump()
 
         from engine.narrative.story_quality import (
+            StoryContinuityError,
             build_continuity_quality_payload,
             validate_story_continuity,
             validate_story_grounding,
@@ -1136,12 +1163,68 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
             ctx.get("story_beat_plan"),
             strict_enabled=strict_continuity,
         )
-        continuity_warnings = validate_story_continuity(
-            script_dict,
-            ctx.get("narrative_context_pack"),
-            ctx.get("story_beat_plan"),
-            strict=strict_continuity,
-        )
+        try:
+            continuity_warnings = validate_story_continuity(
+                script_dict,
+                ctx.get("narrative_context_pack"),
+                ctx.get("story_beat_plan"),
+                strict=strict_continuity,
+            )
+        except StoryContinuityError as continuity_exc:
+            repair_instructions = _build_continuity_repair_instructions(
+                script_dict,
+                script_dict.get("_continuity_quality") or {},
+            )
+            logger_inst.warning(
+                "STEP_4",
+                "[StoryContinuity] strict gate failed; retrying one continuity repair: "
+                f"{continuity_exc}",
+            )
+            repaired_script = generate_episode(
+                **generation_kwargs,
+                continuity_repair_instructions=repair_instructions,
+            )
+            script = repaired_script
+            script_dict = repaired_script.model_dump()
+            script_dict["_continuity_quality"] = build_continuity_quality_payload(
+                script_dict,
+                ctx.get("narrative_context_pack"),
+                ctx.get("story_beat_plan"),
+                strict_enabled=strict_continuity,
+            )
+            script_dict["_continuity_quality"]["repair_attempted"] = True
+            script_dict["_continuity_quality"]["repair_reason"] = str(continuity_exc)
+            try:
+                continuity_warnings = validate_story_continuity(
+                    script_dict,
+                    ctx.get("narrative_context_pack"),
+                    ctx.get("story_beat_plan"),
+                    strict=strict_continuity,
+                )
+            except StoryContinuityError as repair_exc:
+                if _continuity_hard_fail_enabled():
+                    script_dict["_continuity_quality"]["repair_failed"] = True
+                    script_dict["_continuity_quality"]["repair_failure_reason"] = str(repair_exc)
+                    raise
+                continuity_warnings = validate_story_continuity(
+                    script_dict,
+                    ctx.get("narrative_context_pack"),
+                    ctx.get("story_beat_plan"),
+                    strict=False,
+                )
+                script_dict["_continuity_quality"]["repair_failed"] = True
+                script_dict["_continuity_quality"]["repair_failure_reason"] = str(repair_exc)
+                script_dict["_continuity_quality"]["hard_fail_suppressed"] = True
+                script_dict["_continuity_quality"]["degraded"] = True
+                script_dict["_continuity_quality"]["degraded_reason"] = "continuity_repair_failed"
+                logger_inst.warning(
+                    "STEP_4",
+                    "[StoryContinuity] repair still below strict threshold; "
+                    "continuing as degraded because CONTINUITY_STRICT_HARD_FAIL=false: "
+                    f"{repair_exc}",
+                )
+        else:
+            script_dict["_continuity_quality"]["repair_attempted"] = False
         logger_inst.info(
             "STEP_4",
             "[StoryContinuity] previous=%s score=%.1f status=%s strict=%s warnings=%d"

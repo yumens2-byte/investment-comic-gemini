@@ -1,10 +1,13 @@
 import pytest
 
+from engine.narrative.story_quality import StoryContinuityError
 from scripts.run_market import (
+    _build_continuity_repair_instructions,
     _ensure_narrative_quality_inputs,
     _feature_flag_snapshot,
     _record_context_error,
     _validate_narrative_quality_inputs,
+    step_narrative,
 )
 
 
@@ -122,3 +125,214 @@ def test_quality_inputs_do_not_require_optional_story_enrichment(monkeypatch) ->
     )
 
     assert rebuilt["narrative_context_pack"]["top_evidence"][0]["id"] == "metric:SPY"
+
+
+def test_continuity_repair_instructions_preserve_market_contract() -> None:
+    prompt = _build_continuity_repair_instructions(
+        {},
+        {
+            "total_score": 35.0,
+            "status": "fail",
+            "previous_source_episode_id": "ICG-2026-06-15-001",
+            "missing_requirements": ["opening_hook_payoff"],
+            "warnings": ["Continuity score 35.0 below threshold 70"],
+        },
+    )
+
+    assert "35.0/100" in prompt
+    assert "opening_hook_payoff" in prompt
+    assert "Preserve supplied market facts" in prompt
+    assert "Return the full EpisodeScript JSON only" in prompt
+
+
+def test_step_narrative_retries_once_on_strict_continuity_failure(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("NARRATIVE_CONTEXT_ENABLED", "true")
+    monkeypatch.setenv("STORY_PLANNER_ENABLED", "true")
+    monkeypatch.setenv("CONTINUITY_STRICT_ENABLED", "true")
+
+    calls: list[dict] = []
+
+    class FakeScript:
+        panels = [object()] * 8
+
+        def __init__(self, label: str) -> None:
+            self.label = label
+
+        def model_dump(self) -> dict:
+            return {
+                "episode_id": "ICG-2026-06-16-001",
+                "date": "2026-06-16",
+                "event_type": "NORMAL",
+                "title": f"title-{self.label}",
+                "panels": [{"idx": idx, "narration": f"panel {idx}"} for idx in range(1, 9)],
+            }
+
+    def fake_generate_episode(**kwargs):
+        calls.append(kwargs)
+        return FakeScript("repair" if kwargs.get("continuity_repair_instructions") else "draft")
+
+    payloads = [
+        {
+            "total_score": 35.0,
+            "status": "fail",
+            "missing_requirements": ["opening_hook_payoff"],
+            "warnings": ["Continuity score 35.0 below threshold 70"],
+            "previous_source_episode_id": "ICG-2026-06-15-001",
+        },
+        {
+            "total_score": 85.0,
+            "status": "pass",
+            "missing_requirements": [],
+            "warnings": [],
+            "previous_source_episode_id": "ICG-2026-06-15-001",
+        },
+    ]
+
+    def fake_build_payload(*args, **kwargs):
+        return dict(payloads.pop(0))
+
+    validate_calls = []
+
+    def fake_validate_continuity(*args, **kwargs):
+        validate_calls.append(kwargs)
+        if len(validate_calls) == 1:
+            raise StoryContinuityError("Continuity score 35.0 below threshold 70")
+        return []
+
+    class FakeLogger:
+        def step_start(self, *_args):
+            return 0.0
+
+        def step_done(self, *_args):
+            return None
+
+        def step_fail(self, *_args):
+            return None
+
+        def info(self, *_args):
+            return None
+
+        def warning(self, *_args):
+            return None
+
+    import engine.narrative.claude_client as claude_client
+    import engine.narrative.story_quality as story_quality
+
+    monkeypatch.setattr(claude_client, "generate_episode", fake_generate_episode)
+    monkeypatch.setattr(story_quality, "validate_story_grounding", lambda *args, **kwargs: [])
+    monkeypatch.setattr(story_quality, "build_continuity_quality_payload", fake_build_payload)
+    monkeypatch.setattr(story_quality, "validate_story_continuity", fake_validate_continuity)
+
+    script = step_narrative(
+        "2026-06-16",
+        "ICG-2026-06-16-001",
+        _ctx()
+        | {
+            "event_type": "NORMAL",
+            "delta": {"SPY": {"curr": 1.0}},
+            "battle_result": {"outcome": "DRAW", "balance": 0},
+            "hero_id": "CHAR_HERO_001",
+            "villain_id": "CHAR_VILLAIN_001",
+            "arc_context": {},
+        },
+        FakeLogger(),
+    )
+
+    assert len(calls) == 2
+    assert "continuity_repair_instructions" not in calls[0]
+    assert "Continuity score 35.0" in calls[1]["continuity_repair_instructions"]
+    assert script["title"] == "title-repair"
+    assert script["_continuity_quality"]["repair_attempted"] is True
+
+
+def test_step_narrative_continues_degraded_when_repair_still_fails(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("NARRATIVE_CONTEXT_ENABLED", "true")
+    monkeypatch.setenv("STORY_PLANNER_ENABLED", "true")
+    monkeypatch.setenv("CONTINUITY_STRICT_ENABLED", "true")
+    monkeypatch.delenv("CONTINUITY_STRICT_HARD_FAIL", raising=False)
+
+    class FakeScript:
+        panels = [object()] * 8
+
+        def model_dump(self) -> dict:
+            return {
+                "episode_id": "ICG-2026-06-16-001",
+                "date": "2026-06-16",
+                "event_type": "NORMAL",
+                "title": "repair-still-degraded",
+                "panels": [{"idx": idx, "narration": f"panel {idx}"} for idx in range(1, 9)],
+            }
+
+    def fake_generate_episode(**_kwargs):
+        return FakeScript()
+
+    def fake_build_payload(*_args, **_kwargs):
+        return {
+            "total_score": 35.0,
+            "status": "fail",
+            "missing_requirements": [
+                "opening_hook_payoff",
+                "unresolved_thread_resolution",
+            ],
+            "warnings": ["Continuity score 35.0 below threshold 70"],
+            "previous_source_episode_id": "ICG-2026-06-15-001",
+        }
+
+    validate_calls: list[dict] = []
+
+    def fake_validate_continuity(*_args, **kwargs):
+        validate_calls.append(kwargs)
+        if kwargs["strict"]:
+            raise StoryContinuityError("Continuity score 35.0 below threshold 70")
+        return ["Continuity score 35.0 below threshold 70"]
+
+    class FakeLogger:
+        warnings: list[tuple] = []
+
+        def step_start(self, *_args):
+            return 0.0
+
+        def step_done(self, *_args):
+            return None
+
+        def step_fail(self, *_args):
+            return None
+
+        def info(self, *_args):
+            return None
+
+        def warning(self, *args):
+            self.warnings.append(args)
+
+    import engine.narrative.claude_client as claude_client
+    import engine.narrative.story_quality as story_quality
+
+    monkeypatch.setattr(claude_client, "generate_episode", fake_generate_episode)
+    monkeypatch.setattr(story_quality, "validate_story_grounding", lambda *args, **kwargs: [])
+    monkeypatch.setattr(story_quality, "build_continuity_quality_payload", fake_build_payload)
+    monkeypatch.setattr(story_quality, "validate_story_continuity", fake_validate_continuity)
+
+    logger = FakeLogger()
+    script = step_narrative(
+        "2026-06-16",
+        "ICG-2026-06-16-001",
+        _ctx()
+        | {
+            "event_type": "NORMAL",
+            "delta": {"SPY": {"curr": 1.0}},
+            "battle_result": {"outcome": "DRAW", "balance": 0},
+            "hero_id": "CHAR_HERO_001",
+            "villain_id": "CHAR_VILLAIN_001",
+            "arc_context": {},
+        },
+        logger,
+    )
+
+    assert [call["strict"] for call in validate_calls] == [True, True, False]
+    assert script["_continuity_quality"]["repair_attempted"] is True
+    assert script["_continuity_quality"]["repair_failed"] is True
+    assert script["_continuity_quality"]["hard_fail_suppressed"] is True
+    assert script["_continuity_quality"]["degraded"] is True
+    assert script["_continuity_quality"]["degraded_reason"] == "continuity_repair_failed"
