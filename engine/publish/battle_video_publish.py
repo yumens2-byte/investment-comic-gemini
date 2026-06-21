@@ -4,6 +4,8 @@ This module is intentionally isolated from the existing image/PIL comic publishi
 flow.  It only plans an additional mp4 post for episodes that actually contain a
 battle scene when a video asset is present; callers should continue to publish the
 image slides first.
+flow.  It only plans and executes an additional mp4 post for battle events when a
+video asset is present; callers should continue to publish the image slides first.
 """
 
 from __future__ import annotations
@@ -124,6 +126,8 @@ def build_battle_video_plan(
     """Plan optional battle-video publication without touching image slide flow."""
     if not has_battle_scene(row, event_type, script_dict):
         return BattleVideoPublishPlan(enabled=False, reason="not_battle_scene")
+    if not is_battle_video_event(event_type):
+        return BattleVideoPublishPlan(enabled=False, reason="not_battle_event")
 
     video_path = extract_battle_video_path(row)
     if not video_path:
