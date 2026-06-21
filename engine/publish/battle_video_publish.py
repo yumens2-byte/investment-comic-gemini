@@ -1,6 +1,9 @@
 """Optional battle-scene video add-on publishing helpers.
 
 This module is intentionally isolated from the existing image/PIL comic publishing
+flow.  It only plans an additional mp4 post for episodes that actually contain a
+battle scene when a video asset is present; callers should continue to publish the
+image slides first.
 flow.  It only plans and executes an additional mp4 post for battle events when a
 video asset is present; callers should continue to publish the image slides first.
 """
@@ -16,6 +19,17 @@ BATTLE_VIDEO_EVENT_TYPES = frozenset({
     "BATTLE_PLUS",
     "BATTLE_PLUS_FORM2",
     "BATTLE_PLUS_FORM3",
+})
+
+COMBAT_SCENARIO_TYPES = frozenset({
+    "ONE_VS_ONE",
+    "ALLIANCE",
+})
+
+NON_COMBAT_OUTCOMES = frozenset({
+    "",
+    "PEACEFUL_GROWTH",
+    "NO_BATTLE",
 })
 
 X_MAX_CAPTION_LEN = 280
@@ -38,6 +52,32 @@ class BattleVideoPublishPlan:
 def is_battle_video_event(event_type: str) -> bool:
     """Return True when an episode type is eligible for battle-scene video upload."""
     return (event_type or "").upper() in BATTLE_VIDEO_EVENT_TYPES
+
+
+def has_battle_scene(row: dict[str, Any], event_type: str, script_dict: dict[str, Any]) -> bool:
+    """Return True when the episode likely contains an actual battle scene.
+
+    Event type alone is not enough because normal/emergence episodes can still be
+    rendered as ONE_VS_ONE or ALLIANCE scenes with a battle outcome. Conversely,
+    NO_BATTLE/peaceful episodes should not request video add-ons.
+    """
+    if is_battle_video_event(event_type):
+        return True
+
+    scenario_type = str(
+        row.get("scenario_type") or script_dict.get("scenario_type") or ""
+    ).upper()
+    if scenario_type in COMBAT_SCENARIO_TYPES:
+        return True
+
+    battle_json = row.get("battle_json") if isinstance(row.get("battle_json"), dict) else {}
+    outcome = str(
+        battle_json.get("outcome")
+        or row.get("outcome")
+        or script_dict.get("battle_outcome")
+        or ""
+    ).upper()
+    return outcome not in NON_COMBAT_OUTCOMES
 
 
 def extract_battle_video_path(row: dict[str, Any]) -> Path | None:
@@ -84,6 +124,8 @@ def build_battle_video_plan(
     channels: list[str],
 ) -> BattleVideoPublishPlan:
     """Plan optional battle-video publication without touching image slide flow."""
+    if not has_battle_scene(row, event_type, script_dict):
+        return BattleVideoPublishPlan(enabled=False, reason="not_battle_scene")
     if not is_battle_video_event(event_type):
         return BattleVideoPublishPlan(enabled=False, reason="not_battle_event")
 
