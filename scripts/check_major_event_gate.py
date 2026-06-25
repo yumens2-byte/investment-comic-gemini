@@ -10,17 +10,32 @@ Prints a single line for GitHub Actions:
 from __future__ import annotations
 
 import argparse
+import sys
+from pathlib import Path
 
-MAJOR_EVENT_TYPES = frozenset({
-    "BATTLE",
-    "SHOCK",
-    "AFTERMATH",
-    "BATTLE_PLUS",
-    "BATTLE_PLUS_FORM2",
-    "BATTLE_PLUS_FORM3",
-    "EMERGENCE",
-    "SEASON_FINALE",
-})
+
+def _ensure_repo_root_on_path() -> None:
+    """Allow this script to import project packages when run as a file."""
+    repo_root = Path(__file__).resolve().parents[1]
+    repo_root_text = str(repo_root)
+    if repo_root_text not in sys.path:
+        sys.path.insert(0, repo_root_text)
+
+
+_ensure_repo_root_on_path()
+
+MAJOR_EVENT_TYPES = frozenset(
+    {
+        "BATTLE",
+        "SHOCK",
+        "AFTERMATH",
+        "BATTLE_PLUS",
+        "BATTLE_PLUS_FORM2",
+        "BATTLE_PLUS_FORM3",
+        "EMERGENCE",
+        "SEASON_FINALE",
+    }
+)
 
 
 def should_run_expensive(event_type: str) -> bool:
