@@ -72,3 +72,54 @@ def test_story_continuity_passes_when_opening_mentions_previous_hook() -> None:
     plan = {"panel_beats": [{"panel_idx": 1, "must_reference_previous": True}]}
 
     assert validate_story_continuity(script, context, plan, strict=True) == []
+
+
+def test_build_continuity_retry_feedback_describes_missing_strict_requirements() -> None:
+    from engine.narrative.story_quality import build_continuity_retry_feedback
+
+    script = {
+        "resolved_threads": [],
+        "panels": [
+            {"idx": 1, "narration": "오늘은 조용히 시장의 숨을 고른다.", "key_text": "관찰"},
+            {"idx": 2, "narration": "VIX가 낮아졌다."},
+        ],
+    }
+    context = {
+        "previous_episode": {
+            "source_episode_id": "ICG-2026-06-24-001",
+            "next_hook": "검은 문은 아직 닫히지 않았다",
+            "unresolved_threads": ["철문 안쪽의 목소리"],
+        }
+    }
+    plan = {"panel_beats": [{"panel_idx": 1, "must_reference_previous": True}]}
+
+    feedback = build_continuity_retry_feedback(script, context, plan)
+
+    assert feedback is not None
+    assert "STRICT CONTINUITY RETRY" in feedback
+    assert "opening_hook_payoff" in feedback
+    assert "unresolved_thread_resolution" in feedback
+    assert "검은 문은 아직 닫히지 않았다" in feedback
+    assert "철문 안쪽의 목소리" in feedback
+    assert "MACHINE-CHECK REQUIRED" in feedback
+    assert "Do not paraphrase" in feedback
+
+
+def test_build_strict_continuity_contract_requires_exact_first_pass_markers() -> None:
+    from engine.narrative.story_quality import build_strict_continuity_contract
+
+    contract = build_strict_continuity_contract(
+        {
+            "previous_episode": {
+                "source_episode_id": "ICG-2026-06-24-001",
+                "next_hook": "검은 문은 아직 닫히지 않았다",
+                "unresolved_threads": ["철문 안쪽의 목소리"],
+            }
+        }
+    )
+
+    assert contract is not None
+    assert "STRICT CONTINUITY CONTRACT" in contract
+    assert "MUST copy exact_previous_hook" in contract
+    assert "검은 문은 아직 닫히지 않았다" in contract
+    assert "철문 안쪽의 목소리" in contract
