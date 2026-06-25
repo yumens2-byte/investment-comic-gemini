@@ -78,6 +78,57 @@ def _script_market_text(script_dict: dict[str, Any]) -> list[tuple[str, str]]:
     return snippets
 
 
+def build_continuity_retry_feedback(
+    script_dict: dict[str, Any],
+    context_pack: dict[str, Any] | None,
+    story_beat_plan: dict[str, Any] | None = None,
+) -> str | None:
+    """Build explicit LLM retry instructions from deterministic continuity scoring.
+
+    The strict gate should not silently rewrite an episode after generation.  When
+    the generated JSON misses prior continuity, send Claude a narrow retry note
+    that cites only the already-supplied previous_episode state and the missing
+    deterministic requirements.
+    """
+    from engine.narrative.continuity_score import score_story_continuity
+
+    score = score_story_continuity(script_dict, context_pack, story_beat_plan)
+    if score.status == "pass" or not (score.seed or score.source_episode_id):
+        return None
+
+    previous = (context_pack or {}).get("previous_episode") or {}
+    unresolved = [
+        str(item).strip() for item in previous.get("unresolved_threads") or [] if str(item).strip()
+    ]
+    lines = [
+        "## STRICT CONTINUITY RETRY — previous episode payoff is mandatory",
+        f"- prior_source_episode_id: {score.source_episode_id or previous.get('source_episode_id', '')}",
+        f"- current_continuity_score: {score.total_score:.1f} ({score.status})",
+        "- missing_requirements: " + (", ".join(score.missing_requirements) or "none"),
+    ]
+    if score.seed:
+        lines.extend(
+            [
+                f"- previous_next_hook_to_pay_off: {score.seed}",
+                "- Required: panel 1 or panel 2 narration/key_text must explicitly acknowledge this previous hook before today's market cause.",
+            ]
+        )
+    if unresolved:
+        lines.extend(
+            [
+                "- unresolved_threads_to_resolve_or_acknowledge: " + "; ".join(unresolved[:3]),
+                "- Required: include at least one of these threads in resolved_threads or explicitly acknowledge it in panel narration.",
+            ]
+        )
+    lines.extend(
+        [
+            "- Do not invent new previous-episode facts; use only the hook/thread text above.",
+            "- Keep all EpisodeScript schema limits, including panel narration/key_text lengths, and return JSON only.",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def validate_story_continuity(
     script_dict: dict[str, Any],
     context_pack: dict[str, Any] | None,

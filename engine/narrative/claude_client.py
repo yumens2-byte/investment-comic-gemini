@@ -225,6 +225,7 @@ def generate_episode(
     story_beat_plan: dict | None = None,
     active_character_cards: list[dict] | None = None,
     villain_ids: list[str] | None = None,
+    continuity_retry_feedback: str | None = None,
 ) -> EpisodeScript:
     """
     Claude API를 호출하여 EpisodeScript를 생성.
@@ -253,14 +254,13 @@ def generate_episode(
 
     # ── Phase 2.3: Feature Flag 자동 감지 (명시값 우선) ─────────────────────
     import os as _os
+
     if narrative_depth_enabled is None:
         narrative_depth_enabled = (
             _os.environ.get("NARRATIVE_DEPTH_ENABLED", "false").lower() == "true"
         )
     if pair_tension_enabled is None:
-        pair_tension_enabled = (
-            _os.environ.get("PAIR_TENSION_ENABLED", "false").lower() == "true"
-        )
+        pair_tension_enabled = _os.environ.get("PAIR_TENSION_ENABLED", "false").lower() == "true"
 
     client = Anthropic()
     system_prompt = load_system_prompt()
@@ -313,9 +313,7 @@ def generate_episode(
             f"heroes: [{_heroes_str}]\n"
         )
         if scenario_type == "NO_BATTLE":
-            user_prompt += (
-                "\n⚠️ NO_BATTLE: DO NOT introduce any villain character in any panel.\n"
-            )
+            user_prompt += "\n⚠️ NO_BATTLE: DO NOT introduce any villain character in any panel.\n"
         elif scenario_type == "ALLIANCE":
             user_prompt += (
                 f"\n⚠️ ALLIANCE: 2 heroes ({_heroes_str}) vs 1 villain. "
@@ -350,6 +348,8 @@ def generate_episode(
             + json.dumps(story_beat_plan, ensure_ascii=False, indent=2)
             + "\n"
         )
+    if continuity_retry_feedback:
+        user_prompt += "\n\n" + continuity_retry_feedback.strip() + "\n"
 
     last_error: Exception | None = None
 
@@ -357,7 +357,9 @@ def generate_episode(
         try:
             logger.info(
                 "[claude] 에피소드 생성 시도 %d/%d (scenario=%s)",
-                attempt, _MAX_RETRIES, scenario_type,
+                attempt,
+                _MAX_RETRIES,
+                scenario_type,
             )
 
             # 재시도 시 에러 정보 + 글자수 가이드 추가
