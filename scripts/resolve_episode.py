@@ -21,6 +21,18 @@ import argparse
 import logging
 import re
 import sys
+from pathlib import Path
+
+
+def _ensure_repo_root_on_path() -> None:
+    """Allow this script to import project packages when run as a file."""
+    repo_root = Path(__file__).resolve().parents[1]
+    repo_root_text = str(repo_root)
+    if repo_root_text not in sys.path:
+        sys.path.insert(0, repo_root_text)
+
+
+_ensure_repo_root_on_path()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -112,9 +124,9 @@ def resolve(episode_id_input: str) -> dict:
             )
 
         return {
-            "episode_id":    episode_id_input,
+            "episode_id": episode_id_input,
             "slides_run_id": row.get("slides_run_id") or "",
-            "video_run_id":  _lookup_video_run_id(episode_id_input),
+            "video_run_id": _lookup_video_run_id(episode_id_input),
         }
 
     # 미입력 — 최신 assembled 자동 선택
@@ -131,13 +143,13 @@ def resolve(episode_id_input: str) -> dict:
         if rows.data:
             row = rows.data[0]
             ep_date = str(row["episode_date"])
-            ep_no   = row.get("episode_no") or 1
-            ep_id   = f"ICG-{ep_date}-{ep_no:03d}"
+            ep_no = row.get("episode_no") or 1
+            ep_id = f"ICG-{ep_date}-{ep_no:03d}"
             logger.info("자동 선택: %s (status=%s)", ep_id, status)
             return {
-                "episode_id":    ep_id,
+                "episode_id": ep_id,
                 "slides_run_id": row.get("slides_run_id") or "",
-                "video_run_id":  _lookup_video_run_id(ep_id),
+                "video_run_id": _lookup_video_run_id(ep_id),
             }
 
     logger.error("발행 가능한 에피소드 없음 (status=assembled 없음)")

@@ -41,6 +41,17 @@ import sys
 from datetime import date
 from pathlib import Path
 
+
+def _ensure_repo_root_on_path() -> None:
+    """Allow this script to import project packages when run as a file."""
+    repo_root = Path(__file__).resolve().parents[1]
+    repo_root_text = str(repo_root)
+    if repo_root_text not in sys.path:
+        sys.path.insert(0, repo_root_text)
+
+
+_ensure_repo_root_on_path()
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",

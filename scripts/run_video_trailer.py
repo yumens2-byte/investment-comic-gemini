@@ -21,6 +21,7 @@ Note on publish stages:
   (via callback or separate workflow trigger). The gate_notify stage
   is the last step of the main scheduled run.
 """
+
 import argparse
 import logging
 import os
@@ -30,6 +31,17 @@ import time
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
+
+
+def _ensure_repo_root_on_path() -> None:
+    """Allow this script to import project packages when run as a file."""
+    repo_root = Path(__file__).resolve().parents[1]
+    repo_root_text = str(repo_root)
+    if repo_root_text not in sys.path:
+        sys.path.insert(0, repo_root_text)
+
+
+_ensure_repo_root_on_path()
 
 VERSION = "1.4.3"
 
@@ -289,16 +301,13 @@ def _get_supabase_client():
     try:
         from supabase import create_client
     except ImportError as e:
-        raise RuntimeError(
-            "supabase package not installed. Run: pip install supabase"
-        ) from e
+        raise RuntimeError("supabase package not installed. Run: pip install supabase") from e
 
     url = os.environ.get("SUPABASE_URL")
     key = os.environ.get("SUPABASE_KEY")
     if not url or not key:
         raise RuntimeError("SUPABASE_URL or SUPABASE_KEY env variable not set")
     return create_client(url, key)
-
 
 
 def _is_missing_video_column_error(exc: Exception) -> bool:
@@ -309,10 +318,15 @@ def _is_missing_video_column_error(exc: Exception) -> bool:
 def _safe_video_assets_upsert(sb, payload: dict, *, context: str):
     """Upsert video_assets, retrying without optional artifact_run_id on old schemas."""
     try:
-        return sb.schema("icg").table("video_assets").upsert(
-            payload,
-            on_conflict="episode_id",
-        ).execute()
+        return (
+            sb.schema("icg")
+            .table("video_assets")
+            .upsert(
+                payload,
+                on_conflict="episode_id",
+            )
+            .execute()
+        )
     except Exception as exc:
         if "artifact_run_id" in payload and _is_missing_video_column_error(exc):
             fallback = dict(payload)
@@ -321,19 +335,28 @@ def _safe_video_assets_upsert(sb, payload: dict, *, context: str):
                 "[%s] video_assets.artifact_run_id column missing; retrying without artifact link",
                 context,
             )
-            return sb.schema("icg").table("video_assets").upsert(
-                fallback,
-                on_conflict="episode_id",
-            ).execute()
+            return (
+                sb.schema("icg")
+                .table("video_assets")
+                .upsert(
+                    fallback,
+                    on_conflict="episode_id",
+                )
+                .execute()
+            )
         raise
 
 
 def _safe_video_assets_update(sb, episode_id: str, payload: dict, *, context: str):
     """Update video_assets, retrying without optional artifact_run_id on old schemas."""
     try:
-        return sb.schema("icg").table("video_assets").update(payload).eq(
-            "episode_id", episode_id
-        ).execute()
+        return (
+            sb.schema("icg")
+            .table("video_assets")
+            .update(payload)
+            .eq("episode_id", episode_id)
+            .execute()
+        )
     except Exception as exc:
         if "artifact_run_id" in payload and _is_missing_video_column_error(exc):
             fallback = dict(payload)
@@ -342,10 +365,15 @@ def _safe_video_assets_update(sb, episode_id: str, payload: dict, *, context: st
                 "[%s] video_assets.artifact_run_id column missing; retrying without artifact link",
                 context,
             )
-            return sb.schema("icg").table("video_assets").update(fallback).eq(
-                "episode_id", episode_id
-            ).execute()
+            return (
+                sb.schema("icg")
+                .table("video_assets")
+                .update(fallback)
+                .eq("episode_id", episode_id)
+                .execute()
+            )
         raise
+
 
 def stage_persist_init():
     """STEP 5V: icg.video_assets UPSERT (status='generating')."""
@@ -358,9 +386,7 @@ def stage_persist_init():
 
     dry_run = os.environ.get("DRY_RUN", "false").lower() == "true"
     if dry_run:
-        logger.info(
-            f"[5V] DRY_RUN: skipping Supabase upsert (episode_id={episode_id})"
-        )
+        logger.info(f"[5V] DRY_RUN: skipping Supabase upsert (episode_id={episode_id})")
         logger.info(f"[5V] record initialized (dry_run): episode_id={episode_id}")
         return
 
@@ -399,6 +425,7 @@ def stage_veo():
         BudgetExceededError,
         check_before_generation,
     )
+
     # A1 decision (v2.2): Veo 3.1 Fast $0.15/s × 8s = $1.20
     # (generate_audio=False removed due to API 400 on 2026-04-20 run #6; Veo default audio ON)
     # Audio track will be stripped in Phase V4 ffmpeg assembly if needed.
@@ -430,16 +457,13 @@ def stage_veo():
         logger.exception(f"[6V] Failed to load cut1 prompt: {e}")
         raise
     logger.info(
-        f"[6V] Prompt loaded: prompt_len={len(full_prompt)} "
-        f"negative_len={len(negative_prompt)}"
+        f"[6V] Prompt loaded: prompt_len={len(full_prompt)} negative_len={len(negative_prompt)}"
     )
 
     # Step C: Generate video
     if dry_run:
         size = _create_dummy_mp4(output_path)
-        logger.info(
-            f"[6V] DRY_RUN: created dummy mp4 at {output_path} ({size} bytes)"
-        )
+        logger.info(f"[6V] DRY_RUN: created dummy mp4 at {output_path} ({size} bytes)")
         gen_result = {
             "video_uri": output_path,
             "duration_sec": 8,
@@ -452,7 +476,9 @@ def stage_veo():
             "dry_run": True,
         }
     else:
-        logger.info("[6V] Calling Veo API (estimated charge $1.20, audio included by Veo default)...")
+        logger.info(
+            "[6V] Calling Veo API (estimated charge $1.20, audio included by Veo default)..."
+        )
         from engine.video.veo_client import VeoClient
 
         veo = VeoClient()
@@ -498,9 +524,7 @@ def stage_veo():
     else:
         logger.info("[6V] DRY_RUN: skipping Supabase update")
 
-    logger.info(
-        "[6V] Cut 1 complete. V2 MVP Phase 2 (cut2/cut3 I2V) is NOT yet implemented."
-    )
+    logger.info("[6V] Cut 1 complete. V2 MVP Phase 2 (cut2/cut3 I2V) is NOT yet implemented.")
 
 
 def stage_assembly():
@@ -735,9 +759,7 @@ def main():
     finally:
         elapsed = time.monotonic() - start_ts
         logger.info("-" * 72)
-        logger.info(
-            f"STAGE END: {args.stage} | elapsed={elapsed:.3f}s | exit_code={exit_code}"
-        )
+        logger.info(f"STAGE END: {args.stage} | elapsed={elapsed:.3f}s | exit_code={exit_code}")
         logger.info(f"Log file saved: {log_file.resolve()}")
         logger.info("=" * 72)
         # Ensure file handler flushes before exit

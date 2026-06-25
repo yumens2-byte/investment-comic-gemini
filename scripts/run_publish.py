@@ -18,6 +18,17 @@ import sys
 import time
 from pathlib import Path
 
+
+def _ensure_repo_root_on_path() -> None:
+    """Allow this script to import project packages when run as a file."""
+    repo_root = Path(__file__).resolve().parents[1]
+    repo_root_text = str(repo_root)
+    if repo_root_text not in sys.path:
+        sys.path.insert(0, repo_root_text)
+
+
+_ensure_repo_root_on_path()
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
@@ -25,16 +36,18 @@ logging.basicConfig(
 logger = logging.getLogger("icg.run_publish")
 
 
-MAJOR_EVENT_TYPES = frozenset({
-    "BATTLE",
-    "SHOCK",
-    "AFTERMATH",
-    "EMERGENCE",
-    "SEASON_FINALE",
-    "BATTLE_PLUS",
-    "BATTLE_PLUS_FORM2",
-    "BATTLE_PLUS_FORM3",
-})
+MAJOR_EVENT_TYPES = frozenset(
+    {
+        "BATTLE",
+        "SHOCK",
+        "AFTERMATH",
+        "EMERGENCE",
+        "SEASON_FINALE",
+        "BATTLE_PLUS",
+        "BATTLE_PLUS_FORM2",
+        "BATTLE_PLUS_FORM3",
+    }
+)
 
 
 def is_major_event(event_type: str) -> bool:
@@ -146,7 +159,10 @@ def _load_video_asset_row(icg_table, episode_id: str, episode_date: str) -> dict
 
 def _merge_local_video_path(row: dict, episode_id: str) -> dict:
     """Attach a downloaded local mp4 when DB metadata has no explicit video path."""
-    if any(row.get(key) for key in ("battle_video_path", "final_video_path", "video_path", "cut1_video_uri")):
+    if any(
+        row.get(key)
+        for key in ("battle_video_path", "final_video_path", "video_path", "cut1_video_uri")
+    ):
         return row
 
     candidates = [
