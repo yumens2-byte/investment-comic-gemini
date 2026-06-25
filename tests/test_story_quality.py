@@ -101,3 +101,25 @@ def test_build_continuity_retry_feedback_describes_missing_strict_requirements()
     assert "unresolved_thread_resolution" in feedback
     assert "검은 문은 아직 닫히지 않았다" in feedback
     assert "철문 안쪽의 목소리" in feedback
+    assert "MACHINE-CHECK REQUIRED" in feedback
+    assert "Do not paraphrase" in feedback
+
+
+def test_build_strict_continuity_contract_requires_exact_first_pass_markers() -> None:
+    from engine.narrative.story_quality import build_strict_continuity_contract
+
+    contract = build_strict_continuity_contract(
+        {
+            "previous_episode": {
+                "source_episode_id": "ICG-2026-06-24-001",
+                "next_hook": "검은 문은 아직 닫히지 않았다",
+                "unresolved_threads": ["철문 안쪽의 목소리"],
+            }
+        }
+    )
+
+    assert contract is not None
+    assert "STRICT CONTINUITY CONTRACT" in contract
+    assert "MUST copy exact_previous_hook" in contract
+    assert "검은 문은 아직 닫히지 않았다" in contract
+    assert "철문 안쪽의 목소리" in contract
