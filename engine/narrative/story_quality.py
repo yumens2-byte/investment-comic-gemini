@@ -148,6 +148,7 @@ def build_continuity_retry_feedback(
                 f"- previous_next_hook_to_pay_off: {score.seed}",
                 "- MACHINE-CHECK REQUIRED: copy the exact previous_next_hook_to_pay_off text above into panels[0].narration or panels[1].narration before today's market cause.",
                 "- Do not paraphrase the previous hook on retry; the strict scorer checks deterministic keyword overlap in the opening panels.",
+                "- Required: panel 1 or panel 2 narration/key_text must explicitly acknowledge this previous hook before today's market cause.",
             ]
         )
     if unresolved:
@@ -155,6 +156,7 @@ def build_continuity_retry_feedback(
             [
                 "- unresolved_threads_to_resolve_or_acknowledge: " + "; ".join(unresolved[:3]),
                 "- MACHINE-CHECK REQUIRED: copy at least one unresolved thread exactly into resolved_threads[0] or into panel narration.",
+                "- Required: include at least one of these threads in resolved_threads or explicitly acknowledge it in panel narration.",
             ]
         )
     lines.extend(
