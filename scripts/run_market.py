@@ -675,6 +675,10 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
             villain_base = canon["villains"].get(villain_id, {}).get("base_power", 72)
 
         market_ctx = get_market_context_for_battle(delta, curr_row)
+        if signal_pack is not None and signal_pack.get("data_confidence") is not None:
+            market_ctx["data_confidence"] = signal_pack.get("data_confidence")
+        if risk_trace_v3 is not None and risk_trace_v3.get("data_confidence") is not None:
+            market_ctx["data_confidence"] = risk_trace_v3.get("data_confidence")
 
         # ── STEP 3-5: battle 계산 (scenario별 분기) ───────────────────────────
         if _scenario_v2 and scenario_type_v2 == "NO_BATTLE":
@@ -766,7 +770,9 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                 _episode_for_modifier = _episode_type_v3 or event_type
                 before_balance = battle_result.balance
                 battle_result = apply_v23_modifiers(
-                    battle_result, arc_context, _episode_for_modifier
+                    battle_result,
+                    {**arc_context, "data_confidence": market_ctx.get("data_confidence")},
+                    _episode_for_modifier,
                 )
                 logger.info(
                     "[Step 3-5b] battle_v23 modifiers episode=%s balance=%d→%d outcome=%s",

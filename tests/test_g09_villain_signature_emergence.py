@@ -287,3 +287,51 @@ def test_apply_v23_peaceful_growth_preserved(monkeypatch) -> None:
     arc_ctx = {"villain_signature": 1, "crowd_momentum": 12, "emergence_deficit_days": 0}
     result = apply_v23_modifiers(original, arc_ctx, "STALEMATE")
     assert result.outcome == "PEACEFUL_GROWTH"
+
+
+def test_apply_v23_preserves_multi_villain_metadata(monkeypatch) -> None:
+    monkeypatch.setenv("VILLAIN_SIGNATURE_BONUS_ENABLED", "true")
+    monkeypatch.delenv("CROWD_MODIFIER_ENABLED", raising=False)
+    monkeypatch.delenv("EMERGENCE_DEFICIT_ENABLED", raising=False)
+    original = BattleResult(
+        hero_id="CHAR_HERO_001",
+        villain_id="CHAR_VILLAIN_004",
+        villain_ids=["CHAR_VILLAIN_004", "CHAR_VILLAIN_005"],
+        hero_power=95,
+        villain_power=90,
+        balance=5,
+        outcome="DRAW",
+        hero_power_breakdown={"base": 95},
+        villain_power_breakdown={"primary": 80, "support_1": 10},
+        villain_power_breakdown_by_id={
+            "CHAR_VILLAIN_004": {"base": 80},
+            "CHAR_VILLAIN_005": {"base": 60, "support_decay": -50},
+        },
+        encounter_type="MULTI_VILLAIN",
+        villain_pact_state="DUAL_PRESSURE",
+    )
+
+    result = apply_v23_modifiers(original, {"villain_signature": 2}, "BATTLE")
+
+    assert result.villain_ids == original.villain_ids
+    assert result.villain_power_breakdown_by_id == original.villain_power_breakdown_by_id
+    assert result.encounter_type == "MULTI_VILLAIN"
+    assert result.villain_pact_state == "DUAL_PRESSURE"
+    assert result.villain_power_breakdown["villain_signature"] == 8
+
+
+def test_apply_v23_confidence_gate_uses_arc_context_confidence(monkeypatch) -> None:
+    monkeypatch.setenv("VILLAIN_SIGNATURE_BONUS_ENABLED", "true")
+    monkeypatch.delenv("CROWD_MODIFIER_ENABLED", raising=False)
+    monkeypatch.delenv("EMERGENCE_DEFICIT_ENABLED", raising=False)
+    original = _make_battle_result(hero_power=130, villain_power=90, outcome="HERO_VICTORY")
+
+    result = apply_v23_modifiers(
+        original,
+        {"villain_signature": 1, "data_confidence": 0.4},
+        "BATTLE",
+    )
+
+    assert result.outcome == "HERO_TACTICAL_VICTORY"
+    assert result.balance == 29
+    assert "confidence_gate" in result.hero_power_breakdown

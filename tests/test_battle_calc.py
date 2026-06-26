@@ -218,6 +218,48 @@ class TestBattle:
         assert result.hero_power_breakdown["defensive_mode"] == 12
 
 
+def test_confidence_gate_softens_low_confidence_hero_victory():
+    result = battle(
+        "CHAR_HERO_003",
+        80,
+        "CHAR_VILLAIN_002",
+        60,
+        {"oil_shock": True, "wti_pct_3d": 6.0, "vix": 20.0, "data_confidence": 0.4},
+        {"tension": 80},
+        form_bonus=10,
+    )
+    assert result.outcome == "HERO_TACTICAL_VICTORY"
+    assert result.balance == 29
+    assert result.hero_power_breakdown["confidence_gate_adjustment"] < 0
+
+
+def test_confidence_gate_softens_low_confidence_system_collapse():
+    result = battle(
+        "CHAR_HERO_001",
+        60,
+        "CHAR_VILLAIN_004",
+        100,
+        {"vix": 45, "wti_pct_3d": 0, "data_confidence": 0.3},
+        {"tension": 95},
+    )
+    assert result.outcome == "HERO_DEFEAT"
+    assert result.balance == -30
+    assert result.hero_power_breakdown["confidence_gate_adjustment"] > 0
+
+
+def test_confidence_gate_preserves_high_confidence_extreme_outcome():
+    result = battle(
+        "CHAR_HERO_001",
+        60,
+        "CHAR_VILLAIN_004",
+        100,
+        {"vix": 45, "wti_pct_3d": 0, "data_confidence": 0.9},
+        {"tension": 95},
+    )
+    assert result.outcome == "SYSTEM_COLLAPSE"
+    assert "confidence_gate" not in result.hero_power_breakdown
+
+
 class TestSelectCharacters:
     """select_characters_for_event() 검증."""
 
