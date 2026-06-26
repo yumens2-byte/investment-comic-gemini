@@ -38,3 +38,31 @@ def test_score_story_continuity_fails_when_opening_ignores_previous() -> None:
 
     assert score.status == "fail"
     assert "opening_hook_payoff" in score.missing_requirements
+
+
+def test_score_story_continuity_accepts_hook_payoff_as_thread_acknowledgement() -> None:
+    """Regression for strict Run Market failures on paraphrased unresolved threads."""
+    script = {
+        "resolved_threads": [],
+        "panels": [
+            {
+                "idx": 1,
+                "narration": "검은 문은 아직 닫히지 않았고, 오늘의 VIX가 그 틈을 흔들었다.",
+            },
+            {"idx": 2, "narration": "영웅은 이전 압력이 오늘의 신호로 이어졌음을 확인한다."},
+        ],
+    }
+    context = {
+        "previous_episode": {
+            "source_episode_id": "ICG-2026-06-25-001",
+            "next_hook": "검은 문은 아직 닫히지 않았다",
+            "unresolved_threads": ["철문 안쪽의 목소리"],
+        }
+    }
+    plan = {"panel_beats": [{"panel_idx": 1, "must_reference_previous": True}]}
+
+    score = score_story_continuity(script, context, plan)
+
+    assert score.status == "pass"
+    assert "unresolved_thread_resolution" not in score.missing_requirements
+    assert score.thread_resolution_score == 15.0
