@@ -78,6 +78,42 @@ def _script_market_text(script_dict: dict[str, Any]) -> list[tuple[str, str]]:
     return snippets
 
 
+def build_strict_continuity_contract(context_pack: dict[str, Any] | None) -> str | None:
+    """Build first-pass machine-checkable continuity instructions from context."""
+    previous = (context_pack or {}).get("previous_episode") or {}
+    seed = str(previous.get("next_hook") or previous.get("must_continue_from") or "").strip()
+    unresolved = [
+        str(item).strip() for item in previous.get("unresolved_threads") or [] if str(item).strip()
+    ]
+    if not seed and not unresolved:
+        return None
+    lines = [
+        "## STRICT CONTINUITY CONTRACT — machine-checkable requirements",
+        f"- prior_source_episode_id: {previous.get('source_episode_id', '')}",
+    ]
+    if seed:
+        lines.extend(
+            [
+                f"- exact_previous_hook: {seed}",
+                "- MUST copy exact_previous_hook into panels[0].narration or panels[1].narration before today's market cause.",
+            ]
+        )
+    if unresolved:
+        lines.extend(
+            [
+                "- exact_unresolved_threads: " + "; ".join(unresolved[:3]),
+                "- MUST copy at least one exact_unresolved_threads item into resolved_threads[0] or opening/ending narration.",
+            ]
+        )
+    lines.extend(
+        [
+            "- These are continuity memory requirements, not market predictions.",
+            "- Keep NO_BATTLE constraints if active; mention continuity as a lingering signal, not as villain combat.",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def build_continuity_retry_feedback(
     script_dict: dict[str, Any],
     context_pack: dict[str, Any] | None,
@@ -110,6 +146,8 @@ def build_continuity_retry_feedback(
         lines.extend(
             [
                 f"- previous_next_hook_to_pay_off: {score.seed}",
+                "- MACHINE-CHECK REQUIRED: copy the exact previous_next_hook_to_pay_off text above into panels[0].narration or panels[1].narration before today's market cause.",
+                "- Do not paraphrase the previous hook on retry; the strict scorer checks deterministic keyword overlap in the opening panels.",
                 "- Required: panel 1 or panel 2 narration/key_text must explicitly acknowledge this previous hook before today's market cause.",
             ]
         )
@@ -117,6 +155,7 @@ def build_continuity_retry_feedback(
         lines.extend(
             [
                 "- unresolved_threads_to_resolve_or_acknowledge: " + "; ".join(unresolved[:3]),
+                "- MACHINE-CHECK REQUIRED: copy at least one unresolved thread exactly into resolved_threads[0] or into panel narration.",
                 "- Required: include at least one of these threads in resolved_threads or explicitly acknowledge it in panel narration.",
             ]
         )
@@ -127,6 +166,34 @@ def build_continuity_retry_feedback(
         ]
     )
     return "\n".join(lines)
+
+
+def build_continuity_debug_summary(
+    script_dict: dict[str, Any],
+    context_pack: dict[str, Any] | None,
+    story_beat_plan: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return compact diagnostics explaining strict continuity scoring."""
+    from engine.narrative.continuity_score import score_story_continuity
+
+    score = score_story_continuity(script_dict, context_pack, story_beat_plan)
+    panels = [p for p in (script_dict.get("panels") or []) if isinstance(p, dict)]
+    opening_text = " ".join(
+        str(panel.get(field) or "")
+        for panel in panels[:2]
+        for field in ("narration", "key_text", "market_ref")
+    ).strip()
+    return {
+        "source_episode_id": score.source_episode_id,
+        "score": score.total_score,
+        "status": score.status,
+        "missing": list(score.missing_requirements),
+        "matched_terms": list(score.matched_terms),
+        "seed_present_in_opening": bool(score.seed and score.seed in opening_text),
+        "seed_keywords": score.seed,
+        "opening_excerpt": opening_text[:180],
+        "resolved_threads_count": len(script_dict.get("resolved_threads") or []),
+    }
 
 
 def validate_story_continuity(

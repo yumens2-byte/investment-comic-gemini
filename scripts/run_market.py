@@ -1110,14 +1110,27 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
         )
 
         from engine.narrative.story_quality import (
+            build_continuity_debug_summary,
             build_continuity_quality_payload,
             build_continuity_retry_feedback,
+            build_strict_continuity_contract,
             validate_story_continuity,
             validate_story_grounding,
         )
 
         strict_continuity = _env_flag_enabled("CONTINUITY_STRICT_ENABLED")
         max_continuity_attempts = 2 if strict_continuity else 1
+        continuity_retry_feedback: str | None = (
+            build_strict_continuity_contract(ctx.get("narrative_context_pack"))
+            if strict_continuity
+            else None
+        )
+        if continuity_retry_feedback:
+            logger_inst.info(
+                "STEP_4",
+                "[StoryContinuity] strict contract attached feedback_chars=%d"
+                % len(continuity_retry_feedback),
+            )
         continuity_retry_feedback: str | None = None
         script_dict: dict | None = None
         continuity_warnings: list[str] = []
@@ -1167,6 +1180,15 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
                 ctx.get("story_beat_plan"),
                 strict=False,
             )
+            continuity_debug = build_continuity_debug_summary(
+                script_dict,
+                ctx.get("narrative_context_pack"),
+                ctx.get("story_beat_plan"),
+            )
+            logger_inst.info(
+                "STEP_4",
+                "[StoryContinuity] previous=%s score=%.1f status=%s strict=%s attempt=%d/%d "
+                "warnings=%d missing=%s matched=%s seed_in_opening=%s resolved_threads=%d"
             logger_inst.info(
                 "STEP_4",
                 "[StoryContinuity] previous=%s score=%.1f status=%s strict=%s attempt=%d/%d warnings=%d"
@@ -1178,6 +1200,39 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
                     continuity_attempt,
                     max_continuity_attempts,
                     len(continuity_warnings),
+                    ",".join(continuity_debug["missing"]) or "none",
+                    ",".join(continuity_debug["matched_terms"]) or "none",
+                    continuity_debug["seed_present_in_opening"],
+                    continuity_debug["resolved_threads_count"],
+                ),
+            )
+            if continuity_warnings:
+                logger_inst.warning(
+                    "STEP_4",
+                    "[StoryContinuityDebug] opening_excerpt=%r seed=%r"
+                    % (
+                        continuity_debug["opening_excerpt"],
+                        continuity_debug["seed_keywords"],
+                    ),
+                )
+                diag_dir = Path("output") / "episodes" / episode_date / "diagnostics"
+                diag_dir.mkdir(parents=True, exist_ok=True)
+                diag_path = diag_dir / f"{episode_id}_continuity_attempt{continuity_attempt}.json"
+                diag_payload = {
+                    "attempt": continuity_attempt,
+                    "max_attempts": max_continuity_attempts,
+                    "quality": script_dict.get("_continuity_quality"),
+                    "debug": continuity_debug,
+                    "script": script_dict,
+                }
+                diag_path.write_text(
+                    __import__("json").dumps(diag_payload, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                logger_inst.warning(
+                    "STEP_4",
+                    f"[StoryContinuityDebug] diagnostics saved: {diag_path}",
+                )
                 ),
             )
 
@@ -1195,6 +1250,11 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
                 break
             logger_inst.warning(
                 "STEP_4",
+                "[StoryContinuity] strict retry requested: missing=%s feedback_chars=%d"
+                % (
+                    ",".join(script_dict["_continuity_quality"].get("missing_requirements") or []),
+                    len(continuity_retry_feedback),
+                ),
                 "[StoryContinuity] strict retry requested: %s"
                 % ",".join(script_dict["_continuity_quality"].get("missing_requirements") or []),
             )
