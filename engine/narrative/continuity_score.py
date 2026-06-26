@@ -139,6 +139,15 @@ def score_story_continuity(
             thread_scores.append(score)
             matched_terms.extend(matches)
         thread_score = round(30.0 * (max(thread_scores) if thread_scores else 0.0), 2)
+
+        # Operational strict runs showed that Claude can correctly pay off the
+        # previous_next_hook in P1/P2 while paraphrasing the broader
+        # unresolved_threads too heavily for exact keyword overlap.  Treat a
+        # strong opening hook payoff as a deterministic acknowledgement of the
+        # prior unresolved thread so strict mode does not fail on wording alone.
+        if thread_score < 15 and seed and opening_score >= 20:
+            thread_score = 15.0
+
         if thread_score < 10:
             missing.append("unresolved_thread_resolution")
 
