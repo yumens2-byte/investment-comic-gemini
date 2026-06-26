@@ -128,6 +128,53 @@ class BattleResult:
         }
 
 
+def _as_float(value: object) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def apply_confidence_gate(
+    *,
+    balance: int,
+    outcome: Outcome,
+    market_context: dict | None = None,
+    alliance: bool = False,
+) -> tuple[int, Outcome, int, str]:
+    """Soften extreme outcomes when market evidence confidence is low.
+
+    The market-data v3 design requires low-confidence data to avoid extreme
+    battle results.  ``data_confidence`` is expected in the 0.0~1.0 range and
+    is optional for backward compatibility.  If absent, the legacy deterministic
+    result is preserved.
+    """
+    confidence = _as_float((market_context or {}).get("data_confidence"))
+    if confidence is None or confidence >= 0.55:
+        return balance, outcome, 0, ""
+
+    if outcome == "HERO_VICTORY":
+        adjusted_balance = 29
+        adjusted_outcome: Outcome = "PYRRHIC_VICTORY" if alliance else "HERO_TACTICAL_VICTORY"
+        return (
+            adjusted_balance,
+            adjusted_outcome,
+            adjusted_balance - balance,
+            f"confidence_gate: data_confidence={confidence:.2f} softened HERO_VICTORY",
+        )
+    if outcome == "SYSTEM_COLLAPSE":
+        adjusted_balance = -30
+        return (
+            adjusted_balance,
+            "HERO_DEFEAT",
+            adjusted_balance - balance,
+            f"confidence_gate: data_confidence={confidence:.2f} softened SYSTEM_COLLAPSE",
+        )
+    return balance, outcome, 0, ""
+
+
 def calc_hero_power(
     hero_id: str,
     base: int,
@@ -313,6 +360,13 @@ def battle(
 
     balance = hero_power - villain_power
     outcome = resolve_outcome(balance)
+    balance, outcome, confidence_adjustment, confidence_reason = apply_confidence_gate(
+        balance=balance, outcome=outcome, market_context=market_context
+    )
+    if confidence_reason:
+        hero_breakdown = dict(hero_breakdown)
+        hero_breakdown["confidence_gate_adjustment"] = confidence_adjustment
+        hero_breakdown["confidence_gate"] = confidence_reason
 
     return BattleResult(
         hero_id=hero_id,
@@ -469,6 +523,12 @@ def battle_alliance(
 
     balance = hero_power - villain_power
     outcome = resolve_alliance_outcome(balance)
+    balance, outcome, confidence_adjustment, confidence_reason = apply_confidence_gate(
+        balance=balance, outcome=outcome, market_context=market_context, alliance=True
+    )
+    if confidence_reason:
+        combined_hero_breakdown["confidence_gate_adjustment"] = confidence_adjustment
+        combined_hero_breakdown["confidence_gate"] = confidence_reason
 
     return BattleResult(
         hero_id=hero_ids[0],              # 후방 호환: 주 히어로 ID
@@ -552,7 +612,14 @@ def battle_multi_villain(
         combined_villain_breakdown["villain_power_cap"] = villain_power - villain_power_uncapped
 
     balance = hero_power - villain_power
-    outcome = resolve_alliance_outcome(balance) if len(hero_ids) > 1 else resolve_outcome(balance)
+    is_alliance = len(hero_ids) > 1
+    outcome = resolve_alliance_outcome(balance) if is_alliance else resolve_outcome(balance)
+    balance, outcome, confidence_adjustment, confidence_reason = apply_confidence_gate(
+        balance=balance, outcome=outcome, market_context=market_context, alliance=is_alliance
+    )
+    if confidence_reason:
+        hero_breakdown["confidence_gate_adjustment"] = confidence_adjustment
+        hero_breakdown["confidence_gate"] = confidence_reason
     return BattleResult(
         hero_id=hero_ids[0],
         villain_id=villain_ids[0],
@@ -777,6 +844,19 @@ def apply_v23_modifiers(
     else:
         new_outcome = resolve_outcome(new_balance)
 
+    new_balance, new_outcome, confidence_adjustment, confidence_reason = apply_confidence_gate(
+        balance=new_balance,
+        outcome=new_outcome,
+        market_context=arc_context,
+        alliance=(
+            result.outcome in ("PYRRHIC_VICTORY",)
+            or result.hero_power_breakdown.get("alliance_decay") is not None
+        ),
+    )
+    if confidence_reason:
+        new_hero_bd["confidence_gate_adjustment"] = confidence_adjustment
+        new_hero_bd["confidence_gate"] = confidence_reason
+
     return BattleResult(
         hero_id=result.hero_id,
         villain_id=result.villain_id,
@@ -786,4 +866,8 @@ def apply_v23_modifiers(
         outcome=new_outcome,
         hero_power_breakdown=new_hero_bd,
         villain_power_breakdown=new_villain_bd,
+        villain_ids=result.villain_ids,
+        villain_power_breakdown_by_id=result.villain_power_breakdown_by_id,
+        encounter_type=result.encounter_type,
+        villain_pact_state=result.villain_pact_state,
     )
