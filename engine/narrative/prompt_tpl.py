@@ -168,7 +168,19 @@ def _append_narrative_context_fallback(rendered: str, context_pack: dict | None)
         unresolved = previous_episode.get("unresolved_threads") or []
         if unresolved:
             lines.append("- unresolved_threads: " + "; ".join(str(item) for item in unresolved))
-        lines.append(f"- must_continue_from: {previous_episode.get('must_continue_from', '')}")
+        must_continue = previous_episode.get("must_continue_from", "")
+        lines.append(f"- must_continue_from: {must_continue}")
+        seed = previous_episode.get("next_hook") or must_continue
+        if seed:
+            lines.append(
+                "- HARD RULE: Panel 1 narration or key_text must include this exact anchor "
+                f'before today\'s market cause: "이전 회차의 단서: {seed}"'
+            )
+        if unresolved:
+            lines.append(
+                "- HARD RULE: If unresolved_threads are listed, copy at least one listed "
+                "thread verbatim into the top-level resolved_threads array."
+            )
     directives = context_pack.get("continuity_directives") or []
     if directives:
         lines.append("### Continuity Directives")

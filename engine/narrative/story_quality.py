@@ -107,17 +107,21 @@ def build_continuity_retry_feedback(
         "- missing_requirements: " + (", ".join(score.missing_requirements) or "none"),
     ]
     if score.seed:
+        anchor = f"이전 회차의 단서: {score.seed}"
         lines.extend(
             [
                 f"- previous_next_hook_to_pay_off: {score.seed}",
-                "- Required: panel 1 or panel 2 narration/key_text must explicitly acknowledge this previous hook before today's market cause.",
+                f"- EXACT_OPENING_ANCHOR: {anchor}",
+                "- Required: panel 1 narration or key_text must include EXACT_OPENING_ANCHOR verbatim before today's market cause.",
             ]
         )
     if unresolved:
+        first_thread = unresolved[0]
         lines.extend(
             [
                 "- unresolved_threads_to_resolve_or_acknowledge: " + "; ".join(unresolved[:3]),
-                "- Required: include at least one of these threads in resolved_threads or explicitly acknowledge it in panel narration.",
+                f"- EXACT_RESOLVED_THREAD: {first_thread}",
+                "- Required: put EXACT_RESOLVED_THREAD verbatim in the top-level resolved_threads array.",
             ]
         )
     lines.extend(
