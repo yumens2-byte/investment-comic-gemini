@@ -71,3 +71,12 @@ def test_run_market_workflow_warns_for_all_true_continuity_mode() -> None:
 
     assert "CONTINUITY_STRICT_ENABLED=true: previous-hook payoff failures will stop STEP 4" in text
     assert "all-true continuity mode detected" in text
+
+
+def test_run_market_workflow_surfaces_major_gate_diagnostics() -> None:
+    text = _workflow_text()
+
+    assert "STEP 3.6 — Major Gate Summary" in text
+    assert "steps.major_gate.outputs.episode_type_v3" in text
+    assert "steps.major_gate.outputs.gate_source" in text
+    assert "Schedule cost-control skip expected" in text

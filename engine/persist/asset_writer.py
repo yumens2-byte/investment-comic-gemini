@@ -11,6 +11,8 @@ State Machine (doc 16b):
 from __future__ import annotations
 
 import logging
+import re
+from typing import Any
 
 from engine.common.exceptions import InvalidStatusTransition
 
@@ -282,6 +284,49 @@ def character_selection_summary(ctx: dict) -> dict:
     }
 
 
+def _missing_schema_column_from_error(exc: Exception) -> str | None:
+    """Extract a PostgREST schema-cache missing-column name from an exception."""
+    text = str(exc)
+    if "PGRST204" not in text and "Could not find" not in text:
+        return None
+    match = re.search(r"Could not find the '([^']+)' column", text)
+    if not match:
+        return None
+    return match.group(1)
+
+
+def _update_daily_analysis_schema_compatible(
+    episode_date: str,
+    payload: dict[str, Any],
+) -> list[str]:
+    """Update daily_analysis while preserving all columns present in the DB.
+
+    ``analysis_ctx_json`` is required for hybrid narrative/persist/image stages,
+    so it remains fail-fast. Character-selection summary columns are additive
+    observability fields; when code rolls out ahead of the Supabase migration or
+    schema-cache refresh, strip only the reported missing optional column and
+    retry instead of dropping every summary field at once.
+    """
+    from engine.common.supabase_client import icg_table
+
+    remaining = dict(payload)
+    stripped: list[str] = []
+    while True:
+        try:
+            icg_table("daily_analysis").update(remaining).eq(
+                "analysis_date", episode_date
+            ).execute()
+            return stripped
+        except Exception as exc:
+            missing_column = _missing_schema_column_from_error(exc)
+            if not missing_column or missing_column not in remaining:
+                raise
+            if missing_column == "analysis_ctx_json":
+                raise
+            stripped.append(missing_column)
+            remaining.pop(missing_column, None)
+
+
 def character_selection_candidate_rows(
     episode_date: str,
     event_type: str,
@@ -358,22 +403,27 @@ def save_analysis_ctx(episode_date: str, event_type: str, ctx: dict) -> None:
         event_type: 에피소드 타입 (예: 'NORMAL'). 로그용.
         ctx: step_analysis() 반환값.
     """
-    from engine.common.supabase_client import icg_table
-
     payload = {"analysis_ctx_json": ctx}
     payload.update(character_selection_summary(ctx))
 
     try:
-        icg_table("daily_analysis").update(payload).eq(
-            "analysis_date", episode_date
-        ).execute()
+        stripped = _update_daily_analysis_schema_compatible(episode_date, payload)
+        if stripped:
+            logger.warning(
+                "[asset_writer] daily_analysis schema missing optional columns; "
+                "analysis_ctx_json saved without fields=%s. Apply pending migrations.",
+                stripped,
+            )
     except Exception as exc:
-        # Backward compatibility: allow code rollout before the observability migration.
+        # Last-resort compatibility: keep hybrid stages unblocked even if the
+        # observability migration is only partially applied.
         logger.warning(
             "[asset_writer] character_selection summary 저장 실패 — "
             "analysis_ctx_json only fallback: %s",
             exc,
         )
+        from engine.common.supabase_client import icg_table
+
         icg_table("daily_analysis").update({"analysis_ctx_json": ctx}).eq(
             "analysis_date", episode_date
         ).execute()

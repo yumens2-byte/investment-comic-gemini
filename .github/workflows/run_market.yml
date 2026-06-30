@@ -198,6 +198,17 @@ jobs:
           fi
           python -m scripts.check_major_event_gate --date "$GATE_DATE" >> "$GITHUB_OUTPUT"
 
+      - name: STEP 3.6 — Major Gate Summary
+        if: ${{ github.event_name == 'schedule' && env.RUN_STAGE == 'all' }}
+        run: |
+          echo "🚦 Major gate event_type=${{ steps.major_gate.outputs.event_type }}"
+          echo "🚦 Major gate episode_type_v3=${{ steps.major_gate.outputs.episode_type_v3 }}"
+          echo "🚦 Major gate source=${{ steps.major_gate.outputs.gate_source }}"
+          echo "🚦 should_run_expensive=${{ steps.major_gate.outputs.should_run_expensive }}"
+          if [ "${{ steps.major_gate.outputs.should_run_expensive }}" != "true" ]; then
+            echo "⏭️  Schedule cost-control skip expected: STEP 4~6 run only for major regime or major episode_type_v3."
+          fi
+
       - name: STEP 4 — Narrative (Claude)
         if: ${{ env.RUN_STAGE == 'narrative' || env.RUN_STAGE == 'all' && (github.event_name != 'schedule' || steps.major_gate.outputs.should_run_expensive == 'true') }}
         run: |

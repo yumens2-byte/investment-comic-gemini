@@ -1,4 +1,5 @@
 from engine.persist.asset_writer import (
+    _update_daily_analysis_schema_compatible,
     character_selection_candidate_rows,
     character_selection_summary,
 )
@@ -125,3 +126,54 @@ def test_character_selection_summary_includes_selected_villain_ids():
 
     assert summary["selected_villain_id"] == "CHAR_VILLAIN_004"
     assert summary["selected_villain_ids"] == ["CHAR_VILLAIN_004", "CHAR_VILLAIN_001"]
+
+
+def test_daily_analysis_update_strips_missing_optional_columns_one_by_one(monkeypatch):
+    calls: list[dict] = []
+
+    class _Query:
+        def __init__(self, payload: dict):
+            self.payload = payload
+
+        def eq(self, *_args):
+            return self
+
+        def execute(self):
+            calls.append(dict(self.payload))
+            if "character_selection" in self.payload:
+                raise Exception(
+                    "{'message': \"Could not find the 'character_selection' column "
+                    "of 'daily_analysis' in the schema cache\", 'code': 'PGRST204'}"
+                )
+            if "top_hero_score" in self.payload:
+                raise Exception(
+                    "{'message': \"Could not find the 'top_hero_score' column "
+                    "of 'daily_analysis' in the schema cache\", 'code': 'PGRST204'}"
+                )
+            return None
+
+    class _Table:
+        def update(self, payload: dict):
+            return _Query(payload)
+
+    monkeypatch.setattr(
+        "engine.common.supabase_client.icg_table",
+        lambda table_name: _Table(),
+    )
+
+    stripped = _update_daily_analysis_schema_compatible(
+        "2026-06-30",
+        {
+            "analysis_ctx_json": {"event_type": "INTEL"},
+            "character_selection": {"primary_hero": "CHAR_HERO_004"},
+            "selected_hero_id": "CHAR_HERO_004",
+            "top_hero_score": 88,
+        },
+    )
+
+    assert stripped == ["character_selection", "top_hero_score"]
+    assert len(calls) == 3
+    assert "analysis_ctx_json" in calls[-1]
+    assert calls[-1]["selected_hero_id"] == "CHAR_HERO_004"
+    assert "character_selection" not in calls[-1]
+    assert "top_hero_score" not in calls[-1]
