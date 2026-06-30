@@ -295,17 +295,34 @@ def _missing_schema_column_from_error(exc: Exception) -> str | None:
     return match.group(1)
 
 
+_DAILY_ANALYSIS_OPTIONAL_SUMMARY_FIELDS = frozenset({
+    "character_selection",
+    "character_selector_version",
+    "character_selector_mode",
+    "selected_hero_id",
+    "selected_villain_id",
+    "selected_villain_ids",
+    "support_heroes_json",
+    "neutral_guests_json",
+    "top_hero_score",
+    "top_villain_score",
+    "neutral_guest_count",
+    "character_selection_reason",
+})
+
+
 def _update_daily_analysis_schema_compatible(
     episode_date: str,
     payload: dict[str, Any],
 ) -> list[str]:
-    """Update daily_analysis while preserving all columns present in the DB.
+    """Update daily_analysis while avoiding retry storms on old schemas.
 
     ``analysis_ctx_json`` is required for hybrid narrative/persist/image stages,
     so it remains fail-fast. Character-selection summary columns are additive
-    observability fields; when code rolls out ahead of the Supabase migration or
-    schema-cache refresh, strip only the reported missing optional column and
-    retry instead of dropping every summary field at once.
+    observability fields. If PostgREST reports any of those columns missing, the
+    deployment is running ahead of the migration/schema-cache refresh; strip the
+    full optional summary set in one retry instead of discovering missing columns
+    through many HTTP 400 requests.
     """
     from engine.common.supabase_client import icg_table
 
@@ -323,8 +340,17 @@ def _update_daily_analysis_schema_compatible(
                 raise
             if missing_column == "analysis_ctx_json":
                 raise
-            stripped.append(missing_column)
-            remaining.pop(missing_column, None)
+            if missing_column not in _DAILY_ANALYSIS_OPTIONAL_SUMMARY_FIELDS:
+                raise
+
+            batch = sorted(
+                field for field in _DAILY_ANALYSIS_OPTIONAL_SUMMARY_FIELDS if field in remaining
+            )
+            if not batch:
+                raise
+            stripped.extend(batch)
+            for field in batch:
+                remaining.pop(field, None)
 
 
 def character_selection_candidate_rows(
