@@ -150,10 +150,29 @@ _CONTINUITY_FLAG_NAMES = (
     "EPISODE_TYPE_V3_ENABLED",
 )
 
+# scenario/battle 파이프라인 플래그 (관측성 확장 2026-06-30):
+# run_market.yml env 블록에 매핑된 6개. continuity 5개와 합쳐 전체 11개를 audit.
+_SCENARIO_BATTLE_FLAG_NAMES = (
+    "SCENARIO_V2_ENABLED",
+    "NARRATIVE_DEPTH_ENABLED",
+    "PAIR_TENSION_ENABLED",
+    "CROWD_MODIFIER_ENABLED",
+    "VILLAIN_SIGNATURE_BONUS_ENABLED",
+    "EMERGENCE_DEFICIT_ENABLED",
+)
+
+# 전체 11개 플래그 (rollout audit). 기존 continuity 5개 키는 모두 보존(상위호환).
+_ALL_FEATURE_FLAG_NAMES = _CONTINUITY_FLAG_NAMES + _SCENARIO_BATTLE_FLAG_NAMES
+
 
 def _feature_flag_snapshot() -> dict[str, bool]:
-    """Capture continuity-critical flags for cross-stage diagnostics."""
-    return {name: _env_flag_enabled(name) for name in _CONTINUITY_FLAG_NAMES}
+    """Capture all 11 feature flags for cross-stage diagnostics and rollout audit.
+
+    확장(2026-06-30): 기존 continuity 5개 → 전체 11개(continuity 5 + scenario/battle 6).
+    기존 5개 키는 모두 보존하므로 상위호환이며, analysis_ctx_json(JSONB)에 저장되어
+    DB 스키마 변경은 없다. '전부-true' 운영을 데이터로 검증하기 위한 관측성 확장.
+    """
+    return {name: _env_flag_enabled(name) for name in _ALL_FEATURE_FLAG_NAMES}
 
 
 def _record_context_error(ctx: dict, feature: str, exc: Exception, *, strict: bool) -> None:
@@ -410,6 +429,174 @@ def step_data(episode_date: str, logger_inst) -> None:
         raise
 
 
+def _compute_signal_and_risk(
+    delta: dict, curr_row: dict, logger_inst
+) -> tuple[dict | None, dict | None]:
+    """SIGNAL_PACK_V1 / RISK_SCORE_V3 옵션 계산. 비활성/실패 시 (None, None).
+
+    step_analysis에서 추출(2026-06-30). 동작 보존: 원본 인라인 로직과 동일.
+    """
+    signal_pack: dict | None = None
+    risk_trace_v3: dict | None = None
+    if os.environ.get("SIGNAL_PACK_V1_ENABLED", "false").lower() == "true":
+        try:
+            from engine.analysis.signal_pack_builder import build_signal_pack
+
+            signal_pack = build_signal_pack(delta, curr_row)
+            logger_inst.info(
+                "STEP_3",
+                "[SignalPack] 생성 완료 "
+                f"signals={len(signal_pack.get('signals', []))} "
+                f"confidence={signal_pack.get('data_confidence', 0):.2f}",
+            )
+        except Exception as _sig_exc:
+            logger_inst.warning(
+                "STEP_3",
+                f"[SignalPack] 생성 실패 (파이프라인 계속): {_sig_exc}",
+            )
+            signal_pack = None
+
+    if (
+        signal_pack is not None
+        and os.environ.get("RISK_SCORE_V3_ENABLED", "false").lower() == "true"
+    ):
+        try:
+            from engine.analysis.risk_score_engine import compute as compute_risk_score
+
+            risk_trace_v3 = compute_risk_score(signal_pack)
+            logger_inst.info(
+                "STEP_3",
+                "[RiskScoreV3] "
+                f"risk={risk_trace_v3.get('risk_level')} "
+                f"score={risk_trace_v3.get('risk_score', 0):.2f} "
+                f"dominant={risk_trace_v3.get('dominant_domain')}",
+            )
+        except Exception as _risk_exc:
+            logger_inst.warning(
+                "STEP_3",
+                f"[RiskScoreV3] 계산 실패 (legacy risk 유지): {_risk_exc}",
+            )
+            risk_trace_v3 = None
+    return signal_pack, risk_trace_v3
+
+
+def _load_arc_context(logger_inst) -> tuple[dict | None, dict]:
+    """ARC_STATE_V3 활성 시 arc_state/arc_context 로드, 비활성 시 기본 arc_context.
+
+    step_analysis에서 추출(2026-06-30). 동작 보존.
+    """
+    if os.environ.get("ARC_STATE_V3_ENABLED", "false").lower() == "true":
+        from engine.arc.arc_state_engine import build_arc_context as _build_arc_ctx
+        from engine.arc.arc_state_engine import load_arc_state
+
+        arc_state_loaded = load_arc_state()
+        arc_context = _build_arc_ctx(arc_state_loaded)
+        logger.info(
+            "[Step 3-ARC_V3] arc_context 로드 (tension=%d arc_day=%d sig=%d crowd=%d)",
+            arc_context["tension"],
+            arc_context["days_since_last"],
+            arc_context["villain_signature"],
+            arc_context["crowd_momentum"],
+        )
+        return arc_state_loaded, arc_context
+    return None, {"tension": 40, "days_since_last": 0, "yesterday_type": "NORMAL"}
+
+
+def _resolve_base_power(canon: dict, hero_id: str, villain_id: str) -> tuple[int, int]:
+    """Notion battle_constants 우선, 실패/누락 시 characters.yaml base_power fallback.
+
+    step_analysis에서 추출(2026-06-30). 동작 보존.
+    """
+    try:
+        from engine.common.notion_loader import load_battle_constants
+
+        _bp_tbl = load_battle_constants().get("CHARACTER_BASE_POWER", {})
+        hero_base = _bp_tbl.get(hero_id, canon["heroes"].get(hero_id, {}).get("base_power", 75))
+        villain_base = _bp_tbl.get(
+            villain_id, canon["villains"].get(villain_id, {}).get("base_power", 72)
+        )
+    except Exception:
+        hero_base = canon["heroes"].get(hero_id, {}).get("base_power", 75)
+        villain_base = canon["villains"].get(villain_id, {}).get("base_power", 72)
+    return hero_base, villain_base
+
+
+def _build_sector_rank(
+    signal_pack: dict | None,
+) -> tuple[list[dict] | None, list[str] | None, list[str] | None]:
+    """signal_pack의 sector 도메인에서 sector_rank / watch / caution 산출.
+
+    step_analysis에서 추출(2026-06-30). 동작 보존: 데이터 없으면 (None, None, None).
+    """
+    if signal_pack is None:
+        return None, None, None
+    _sector_signals = signal_pack.get("by_domain", {}).get("sector", [])
+    _ranked_sectors = sorted(
+        [s for s in _sector_signals if s.get("change_pct") is not None],
+        key=lambda s: float(s.get("change_pct") or 0),
+        reverse=True,
+    )
+    if not _ranked_sectors:
+        return None, None, None
+    sector_rank = [
+        {
+            "symbol": s.get("symbol"),
+            "name": s.get("name"),
+            "change_pct": s.get("change_pct"),
+            "relative_pct": s.get("relative_pct"),
+            "state": s.get("state"),
+        }
+        for s in _ranked_sectors
+    ]
+    watch_areas = [str(s.get("name") or s.get("symbol")) for s in _ranked_sectors[:3]]
+    caution_areas = [
+        str(s.get("name") or s.get("symbol")) for s in list(reversed(_ranked_sectors[-3:]))
+    ]
+    return sector_rank, watch_areas, caution_areas
+
+
+def _resolve_guest_block(
+    episode_date: str,
+    curr_row: dict,
+    character_selection_trace: dict,
+    logger_inst,
+) -> tuple[str, dict, list]:
+    """STEP 3-Story: 게스트 캐릭터 판단. 실패 시 ('', {}, []).
+
+    step_analysis에서 추출(2026-06-30). 동작 보존(try/except 격리).
+    """
+    try:
+        from engine.character.character_engine import resolve_guest_characters
+        from engine.character.prompt_builder import build_guest_character_prompt
+        from engine.character.story_state_manager import load_story_state
+
+        story_state = load_story_state(episode_date)
+        guest_characters = resolve_guest_characters(curr_row, story_state)
+        guest_prompt = build_guest_character_prompt(curr_row, story_state, guest_characters)
+        # sl 사용 → run.log NDJSON 기록 보장 (logger.info는 StepLogger 미기록)
+        if os.environ.get(
+            "NEUTRAL_GUEST_SCORING_ENABLED", "false"
+        ).lower() == "true" and character_selection_trace.get("neutral_guests"):
+            guest_characters = [
+                (g["char_id"], g["role"])
+                for g in character_selection_trace.get("neutral_guests", [])
+                if g.get("appear")
+            ]
+            guest_prompt = build_guest_character_prompt(curr_row, story_state, guest_characters)
+        _guest_names = [f"{c}({r})" for c, r in guest_characters] or ["없음"]
+        logger_inst.info(
+            "STEP_3",
+            f"[Step 3-Story] 게스트 {len(guest_characters)}명: {_guest_names}",
+        )
+        return guest_prompt, story_state, guest_characters
+    except Exception as _exc:
+        logger_inst.warning(
+            "STEP_3",
+            f"[Step 3-Story] 실패 (파이프라인 계속): {_exc}",
+        )
+        return "", {}, []
+
+
 def step_analysis(episode_date: str, logger_inst) -> dict:
     """STEP 3: 분석 + Battle → icg.daily_analysis. context dict 반환.
 
@@ -444,66 +631,10 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
 
         delta = compute(curr_row, prev_row)
 
-        signal_pack: dict | None = None
-        risk_trace_v3: dict | None = None
-        if os.environ.get("SIGNAL_PACK_V1_ENABLED", "false").lower() == "true":
-            try:
-                from engine.analysis.signal_pack_builder import build_signal_pack
-
-                signal_pack = build_signal_pack(delta, curr_row)
-                logger_inst.info(
-                    "STEP_3",
-                    "[SignalPack] 생성 완료 "
-                    f"signals={len(signal_pack.get('signals', []))} "
-                    f"confidence={signal_pack.get('data_confidence', 0):.2f}",
-                )
-            except Exception as _sig_exc:
-                logger_inst.warning(
-                    "STEP_3",
-                    f"[SignalPack] 생성 실패 (파이프라인 계속): {_sig_exc}",
-                )
-                signal_pack = None
-
-        if (
-            signal_pack is not None
-            and os.environ.get("RISK_SCORE_V3_ENABLED", "false").lower() == "true"
-        ):
-            try:
-                from engine.analysis.risk_score_engine import compute as compute_risk_score
-
-                risk_trace_v3 = compute_risk_score(signal_pack)
-                logger_inst.info(
-                    "STEP_3",
-                    "[RiskScoreV3] "
-                    f"risk={risk_trace_v3.get('risk_level')} "
-                    f"score={risk_trace_v3.get('risk_score', 0):.2f} "
-                    f"dominant={risk_trace_v3.get('dominant_domain')}",
-                )
-            except Exception as _risk_exc:
-                logger_inst.warning(
-                    "STEP_3",
-                    f"[RiskScoreV3] 계산 실패 (legacy risk 유지): {_risk_exc}",
-                )
-                risk_trace_v3 = None
+        signal_pack, risk_trace_v3 = _compute_signal_and_risk(delta, curr_row, logger_inst)
 
         # -- ARC_STATE_V3: arc_context 동적 로드 (2026-05-02) ----------------
-        _arc_v3 = os.environ.get("ARC_STATE_V3_ENABLED", "false").lower() == "true"
-        if _arc_v3:
-            from engine.arc.arc_state_engine import build_arc_context as _build_arc_ctx
-            from engine.arc.arc_state_engine import load_arc_state
-
-            _arc_state_loaded = load_arc_state()
-            arc_context = _build_arc_ctx(_arc_state_loaded)
-            logger.info(
-                "[Step 3-ARC_V3] arc_context 로드 (tension=%d arc_day=%d sig=%d crowd=%d)",
-                arc_context["tension"],
-                arc_context["days_since_last"],
-                arc_context["villain_signature"],
-                arc_context["crowd_momentum"],
-            )
-        else:
-            _arc_state_loaded = None
-            arc_context = {"tension": 40, "days_since_last": 0, "yesterday_type": "NORMAL"}
+        _arc_state_loaded, arc_context = _load_arc_context(logger_inst)
 
         event_type = classify(delta, arc_context)
 
@@ -662,17 +793,7 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
 
         # ── characters.yaml base_power 로드 (공통) ─────────────────────────────
         canon = yaml.safe_load(Path("config/characters.yaml").read_text(encoding="utf-8"))
-        try:
-            from engine.common.notion_loader import load_battle_constants
-
-            _bp_tbl = load_battle_constants().get("CHARACTER_BASE_POWER", {})
-            hero_base = _bp_tbl.get(hero_id, canon["heroes"].get(hero_id, {}).get("base_power", 75))
-            villain_base = _bp_tbl.get(
-                villain_id, canon["villains"].get(villain_id, {}).get("base_power", 72)
-            )
-        except Exception:
-            hero_base = canon["heroes"].get(hero_id, {}).get("base_power", 75)
-            villain_base = canon["villains"].get(villain_id, {}).get("base_power", 72)
+        hero_base, villain_base = _resolve_base_power(canon, hero_id, villain_id)
 
         market_ctx = get_market_context_for_battle(delta, curr_row)
         if signal_pack is not None and signal_pack.get("data_confidence") is not None:
@@ -800,32 +921,7 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
             )
 
         # ── analysis_upsert (기존 시그니처 유지 + v3 관측성 옵션) ─────────────
-        _sector_rank: list[dict] | None = None
-        _watch_areas: list[str] | None = None
-        _caution_areas: list[str] | None = None
-        if signal_pack is not None:
-            _sector_signals = signal_pack.get("by_domain", {}).get("sector", [])
-            _ranked_sectors = sorted(
-                [s for s in _sector_signals if s.get("change_pct") is not None],
-                key=lambda s: float(s.get("change_pct") or 0),
-                reverse=True,
-            )
-            if _ranked_sectors:
-                _sector_rank = [
-                    {
-                        "symbol": s.get("symbol"),
-                        "name": s.get("name"),
-                        "change_pct": s.get("change_pct"),
-                        "relative_pct": s.get("relative_pct"),
-                        "state": s.get("state"),
-                    }
-                    for s in _ranked_sectors
-                ]
-                _watch_areas = [str(s.get("name") or s.get("symbol")) for s in _ranked_sectors[:3]]
-                _caution_areas = [
-                    str(s.get("name") or s.get("symbol"))
-                    for s in list(reversed(_ranked_sectors[-3:]))
-                ]
+        _sector_rank, _watch_areas, _caution_areas = _build_sector_rank(signal_pack)
 
         analysis_upsert(
             episode_date,
@@ -847,39 +943,9 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
         _story_state: dict = {}
         _guest_characters: list = []
         if _scenario_v2:
-            try:
-                from engine.character.character_engine import resolve_guest_characters
-                from engine.character.prompt_builder import build_guest_character_prompt
-                from engine.character.story_state_manager import load_story_state
-
-                _story_state = load_story_state(episode_date)
-                _guest_characters = resolve_guest_characters(curr_row, _story_state)
-                _guest_prompt = build_guest_character_prompt(
-                    curr_row, _story_state, _guest_characters
-                )
-                # sl 사용 → run.log NDJSON 기록 보장 (logger.info는 StepLogger 미기록)
-                if os.environ.get(
-                    "NEUTRAL_GUEST_SCORING_ENABLED", "false"
-                ).lower() == "true" and character_selection_trace.get("neutral_guests"):
-                    _guest_characters = [
-                        (g["char_id"], g["role"])
-                        for g in character_selection_trace.get("neutral_guests", [])
-                        if g.get("appear")
-                    ]
-                    _guest_prompt = build_guest_character_prompt(
-                        curr_row, _story_state, _guest_characters
-                    )
-                _guest_names = [f"{c}({r})" for c, r in _guest_characters] or ["없음"]
-                logger_inst.info(
-                    "STEP_3",
-                    f"[Step 3-Story] 게스트 {len(_guest_characters)}명: {_guest_names}",
-                )
-            except Exception as _exc:
-                logger_inst.warning(
-                    "STEP_3",
-                    f"[Step 3-Story] 실패 (파이프라인 계속): {_exc}",
-                )
-                _guest_prompt, _story_state, _guest_characters = "", {}, []
+            _guest_prompt, _story_state, _guest_characters = _resolve_guest_block(
+                episode_date, curr_row, character_selection_trace, logger_inst
+            )
 
         # ── STEP 3-8: v2.0 필드 daily_analysis 별도 업데이트 ─────────────────
         if _scenario_v2:
