@@ -56,7 +56,7 @@ jobs:
       - name: Confirm guard (workflow_dispatch only)
         if: github.event_name == 'workflow_dispatch'
         run: |
-          if [ "${{ github.event.inputs.confirm }}" != "YES" ]; then
+          if [ "${{ inputs.confirm }}" != "YES" ]; then
             echo "❌ confirm=YES 미입력. 발행 중단."
             exit 1
           fi
@@ -64,7 +64,7 @@ jobs:
       - name: Resolve episode & slides run id
         id: resolve
         env:
-          INPUT_EPISODE_ID: ${{ github.event.inputs.episode_id }}
+          INPUT_EPISODE_ID: ${{ inputs.episode_id }}
           GH_TOKEN:         ${{ secrets.GITHUB_TOKEN }}
         run: |
           python -m scripts.resolve_episode \
@@ -81,7 +81,7 @@ jobs:
     if: needs.pre-check.outputs.episode_id != ''
     env:
       DRY_RUN:                    "false"
-      PUBLISH_NON_MAJOR : ${{ secrets.PUBLISH_NON_MAJOR }}
+      PUBLISH_NON_MAJOR: ${{ secrets.PUBLISH_NON_MAJOR }}
       SUPABASE_URL:               ${{ secrets.SUPABASE_URL }}
       SUPABASE_KEY:               ${{ secrets.SUPABASE_KEY }}
       TELEGRAM_BOT_TOKEN:         ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -147,7 +147,7 @@ jobs:
           if [ "${{ github.event_name }}" = "schedule" ]; then
             CHANNELS="all"
           else
-            CHANNELS="${{ github.event.inputs.channels }}"
+            CHANNELS="${{ inputs.channels }}"
           fi
 
           EID="${{ needs.pre-check.outputs.episode_id }}"

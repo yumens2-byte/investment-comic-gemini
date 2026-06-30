@@ -40,7 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     concurrency:
-      group: icg-video-${{ github.event.inputs.target_date || 'today' }}
+      group: icg-video-${{ inputs.target_date || 'today' }}
       cancel-in-progress: false
     env:
       TZ: Asia/Seoul
@@ -69,9 +69,9 @@ jobs:
       # YOUTUBE_REFRESH_TOKEN:  ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
       # ── Runtime flags ───────────────────────────────────────────
       VIDEO_BUDGET_USD_MONTHLY: '80'
-      DRY_RUN:                  ${{ github.event.inputs.dry_run || 'false' }}
-      LOG_LEVEL:                ${{ github.event.inputs.log_level || 'INFO' }}
-      OPERATION_MODE:           ${{ github.event.inputs.operation_mode || 'manual_prompt' }}
+      DRY_RUN:                  ${{ inputs.dry_run || 'false' }}
+      LOG_LEVEL:                ${{ inputs.log_level || 'INFO' }}
+      OPERATION_MODE:           ${{ inputs.operation_mode || 'manual_prompt' }}
     steps:
       - uses: actions/checkout@v4
 

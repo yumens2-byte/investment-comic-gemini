@@ -65,7 +65,7 @@ jobs:
       - name: Run migration
         run: |
           python -m scripts.migrate_ref_images \
-            ${{ github.event.inputs.dry_run == 'true' && '--dry-run' || '' }}
+            ${{ inputs.dry_run == 'true' && '--dry-run' || '' }}
 
       - name: Show results
         run: |
@@ -89,7 +89,7 @@ jobs:
           "
 
       - name: Commit migrated images
-        if: ${{ github.event.inputs.dry_run != 'true' }}
+        if: ${{ inputs.dry_run != 'true' }}
         run: |
           git config user.name "ICG Bot"
           git config user.email "icg-bot@investment-comic-gemini"
@@ -98,7 +98,7 @@ jobs:
             git commit -m "🖼️ [Auto] Migrate EDT REF images from Notion Canon Hub"
 
       - name: Push
-        if: ${{ github.event.inputs.dry_run != 'true' }}
+        if: ${{ inputs.dry_run != 'true' }}
         uses: ad-m/github-push-action@master
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
