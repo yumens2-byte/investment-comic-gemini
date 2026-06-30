@@ -18,6 +18,21 @@ from engine.common.exceptions import InvalidStatusTransition
 
 logger = logging.getLogger(__name__)
 
+_DAILY_ANALYSIS_OBSERVABILITY_COLUMNS = (
+    "character_selection",
+    "character_selector_version",
+    "character_selector_mode",
+    "selected_hero_id",
+    "selected_villain_id",
+    "selected_villain_ids",
+    "support_heroes_json",
+    "neutral_guests_json",
+    "top_hero_score",
+    "top_villain_score",
+    "neutral_guest_count",
+    "character_selection_reason",
+)
+
 # ── 허용 상태 전환 테이블 ──────────────────────────────────────────────────────
 _ALLOWED_TRANSITIONS: dict[str, list[str]] = {
     "draft": ["narrative_done", "failed", "aborted"],
@@ -299,6 +314,13 @@ def _update_daily_analysis_schema_compatible(
     episode_date: str,
     payload: dict[str, Any],
 ) -> list[str]:
+    """Update daily_analysis while avoiding repeated schema-cache failures.
+
+    ``analysis_ctx_json`` is required for hybrid narrative/persist/image stages,
+    so it remains fail-fast. Character-selection summary columns are an additive
+    observability group; if any one of them is absent from PostgREST's schema
+    cache, strip the whole group and retry once. This avoids a noisy 400 response
+    per missing column while preserving the critical ctx payload.
     """Update daily_analysis while preserving all columns present in the DB.
 
     ``analysis_ctx_json`` is required for hybrid narrative/persist/image stages,
@@ -323,6 +345,16 @@ def _update_daily_analysis_schema_compatible(
                 raise
             if missing_column == "analysis_ctx_json":
                 raise
+            if missing_column in _DAILY_ANALYSIS_OBSERVABILITY_COLUMNS:
+                group = [
+                    column
+                    for column in _DAILY_ANALYSIS_OBSERVABILITY_COLUMNS
+                    if column in remaining
+                ]
+                stripped.extend(column for column in group if column not in stripped)
+                for column in group:
+                    remaining.pop(column, None)
+                continue
             stripped.append(missing_column)
             remaining.pop(missing_column, None)
 

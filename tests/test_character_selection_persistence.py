@@ -128,6 +128,7 @@ def test_character_selection_summary_includes_selected_villain_ids():
     assert summary["selected_villain_ids"] == ["CHAR_VILLAIN_004", "CHAR_VILLAIN_001"]
 
 
+def test_daily_analysis_update_bulk_strips_observability_columns(monkeypatch):
 def test_daily_analysis_update_strips_missing_optional_columns_one_by_one(monkeypatch):
     calls: list[dict] = []
 
@@ -171,6 +172,10 @@ def test_daily_analysis_update_strips_missing_optional_columns_one_by_one(monkey
         },
     )
 
+    assert stripped == ["character_selection", "selected_hero_id", "top_hero_score"]
+    assert len(calls) == 2
+    assert "analysis_ctx_json" in calls[-1]
+    assert calls[-1] == {"analysis_ctx_json": {"event_type": "INTEL"}}
     assert stripped == ["character_selection", "top_hero_score"]
     assert len(calls) == 3
     assert "analysis_ctx_json" in calls[-1]
