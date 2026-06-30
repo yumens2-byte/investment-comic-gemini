@@ -128,7 +128,7 @@ def test_character_selection_summary_includes_selected_villain_ids():
     assert summary["selected_villain_ids"] == ["CHAR_VILLAIN_004", "CHAR_VILLAIN_001"]
 
 
-def test_daily_analysis_update_strips_missing_optional_columns_one_by_one(monkeypatch):
+def test_daily_analysis_update_strips_optional_summary_columns_in_one_retry(monkeypatch):
     calls: list[dict] = []
 
     class _Query:
@@ -171,9 +171,10 @@ def test_daily_analysis_update_strips_missing_optional_columns_one_by_one(monkey
         },
     )
 
-    assert stripped == ["character_selection", "top_hero_score"]
-    assert len(calls) == 3
-    assert "analysis_ctx_json" in calls[-1]
-    assert calls[-1]["selected_hero_id"] == "CHAR_HERO_004"
-    assert "character_selection" not in calls[-1]
-    assert "top_hero_score" not in calls[-1]
+    assert stripped == [
+        "character_selection",
+        "selected_hero_id",
+        "top_hero_score",
+    ]
+    assert len(calls) == 2
+    assert calls[-1] == {"analysis_ctx_json": {"event_type": "INTEL"}}
