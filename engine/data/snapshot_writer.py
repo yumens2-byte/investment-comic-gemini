@@ -8,9 +8,10 @@ UNIQUE KEY: snapshot_date
 from __future__ import annotations
 
 import logging
-import re
 from datetime import date
 from typing import Any
+
+from engine.common.schema_compat import extract_missing_column
 
 logger = logging.getLogger(__name__)
 
@@ -138,14 +139,12 @@ def enforce_critical_quality(payload: dict, *, context: str = "") -> dict[str, l
 
 
 def _missing_schema_column_from_error(exc: Exception) -> str | None:
-    """Extract a PostgREST schema-cache missing-column name from an exception."""
-    text = str(exc)
-    if "PGRST204" not in text and "Could not find" not in text:
-        return None
-    match = re.search(r"Could not find the '([^']+)' column", text)
-    if not match:
-        return None
-    return match.group(1)
+    """Extract a PostgREST schema-cache missing-column name from an exception.
+
+    Backward-compatible wrapper. Delegates to the single source of truth in
+    engine.common.schema_compat.extract_missing_column.
+    """
+    return extract_missing_column(exc)
 
 
 def _upsert_snapshot_schema_compatible(snapshot_date: str, payload: dict[str, Any]) -> None:

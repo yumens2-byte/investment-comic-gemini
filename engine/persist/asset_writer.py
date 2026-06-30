@@ -11,10 +11,10 @@ State Machine (doc 16b):
 from __future__ import annotations
 
 import logging
-import re
 from typing import Any
 
 from engine.common.exceptions import InvalidStatusTransition
+from engine.common.schema_compat import extract_missing_column
 
 logger = logging.getLogger(__name__)
 
@@ -285,14 +285,12 @@ def character_selection_summary(ctx: dict) -> dict:
 
 
 def _missing_schema_column_from_error(exc: Exception) -> str | None:
-    """Extract a PostgREST schema-cache missing-column name from an exception."""
-    text = str(exc)
-    if "PGRST204" not in text and "Could not find" not in text:
-        return None
-    match = re.search(r"Could not find the '([^']+)' column", text)
-    if not match:
-        return None
-    return match.group(1)
+    """Extract a PostgREST schema-cache missing-column name from an exception.
+
+    Backward-compatible wrapper. Delegates to the single source of truth in
+    engine.common.schema_compat.extract_missing_column.
+    """
+    return extract_missing_column(exc)
 
 
 _DAILY_ANALYSIS_OPTIONAL_SUMMARY_FIELDS = frozenset({

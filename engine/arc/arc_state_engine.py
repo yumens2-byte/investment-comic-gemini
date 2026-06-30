@@ -17,9 +17,10 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 from datetime import datetime, timezone
 from typing import Any
+
+from engine.common.schema_compat import extract_missing_column
 
 VERSION = "1.0.0"
 
@@ -92,14 +93,12 @@ _CROWD_F_G_MAP = [
 # ── 로드 / 저장 ──────────────────────────────────────────────────────────────
 
 def _missing_schema_column_from_error(exc: Exception) -> str | None:
-    """Extract a PostgREST schema-cache missing-column name from an exception."""
-    text = str(exc)
-    if "PGRST204" not in text and "Could not find" not in text:
-        return None
-    match = re.search(r"Could not find the '([^']+)' column", text)
-    if not match:
-        return None
-    return match.group(1)
+    """Extract a PostgREST schema-cache missing-column name from an exception.
+
+    Backward-compatible wrapper. Delegates to the single source of truth in
+    engine.common.schema_compat.extract_missing_column.
+    """
+    return extract_missing_column(exc)
 
 
 def _upsert_arc_state_schema_compatible(state: dict[str, Any]) -> list[str]:
