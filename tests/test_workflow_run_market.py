@@ -80,3 +80,19 @@ def test_run_market_workflow_surfaces_major_gate_diagnostics() -> None:
     assert "steps.major_gate.outputs.episode_type_v3" in text
     assert "steps.major_gate.outputs.gate_source" in text
     assert "Schedule cost-control skip expected" in text
+
+
+def test_deployment_workflows_use_safe_inputs_context_and_env_keys() -> None:
+    workflow_paths = sorted(Path(".github/workflows").glob("*.yml"))
+    assert workflow_paths
+
+    for path in workflow_paths:
+        text = path.read_text(encoding="utf-8")
+        parsed = yaml.safe_load(text)
+        assert parsed, f"{path} must parse as YAML"
+        assert "github." + "event.inputs" not in text, (
+            f"{path} should use the schedule-safe inputs context, not github.event.inputs"
+        )
+        assert not re.search(r"^[ \t]*[A-Za-z_][A-Za-z0-9_]*\s+:", text, re.MULTILINE), (
+            f"{path} contains an env/YAML key with whitespace before ':'"
+        )
