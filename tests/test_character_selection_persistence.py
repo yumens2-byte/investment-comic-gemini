@@ -129,6 +129,7 @@ def test_character_selection_summary_includes_selected_villain_ids():
 
 
 def test_daily_analysis_update_bulk_strips_observability_columns(monkeypatch):
+def test_daily_analysis_update_strips_missing_optional_columns_one_by_one(monkeypatch):
     calls: list[dict] = []
 
     class _Query:
@@ -143,6 +144,11 @@ def test_daily_analysis_update_bulk_strips_observability_columns(monkeypatch):
             if "character_selection" in self.payload:
                 raise Exception(
                     "{'message': \"Could not find the 'character_selection' column "
+                    "of 'daily_analysis' in the schema cache\", 'code': 'PGRST204'}"
+                )
+            if "top_hero_score" in self.payload:
+                raise Exception(
+                    "{'message': \"Could not find the 'top_hero_score' column "
                     "of 'daily_analysis' in the schema cache\", 'code': 'PGRST204'}"
                 )
             return None
@@ -170,5 +176,9 @@ def test_daily_analysis_update_bulk_strips_observability_columns(monkeypatch):
     assert len(calls) == 2
     assert "analysis_ctx_json" in calls[-1]
     assert calls[-1] == {"analysis_ctx_json": {"event_type": "INTEL"}}
+    assert stripped == ["character_selection", "top_hero_score"]
+    assert len(calls) == 3
+    assert "analysis_ctx_json" in calls[-1]
+    assert calls[-1]["selected_hero_id"] == "CHAR_HERO_004"
     assert "character_selection" not in calls[-1]
     assert "top_hero_score" not in calls[-1]

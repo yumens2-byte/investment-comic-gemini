@@ -53,6 +53,11 @@ gate 결과를 명시적으로 출력한다. 비메이저 스킵이면 "expected
 
 이 방식은 migration/schema-cache 미반영 상태에서 반복 400을 줄이고,
 후속 narrative/persist/image 단계에 필요한 `analysis_ctx_json` 저장을 우선 보장한다.
+2. PostgREST schema-cache missing-column 오류가 나면 해당 optional 컬럼만 제거하고 재시도
+3. `analysis_ctx_json`이 누락 컬럼으로 보고되거나 알 수 없는 오류면 fail-fast 후
+   기존 last-resort fallback으로 `analysis_ctx_json`만 저장
+
+이 방식은 migration이 부분 적용된 DB에서 가능한 summary 컬럼을 최대한 보존한다.
 
 ## 테스트 전략
 
@@ -66,5 +71,7 @@ gate 결과를 명시적으로 출력한다. 비메이저 스킵이면 "expected
 - persistence 단위 테스트:
   - missing optional observability column 발생 시 관측 컬럼 그룹을 일괄 제거하며 재시도
   - 마지막 성공 payload가 반복 400 없이 `analysis_ctx_json`만 안전하게 유지하는지 확인
+  - missing optional column을 하나씩 제거하며 재시도
+  - 마지막 성공 payload에 `analysis_ctx_json`과 존재하는 summary 컬럼이 유지되는지 확인
 - 전체 테스트:
   - `pytest -q`

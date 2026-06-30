@@ -321,6 +321,13 @@ def _update_daily_analysis_schema_compatible(
     observability group; if any one of them is absent from PostgREST's schema
     cache, strip the whole group and retry once. This avoids a noisy 400 response
     per missing column while preserving the critical ctx payload.
+    """Update daily_analysis while preserving all columns present in the DB.
+
+    ``analysis_ctx_json`` is required for hybrid narrative/persist/image stages,
+    so it remains fail-fast. Character-selection summary columns are additive
+    observability fields; when code rolls out ahead of the Supabase migration or
+    schema-cache refresh, strip only the reported missing optional column and
+    retry instead of dropping every summary field at once.
     """
     from engine.common.supabase_client import icg_table
 
