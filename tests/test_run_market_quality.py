@@ -71,13 +71,44 @@ def test_feature_flag_snapshot_captures_continuity_flags(monkeypatch) -> None:
 
     snapshot = _feature_flag_snapshot()
 
-    assert snapshot == {
-        "NARRATIVE_CONTEXT_ENABLED": True,
-        "STORY_PLANNER_ENABLED": True,
-        "CONTINUITY_STRICT_ENABLED": True,
-        "ARC_STATE_V3_ENABLED": False,
-        "EPISODE_TYPE_V3_ENABLED": True,
-    }
+    # 관측성 확장(2026-06-30)으로 전체 11개를 기록하지만, continuity 5개 값은 보존된다.
+    assert snapshot["NARRATIVE_CONTEXT_ENABLED"] is True
+    assert snapshot["STORY_PLANNER_ENABLED"] is True
+    assert snapshot["CONTINUITY_STRICT_ENABLED"] is True
+    assert snapshot["ARC_STATE_V3_ENABLED"] is False
+    assert snapshot["EPISODE_TYPE_V3_ENABLED"] is True
+
+
+def test_feature_flag_snapshot_captures_all_11_flags(monkeypatch) -> None:
+    """관측성 확장(2026-06-30): 11개 플래그 전부 기록 + scenario/battle 값 검증."""
+    all_flags = [
+        "NARRATIVE_CONTEXT_ENABLED",
+        "STORY_PLANNER_ENABLED",
+        "CONTINUITY_STRICT_ENABLED",
+        "ARC_STATE_V3_ENABLED",
+        "EPISODE_TYPE_V3_ENABLED",
+        "SCENARIO_V2_ENABLED",
+        "NARRATIVE_DEPTH_ENABLED",
+        "PAIR_TENSION_ENABLED",
+        "CROWD_MODIFIER_ENABLED",
+        "VILLAIN_SIGNATURE_BONUS_ENABLED",
+        "EMERGENCE_DEFICIT_ENABLED",
+    ]
+    for name in all_flags:
+        monkeypatch.setenv(name, "true")
+    monkeypatch.setenv("PAIR_TENSION_ENABLED", "false")  # 혼합값 검증
+
+    snapshot = _feature_flag_snapshot()
+
+    # 11개 키 전부 기록
+    assert set(snapshot.keys()) == set(all_flags)
+    # scenario/battle 6개 값 정확성
+    assert snapshot["SCENARIO_V2_ENABLED"] is True
+    assert snapshot["NARRATIVE_DEPTH_ENABLED"] is True
+    assert snapshot["PAIR_TENSION_ENABLED"] is False
+    assert snapshot["CROWD_MODIFIER_ENABLED"] is True
+    assert snapshot["VILLAIN_SIGNATURE_BONUS_ENABLED"] is True
+    assert snapshot["EMERGENCE_DEFICIT_ENABLED"] is True
 
 
 def test_quality_inputs_rebuild_from_core_ctx_when_enabled(monkeypatch) -> None:
