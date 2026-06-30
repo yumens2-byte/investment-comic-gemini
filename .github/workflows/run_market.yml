@@ -19,15 +19,15 @@ on:
         required: false
         default: 'all'
       scenario_v2:
-        description: 'Scenario v2.0 활성화 (true=Shadow Run / false=기존 로직)'
+        description: 'Scenario v2.0 활성화 (true/false/auto, auto=vars 따름)'
         required: false
-        default: 'false'
+        default: 'auto'
 
       # [inputs 블록 — scenario_v2 아래]
       episode_type_v3:
-        description: 'Episode Type v3 활성화 (9종 타입 / false=기존 3종 로직)'
+        description: 'Episode Type v3 활성화 (true/false/auto, auto=vars 따름)'
         required: false
-        default: 'false'
+        default: 'auto'
       arc_state_v3:
         description: 'Arc State v3 연속성 활성화 (true/false/auto)'
         required: false
@@ -105,8 +105,8 @@ jobs:
       TARGET_DATE: ${{ inputs.target_date || '' }}
       RUN_STAGE: ${{ inputs.stage || 'all' }}
       FORCE_RUN: ${{ inputs.force || 'false' }}
-      SCENARIO_V2_ENABLED: ${{ inputs.scenario_v2 || 'false' }}
-      EPISODE_TYPE_V3_ENABLED: ${{ inputs.episode_type_v3 || 'false' }}
+      SCENARIO_V2_ENABLED: ${{ (inputs.scenario_v2 != '' && inputs.scenario_v2 != 'auto') && inputs.scenario_v2 || vars.SCENARIO_V2_ENABLED || 'false' }}
+      EPISODE_TYPE_V3_ENABLED: ${{ (inputs.episode_type_v3 != '' && inputs.episode_type_v3 != 'auto') && inputs.episode_type_v3 || vars.EPISODE_TYPE_V3_ENABLED || 'false' }}
       ARC_STATE_V3_ENABLED: ${{ (inputs.arc_state_v3 != '' && inputs.arc_state_v3 != 'auto') && inputs.arc_state_v3 || vars.ARC_STATE_V3_ENABLED || 'false' }}
 
       # ── Phase 2.3 Feature Flags (하이브리드: inputs > vars > 'false') ──
