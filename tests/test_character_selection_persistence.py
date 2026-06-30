@@ -1,7 +1,7 @@
 from engine.persist.asset_writer import (
+    _update_daily_analysis_schema_compatible,
     character_selection_candidate_rows,
     character_selection_summary,
-    _update_daily_analysis_schema_compatible,
 )
 from scripts.run_market import _build_episode_asset_payload
 
