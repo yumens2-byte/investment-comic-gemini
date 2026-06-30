@@ -17,7 +17,7 @@ from typing import Any, TypeVar
 from tenacity import (
     RetryCallState,
     retry,
-    retry_if_exception_type,
+    retry_if_exception,
     stop_after_attempt,
     wait_exponential,
 )
@@ -25,6 +25,10 @@ from tenacity import (
 logger = logging.getLogger(__name__)
 
 F = TypeVar("F", bound=Callable[..., Any])
+
+
+class NonRetryableAPIError(Exception):
+    """External API failure that should bypass the retry loop."""
 
 
 def _log_retry(retry_state: RetryCallState) -> None:
@@ -68,7 +72,10 @@ def api_retry(
     return retry(
         stop=stop_after_attempt(max_attempts),
         wait=wait_exponential(multiplier=1, min=min_wait, max=max_wait),
-        retry=retry_if_exception_type(exceptions),
+        retry=retry_if_exception(
+            lambda exc: isinstance(exc, exceptions)
+            and not isinstance(exc, NonRetryableAPIError)
+        ),
         after=_log_retry,
         reraise=reraise,
     )
