@@ -21,13 +21,29 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 
-from engine.common.retry import api_retry
+from engine.common.retry import NonRetryableAPIError, api_retry
 
 logger = logging.getLogger(__name__)
 
 _LUNAR_BASE = "https://lunarcrush.com/api4/public"
 _CACHE_KEY = "lunarcrush:topic:bitcoin"
 _TTL_MINUTES = 60
+_RETRYABLE_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
+
+
+class LunarCrushPermanentError(NonRetryableAPIError):
+    """Raised for LunarCrush responses where retrying immediately will not help."""
+
+
+def _raise_for_retryable_status(resp: requests.Response) -> None:
+    """Raise retryable HTTPError only for transient LunarCrush failures."""
+    if resp.status_code < 400:
+        return
+    if resp.status_code in _RETRYABLE_STATUS_CODES:
+        resp.raise_for_status()
+    raise LunarCrushPermanentError(
+        f"LunarCrush permanent HTTP {resp.status_code}: {resp.url}"
+    )
 
 
 def _get_cache() -> dict | None:
@@ -107,7 +123,7 @@ def _call_api(api_key: str) -> dict:
         headers={"Authorization": f"Bearer {api_key}"},
         timeout=10,
     )
-    resp.raise_for_status()
+    _raise_for_retryable_status(resp)
     return resp.json()
 
 
