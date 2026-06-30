@@ -3,7 +3,10 @@
 Usage:
   python -m scripts.check_major_event_gate --date 2026-05-03
 
-Prints a single line for GitHub Actions:
+Prints GitHub Actions output lines:
+  event_type=...
+  episode_type_v3=...
+  gate_source=regime|episode_type_v3|none
   should_run_expensive=true|false
 """
 
@@ -11,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -42,6 +46,49 @@ def should_run_expensive(event_type: str) -> bool:
     return (event_type or "").upper() in MAJOR_EVENT_TYPES
 
 
+@dataclass(frozen=True)
+class MajorGateDecision:
+    """Resolved cost-control decision for a market run."""
+
+    regime: str
+    episode_type_v3: str
+    should_run_expensive: bool
+    gate_source: str
+
+
+def decide_major_gate(regime: str, episode_type_v3: str = "") -> MajorGateDecision:
+    """Decide whether expensive stages should run.
+
+    The legacy scheduled gate keys off ``daily_analysis.regime``.  Phase 2.3 can
+    also compute a richer ``analysis_ctx_json.episode_type_v3`` such as
+    BATTLE_PLUS/EMERGENCE.  Treat either signal as major so scheduled runs do
+    not skip a v3 major episode just because the legacy regime stayed calm.
+    """
+    normalized_regime = str(regime or "NORMAL").upper()
+    normalized_v3 = str(episode_type_v3 or "").upper()
+
+    if should_run_expensive(normalized_regime):
+        return MajorGateDecision(
+            regime=normalized_regime,
+            episode_type_v3=normalized_v3,
+            should_run_expensive=True,
+            gate_source="regime",
+        )
+    if should_run_expensive(normalized_v3):
+        return MajorGateDecision(
+            regime=normalized_regime,
+            episode_type_v3=normalized_v3,
+            should_run_expensive=True,
+            gate_source="episode_type_v3",
+        )
+    return MajorGateDecision(
+        regime=normalized_regime,
+        episode_type_v3=normalized_v3,
+        should_run_expensive=False,
+        gate_source="none",
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Major event gate checker")
     parser.add_argument("--date", required=True, help="analysis date (YYYY-MM-DD)")
@@ -51,17 +98,26 @@ def main() -> None:
 
     rows = (
         icg_table("daily_analysis")
-        .select("regime")
+        .select("regime,analysis_ctx_json")
         .eq("analysis_date", args.date)
         .limit(1)
         .execute()
     )
     event_type = "NORMAL"
+    episode_type_v3 = ""
     if rows.data:
-        event_type = str(rows.data[0].get("regime") or "NORMAL")
+        row = rows.data[0]
+        event_type = str(row.get("regime") or "NORMAL")
+        ctx = row.get("analysis_ctx_json") if isinstance(row, dict) else {}
+        if isinstance(ctx, dict):
+            episode_type_v3 = str(ctx.get("episode_type_v3") or "")
 
-    print(f"event_type={event_type}")
-    print(f"should_run_expensive={'true' if should_run_expensive(event_type) else 'false'}")
+    decision = decide_major_gate(event_type, episode_type_v3)
+
+    print(f"event_type={decision.regime}")
+    print(f"episode_type_v3={decision.episode_type_v3}")
+    print(f"gate_source={decision.gate_source}")
+    print(f"should_run_expensive={'true' if decision.should_run_expensive else 'false'}")
 
 
 if __name__ == "__main__":

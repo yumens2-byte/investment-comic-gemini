@@ -11,10 +11,27 @@ State Machine (doc 16b):
 from __future__ import annotations
 
 import logging
+import re
+from typing import Any
 
 from engine.common.exceptions import InvalidStatusTransition
 
 logger = logging.getLogger(__name__)
+
+_DAILY_ANALYSIS_OBSERVABILITY_COLUMNS = (
+    "character_selection",
+    "character_selector_version",
+    "character_selector_mode",
+    "selected_hero_id",
+    "selected_villain_id",
+    "selected_villain_ids",
+    "support_heroes_json",
+    "neutral_guests_json",
+    "top_hero_score",
+    "top_villain_score",
+    "neutral_guest_count",
+    "character_selection_reason",
+)
 
 # ── 허용 상태 전환 테이블 ──────────────────────────────────────────────────────
 _ALLOWED_TRANSITIONS: dict[str, list[str]] = {
@@ -282,6 +299,59 @@ def character_selection_summary(ctx: dict) -> dict:
     }
 
 
+def _missing_schema_column_from_error(exc: Exception) -> str | None:
+    """Extract a PostgREST schema-cache missing-column name from an exception."""
+    text = str(exc)
+    if "PGRST204" not in text and "Could not find" not in text:
+        return None
+    match = re.search(r"Could not find the '([^']+)' column", text)
+    if not match:
+        return None
+    return match.group(1)
+
+
+def _update_daily_analysis_schema_compatible(
+    episode_date: str,
+    payload: dict[str, Any],
+) -> list[str]:
+    """Update daily_analysis while avoiding repeated schema-cache failures.
+
+    ``analysis_ctx_json`` is required for hybrid narrative/persist/image stages,
+    so it remains fail-fast. Character-selection summary columns are an additive
+    observability group; if any one of them is absent from PostgREST's schema
+    cache, strip the whole group and retry once. This avoids a noisy 400 response
+    per missing column while preserving the critical ctx payload.
+    """
+    from engine.common.supabase_client import icg_table
+
+    remaining = dict(payload)
+    stripped: list[str] = []
+    while True:
+        try:
+            icg_table("daily_analysis").update(remaining).eq(
+                "analysis_date", episode_date
+            ).execute()
+            return stripped
+        except Exception as exc:
+            missing_column = _missing_schema_column_from_error(exc)
+            if not missing_column or missing_column not in remaining:
+                raise
+            if missing_column == "analysis_ctx_json":
+                raise
+            if missing_column in _DAILY_ANALYSIS_OBSERVABILITY_COLUMNS:
+                group = [
+                    column
+                    for column in _DAILY_ANALYSIS_OBSERVABILITY_COLUMNS
+                    if column in remaining
+                ]
+                stripped.extend(column for column in group if column not in stripped)
+                for column in group:
+                    remaining.pop(column, None)
+                continue
+            stripped.append(missing_column)
+            remaining.pop(missing_column, None)
+
+
 def character_selection_candidate_rows(
     episode_date: str,
     event_type: str,
@@ -358,22 +428,27 @@ def save_analysis_ctx(episode_date: str, event_type: str, ctx: dict) -> None:
         event_type: 에피소드 타입 (예: 'NORMAL'). 로그용.
         ctx: step_analysis() 반환값.
     """
-    from engine.common.supabase_client import icg_table
-
     payload = {"analysis_ctx_json": ctx}
     payload.update(character_selection_summary(ctx))
 
     try:
-        icg_table("daily_analysis").update(payload).eq(
-            "analysis_date", episode_date
-        ).execute()
+        stripped = _update_daily_analysis_schema_compatible(episode_date, payload)
+        if stripped:
+            logger.warning(
+                "[asset_writer] daily_analysis schema missing optional columns; "
+                "analysis_ctx_json saved without fields=%s. Apply pending migrations.",
+                stripped,
+            )
     except Exception as exc:
-        # Backward compatibility: allow code rollout before the observability migration.
+        # Last-resort compatibility: keep hybrid stages unblocked even if the
+        # observability migration is only partially applied.
         logger.warning(
             "[asset_writer] character_selection summary 저장 실패 — "
             "analysis_ctx_json only fallback: %s",
             exc,
         )
+        from engine.common.supabase_client import icg_table
+
         icg_table("daily_analysis").update({"analysis_ctx_json": ctx}).eq(
             "analysis_date", episode_date
         ).execute()
