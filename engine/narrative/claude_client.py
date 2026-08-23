@@ -22,6 +22,7 @@ v2.1 변경사항 (2026-04-22 — Step 3-Story 보정):
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import re
@@ -65,6 +66,43 @@ _FIELD_LIMITS: dict[str, int] = {
 # 면책 고지 필수 문구
 _DISCLAIMER_PHRASES = ["투자 참고", "투자 권유가 아닙니다", "투자 권유 아닙니다"]
 _DISCLAIMER_FALLBACK = " ⚠️ 투자 참고 정보이며, 투자 권유가 아닙니다."
+
+
+def _build_messages_create_kwargs(
+    create_method,
+    *,
+    model: str,
+    system_prompt: str,
+    messages: list[dict],
+) -> dict:
+    """Build SDK-version-compatible arguments for ``messages.create``.
+
+    Anthropic Python SDK 1.0 removed the top-level ``temperature`` argument.
+    Older SDK releases accept it, so include the tuning value only when the
+    installed callable explicitly supports it (or exposes ``**kwargs``).
+    """
+    kwargs = {
+        "model": model,
+        "max_tokens": _MAX_TOKENS,
+        "system": system_prompt,
+        "messages": messages,
+    }
+    try:
+        parameters = inspect.signature(create_method).parameters.values()
+        supports_temperature = any(
+            parameter.name == "temperature" or parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters
+        )
+    except (TypeError, ValueError):
+        supports_temperature = False
+    if supports_temperature:
+        kwargs["temperature"] = _TEMPERATURE
+    else:
+        logger.info(
+            "[claude] installed SDK does not support messages.create.temperature; "
+            "using the API default"
+        )
+    return kwargs
 
 
 def _trim_str(text: str, max_len: int) -> str:
@@ -385,11 +423,12 @@ def generate_episode(
             model = _MODEL_PRIMARY if attempt <= 2 else _MODEL_FALLBACK
 
             resp = client.messages.create(
-                model=model,
-                max_tokens=_MAX_TOKENS,
-                system=system_prompt,
-                messages=messages,
-                temperature=_TEMPERATURE,
+                **_build_messages_create_kwargs(
+                    client.messages.create,
+                    model=model,
+                    system_prompt=system_prompt,
+                    messages=messages,
+                )
             )
 
             raw_text = resp.content[0].text
@@ -423,7 +462,11 @@ def generate_episode(
             last_error = exc
             logger.warning("[claude] 시도 %d 실패: %s", attempt, exc)
 
-    raise NarrativeValidationError(attempt=_MAX_RETRIES, detail=str(last_error))
+    raise NarrativeValidationError(
+        attempt=_MAX_RETRIES,
+        detail=str(last_error),
+        max_attempts=_MAX_RETRIES,
+    )
 
 
 def estimate_cost(input_tokens: int, output_tokens: int, model: str = _MODEL_PRIMARY) -> float:
