@@ -6,6 +6,9 @@
 
 상세 시스템 문서, 환경변수 목록, 설계 원칙, Supabase 스키마는 Notion에서 관리합니다.
 
+- [미국시장 Invest Universe 스토리·캐릭터 동작 품질 고도화 상세 분석](docs/US_INVEST_UNIVERSE_STORY_ACTION_QUALITY_AUDIT_2026-08-23.md)
+- [미국시장 Invest Universe 스토리·퍼포먼스 품질 고도화 상세 설계](docs/US_INVEST_UNIVERSE_STORY_PERFORMANCE_DETAILED_DESIGN_2026-08-23.md)
+
 📖 **[ICG 시스템 상세 문서 (Notion)](https://www.notion.so/3439208cbdc381f29dede581caaa12f8)**
 
 ## 빠른 실행

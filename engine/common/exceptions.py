@@ -57,13 +57,14 @@ class BattleOverride(ICGBaseError):
 class NarrativeValidationError(ICGBaseError):
     """
     EpisodeScript Pydantic 검증 실패 시 발생.
-    최대 2회 재시도 후에도 실패하면 파이프라인 중단.
+    설정된 최대 재시도 후에도 실패하면 파이프라인 중단.
     """
 
-    def __init__(self, attempt: int, detail: str) -> None:
+    def __init__(self, attempt: int, detail: str, max_attempts: int = 2) -> None:
         self.attempt = attempt
         self.detail = detail
-        super().__init__(f"Narrative 검증 실패 (시도 {attempt}/2): {detail}")
+        self.max_attempts = max_attempts
+        super().__init__(f"Narrative 검증 실패 (시도 {attempt}/{max_attempts}): {detail}")
 
 
 class InvalidVillainNameError(ICGBaseError):

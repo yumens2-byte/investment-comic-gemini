@@ -311,6 +311,7 @@ def build_panel_prompt(
     panel: dict,
     ref_paths: list[Path] | None = None,
     battle_outcome: str | None = None,
+    performance_spec: object | None = None,
 ) -> str:
     """
     단일 패널 Gemini 프롬프트 생성.
@@ -385,6 +386,41 @@ def build_panel_prompt(
         "",
     ]
 
+    if performance_spec is not None:
+        spec = (
+            performance_spec.model_dump()
+            if hasattr(performance_spec, "model_dump")
+            else dict(performance_spec)
+        )
+        mechanics = spec.get("body_mechanics") or {}
+        staging = spec.get("staging") or {}
+        required = spec.get("required_character_ids") or []
+        lines += [
+            "== PERFORMANCE CONTRACT — HARD REQUIREMENT ==",
+            f"REQUIRED CHARACTER COUNT: exactly {len(required)} required character(s): {', '.join(required)}",
+            f"SUBJECT: {spec.get('subject_id') or 'none'}",
+            f"ACTION PHASE: {spec.get('action_phase', 'NONE')}",
+            f"ACTION: {spec.get('action_verb', '')}",
+            f"INTENT: {spec.get('intent', '')}",
+            f"TARGET: {spec.get('target_id') or 'none'}",
+            f"VISIBLE CONTACT: {spec.get('contact_point') or 'none required'}",
+            f"FOCAL POINT: {staging.get('focal_point', '')}",
+            "Do not replace the required action with a neutral standing pose.",
+            "Never omit a required character or duplicate a character.",
+            "== END PERFORMANCE CONTRACT ==",
+            "",
+            "== BODY MECHANICS ==",
+            f"LEAD: {mechanics.get('lead_limb') or 'not applicable'}",
+            f"BASE: {mechanics.get('support_limb') or 'stable and anatomically plausible'}",
+            f"WEIGHT: {mechanics.get('weight_direction') or 'balanced for the action'}",
+            f"TORSO: {mechanics.get('torso') or 'anatomically plausible'}",
+            f"GAZE: {mechanics.get('gaze', '')}",
+            f"EXPRESSION: {mechanics.get('expression', '')}",
+            f"SECONDARY MOTION: {mechanics.get('secondary_motion') or 'none required'}",
+            "== END BODY MECHANICS ==",
+            "",
+        ]
+
     # 패널 타입별 시각적 스펙 주입 (조명/구도/분위기/engagement)
     if visual_spec_block:
         lines += [visual_spec_block, ""]
@@ -428,7 +464,10 @@ def build_panel_prompt(
     return "\n".join(lines)
 
 
-def build_for_episode(episode_script: dict) -> list[PanelPrompt]:
+def build_for_episode(
+    episode_script: dict,
+    performance_specs: list[object] | None = None,
+) -> list[PanelPrompt]:
     """
     에피소드 전체 패널 프롬프트 생성.
 
@@ -444,6 +483,11 @@ def build_for_episode(episode_script: dict) -> list[PanelPrompt]:
     panels = episode_script.get("panels", [])
     panel_prompts: list[PanelPrompt] = []
 
+    specs_by_idx = {
+        int(getattr(spec, "panel_idx", 0) or (spec.get("panel_idx", 0) if isinstance(spec, dict) else 0)): spec
+        for spec in (performance_specs or [])
+    }
+
     for panel in panels:
         idx = panel.get("idx", 0)
         char_ids = [ch.get("char_id", "") for ch in panel.get("characters", [])]
@@ -458,7 +502,11 @@ def build_for_episode(episode_script: dict) -> list[PanelPrompt]:
             logger.error("[prompt_builder] Canon Lock 위반: %s", exc)
             raise
 
-        prompt_text = build_panel_prompt(panel, ref_paths)
+        prompt_text = build_panel_prompt(
+            panel,
+            ref_paths,
+            performance_spec=specs_by_idx.get(idx),
+        )
         panel_prompts.append(
             PanelPrompt(
                 panel_idx=idx,
