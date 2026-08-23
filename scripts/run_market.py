@@ -1375,7 +1375,31 @@ def step_image(
         output_dir = Path("output") / "episodes" / episode_date / "panels"
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        panel_prompts = build_for_episode(script_dict)
+        performance_specs = None
+        performance_quality = None
+        if os.environ.get("PERFORMANCE_SPEC_ENABLED", "false").lower() == "true":
+            from engine.image.performance_compiler import compile_episode_performance
+            from engine.image.performance_validator import validate_episode_performance
+
+            performance_specs = compile_episode_performance(script_dict)
+            performance_quality = validate_episode_performance(script_dict, performance_specs)
+            mode = os.environ.get("PERFORMANCE_QUALITY_MODE", "shadow").lower()
+            if mode not in {"shadow", "warning", "strict"}:
+                raise ValueError(f"invalid PERFORMANCE_QUALITY_MODE: {mode}")
+            logger_inst.info(
+                "STEP_6",
+                "[PerformanceQuality] "
+                f"mode={mode} status={performance_quality.status} "
+                f"score={performance_quality.score} "
+                f"issues={[issue.code for issue in performance_quality.issues]}",
+            )
+            if mode == "strict" and performance_quality.status == "FAIL":
+                raise RuntimeError(
+                    "performance quality strict gate failed: "
+                    + ",".join(issue.code for issue in performance_quality.issues)
+                )
+
+        panel_prompts = build_for_episode(script_dict, performance_specs=performance_specs)
         panels_input = [
             {
                 "panel_idx": pp.panel_idx,
@@ -1402,6 +1426,9 @@ def step_image(
                     {"idx": pp.panel_idx, "prompt": pp.prompt_text} for pp in panel_prompts
                 ],
                 "gemini_cost_usd": total_cost,
+                "performance_quality_json": (
+                    performance_quality.model_dump() if performance_quality else None
+                ),
                 "status": "image_generated",
                 # GitHub Actions run_id → resume_episode.yml 아티팩트 다운로드용
                 "artifact_run_id": os.environ.get("GITHUB_RUN_ID"),
