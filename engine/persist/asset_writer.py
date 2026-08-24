@@ -132,6 +132,8 @@ def patch(
     episode_date: str,
     event_type: str,
     data: dict,
+    *,
+    optional_fields: frozenset[str] = frozenset(),
 ) -> None:
     """
     icg.episode_assets 특정 컬럼만 UPDATE.
@@ -142,18 +144,34 @@ def patch(
         episode_date: 'YYYY-MM-DD'.
         event_type: 에피소드 타입.
         data: 업데이트할 필드만 포함한 딕셔너리.
+        optional_fields: DB migration이 아직 적용되지 않았을 때 제거하고 한 번
+            재시도해도 되는 부가 필드. 필수 필드 누락은 기존처럼 즉시 실패한다.
     """
     from engine.common.supabase_client import icg_table
 
-    icg_table("episode_assets").update(data).eq("episode_date", episode_date).eq(
-        "event_type", event_type
-    ).execute()
+    remaining = dict(data)
+    while True:
+        try:
+            icg_table("episode_assets").update(remaining).eq(
+                "episode_date", episode_date
+            ).eq("event_type", event_type).execute()
+            break
+        except Exception as exc:
+            missing_column = extract_missing_column(exc)
+            if missing_column not in optional_fields or missing_column not in remaining:
+                raise
+            remaining.pop(missing_column)
+            logger.warning(
+                "[asset_writer] episode_assets optional column missing: %s; "
+                "retrying without it. Apply pending migrations.",
+                missing_column,
+            )
 
     logger.info(
         "[asset_writer] patch date=%s type=%s fields=%s",
         episode_date,
         event_type,
-        list(data.keys()),
+        list(remaining.keys()),
     )
 
 

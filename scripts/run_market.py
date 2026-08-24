@@ -1417,22 +1417,25 @@ def step_image(
         panels_json = [
             {"panel_idx": i + 1, "path": str(p) if p else None} for i, p in enumerate(panel_paths)
         ]
+        image_asset_payload = {
+            "panels_json": panels_json,
+            "image_prompts_json": [
+                {"idx": pp.panel_idx, "prompt": pp.prompt_text} for pp in panel_prompts
+            ],
+            "gemini_cost_usd": total_cost,
+            "status": "image_generated",
+            # GitHub Actions run_id → resume_episode.yml 아티팩트 다운로드용
+            "artifact_run_id": os.environ.get("GITHUB_RUN_ID"),
+        }
+        # Disabled performance validation must not require its optional DB column.
+        if performance_quality is not None:
+            image_asset_payload["performance_quality_json"] = performance_quality.model_dump()
+
         asset_patch(
             episode_date,
             ctx["event_type"],
-            {
-                "panels_json": panels_json,
-                "image_prompts_json": [
-                    {"idx": pp.panel_idx, "prompt": pp.prompt_text} for pp in panel_prompts
-                ],
-                "gemini_cost_usd": total_cost,
-                "performance_quality_json": (
-                    performance_quality.model_dump() if performance_quality else None
-                ),
-                "status": "image_generated",
-                # GitHub Actions run_id → resume_episode.yml 아티팩트 다운로드용
-                "artifact_run_id": os.environ.get("GITHUB_RUN_ID"),
-            },
+            image_asset_payload,
+            optional_fields=frozenset({"performance_quality_json"}),
         )
 
         # 이미지 경로 로그 출력

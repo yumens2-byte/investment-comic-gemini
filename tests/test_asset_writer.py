@@ -205,3 +205,73 @@ class TestPatchByEpisode:
 
         assert ("eq", "episode_date", "2026-06-05") in calls
         assert ("eq", "episode_no", 2) in calls
+
+
+class TestPatchSchemaCompatibility:
+    def test_patch_retries_without_declared_optional_missing_column(self, monkeypatch):
+        import sys
+
+        from engine.persist.asset_writer import patch as asset_patch
+
+        sb = sys.modules["engine.common.supabase_client"]
+        payloads = []
+
+        class Table:
+            def update(self, data):
+                payloads.append(dict(data))
+                return self
+
+            def eq(self, _key, _value):
+                return self
+
+            def execute(self):
+                if len(payloads) == 1:
+                    raise Exception(
+                        "{'code': 'PGRST204', 'message': \"Could not find the "
+                        "'performance_quality_json' column of 'episode_assets' "
+                        "in the schema cache\"}"
+                    )
+
+        monkeypatch.setattr(sb, "icg_table", lambda _name: Table())
+
+        asset_patch(
+            "2026-08-25",
+            "BATTLE",
+            {"status": "image_generated", "performance_quality_json": {"score": 95}},
+            optional_fields=frozenset({"performance_quality_json"}),
+        )
+
+        assert payloads == [
+            {"status": "image_generated", "performance_quality_json": {"score": 95}},
+            {"status": "image_generated"},
+        ]
+
+    def test_patch_does_not_hide_required_missing_column(self, monkeypatch):
+        import sys
+
+        from engine.persist.asset_writer import patch as asset_patch
+
+        sb = sys.modules["engine.common.supabase_client"]
+
+        class Table:
+            def update(self, _data):
+                return self
+
+            def eq(self, _key, _value):
+                return self
+
+            def execute(self):
+                raise Exception(
+                    "{'code': 'PGRST204', 'message': \"Could not find the 'status' "
+                    "column of 'episode_assets' in the schema cache\"}"
+                )
+
+        monkeypatch.setattr(sb, "icg_table", lambda _name: Table())
+
+        with pytest.raises(Exception, match="status"):
+            asset_patch(
+                "2026-08-25",
+                "BATTLE",
+                {"status": "image_generated"},
+                optional_fields=frozenset({"performance_quality_json"}),
+            )
