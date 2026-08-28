@@ -1275,7 +1275,15 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
             continuity_strict=strict_continuity,
             production_strict=strict_production,
         )
-        continuity_retry_feedback: str | None = None
+        # Serial 출력 계약은 위반 후 피드백이 아니라 매 시도 상시 주입한다.
+        # 재시도 피드백은 직전 시도의 위반만 반영하므로, production이 한 번
+        # 통과하면 serial 지시가 사라져 모델이 회귀한다 (2026-08-29 #3).
+        from engine.narrative.production_quality import build_serial_contract_instruction
+
+        serial_base_instruction: str | None = (
+            build_serial_contract_instruction() if serial_required else None
+        )
+        continuity_retry_feedback: str | None = serial_base_instruction
         script_dict: dict | None = None
         continuity_warnings: list[str] = []
 
@@ -1389,7 +1397,13 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
                 production_violations, serial_required=serial_required
             ) or ""
             continuity_retry_feedback = "\n\n".join(
-                item for item in (continuity_retry_feedback, production_feedback) if item
+                item
+                for item in (
+                    continuity_retry_feedback,
+                    production_feedback,
+                    serial_base_instruction,
+                )
+                if item
             ) or None
             if not continuity_retry_feedback:
                 break

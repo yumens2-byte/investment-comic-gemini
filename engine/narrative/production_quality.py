@@ -363,6 +363,31 @@ def validate_production_episode(
     return violations
 
 
+def build_serial_contract_instruction() -> str:
+    """Standing serial-output contract injected into EVERY generation attempt.
+
+    The runtime (Notion-hosted) system prompt predates SERIAL_NARRATIVE_P0, so its
+    output contract omits next_hook/threads and the schema keeps them optional.
+    Retry feedback alone cannot fix this: it is rebuilt from the LAST attempt's
+    violations only, so once production passes the serial instructions vanish and
+    the model regresses (2026-08-29 #3: serial violations on attempts 1 and 3
+    with a schema-shape failure in between). This block therefore rides along on
+    every attempt whenever serial output is required.
+    """
+    return (
+        "## SERIAL NARRATIVE CONTRACT (required on every response)\n"
+        "- Top-level next_hook: a non-empty Korean sentence under 100 characters. "
+        "A concrete in-world story hook; never an investment prediction.\n"
+        "- Top-level unresolved_threads and resolved_threads: JSON arrays of PLAIN "
+        "STRINGS (max 3 each). NEVER objects, ids, or status fields — a bare Korean "
+        "sentence per entry.\n"
+        "- At least one concrete entry across unresolved_threads/resolved_threads: "
+        "an in-world character decision, emotion, or unanswered clue.\n"
+        "- Never use operational wording (Track continuing, CHAR_*, PEACEFUL_GROWTH) "
+        "inside next_hook or thread entries."
+    )
+
+
 def build_production_retry_feedback(
     violations: list[ProductionViolation],
     *,
@@ -401,8 +426,9 @@ def build_production_retry_feedback(
         )
     if serial_required:
         lines.append(
-            "- SERIAL FIX: return a non-empty next_hook and at least one concrete "
-            "unresolved_threads or resolved_threads entry."
+            "- SERIAL FIX: return a non-empty next_hook (Korean, under 100 chars) and at "
+            "least one concrete unresolved_threads or resolved_threads entry. Both thread "
+            "fields must be arrays of PLAIN STRINGS — never objects with thread_id/status."
         )
     lines.extend(
         [

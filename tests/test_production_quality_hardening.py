@@ -404,3 +404,26 @@ def test_sanitizer_strips_placeholders_even_with_algo_evidence() -> None:
     assert s_pack["previous_episode"]["unresolved_threads"] == []
     # evidence가 알고리즘을 지지하므로 hook 원문은 유지
     assert s_pack["previous_episode"]["next_hook"] == "알고리즘 압력 구간"
+
+
+def test_serial_contract_instruction_specifies_plain_string_arrays() -> None:
+    from engine.narrative.production_quality import build_serial_contract_instruction
+
+    instruction = build_serial_contract_instruction()
+
+    assert "SERIAL NARRATIVE CONTRACT" in instruction
+    assert "next_hook" in instruction
+    assert "PLAIN" in instruction and "STRING" in instruction
+    assert "NEVER objects" in instruction
+    assert "PEACEFUL_GROWTH" in instruction  # 운영 문구 금지 명시
+
+
+def test_serial_fix_feedback_bans_object_shaped_threads() -> None:
+    feedback = build_production_retry_feedback(
+        [ProductionViolation("SERIAL_NEXT_HOOK_MISSING", "next_hook is empty")],
+        serial_required=True,
+    )
+
+    assert feedback is not None
+    assert "PLAIN STRINGS" in feedback
+    assert "thread_id" in feedback  # 금지 형태를 명시적으로 지목

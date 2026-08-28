@@ -252,8 +252,9 @@ def _append_always_on_grounding_guardrails(rendered: str) -> str:
         "display curr once (for example +0.66%) and NEVER calculate or print pct-of-pct.",
         "- rate/spread/index_score rows must not be described as asset returns; use their supplied "
         "unit and change fields only.",
-        "- next_hook must be non-empty and non-predictive; preserve at least one structured "
-        "unresolved_threads or resolved_threads entry for a serial episode.",
+        "- next_hook must be non-empty and non-predictive; include at least one "
+        "unresolved_threads or resolved_threads entry as a PLAIN STRING (never an "
+        "object) for a serial episode.",
         "- Every Story Beat Plan required_character must appear in the specified panel contract.",
         "- For scenario_type=NO_BATTLE never emit panel_type=BATTLE; use TENSION, CLIMAX, "
         "or AFTERMATH while showing hypothesis, resistance, decision, and state change.",
