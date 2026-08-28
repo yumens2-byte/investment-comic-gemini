@@ -43,7 +43,7 @@ def _ensure_repo_root_on_path() -> None:
 
 _ensure_repo_root_on_path()
 
-VERSION = "1.5.0"
+VERSION = "1.6.0"
 
 logger = logging.getLogger("run_video_trailer")
 
@@ -446,131 +446,100 @@ def stage_persist_init():
 
 
 def stage_veo():
-    """STEP 6V: Veo 3.1 Lite Cut 1 generation (V2 MVP Phase 1 scope — T2V only)."""
-    logger.info("[6V] Veo cut 1 generation start (V2 MVP Phase 1)")
+    """STEP S3+S4: 북엔드 이미지(Gemini) + 본편 3컷(Veo T2V) 생성.
 
-    today_kst = datetime.now(ZoneInfo("Asia/Seoul")).date()
-    today_str = today_kst.isoformat()
-    episode_id = _get_episode_id(today_str)
-    output_path = f"output/videos/{episode_id}/cut1.mp4"
-
-    dry_run = os.environ.get("DRY_RUN", "false").lower() == "true"
-
-    # Step A: Budget Cap check (even in dry_run, to verify the ledger query works)
-    from engine.video.budget_checker import (
-        BudgetCheckError,
-        BudgetExceededError,
-        check_before_generation,
+    v1.6.0: shorts_scenario_json 기반으로 개편 (구 cut1_prompt.txt 단일컷 방식 대체).
+    DRY_RUN 판정을 공통 지침 규약(기본 'true')으로 교정 — 구현체는 shorts_media 참조.
+    부분 실패 시 당일 생성 중단(부분 발행 금지). 이미지 트랙에는 영향 없음.
+    """
+    from engine.video.shorts_media import (
+        MediaResult,
+        generate_bookend_images,
+        generate_cut_videos,
+        persist_media,
     )
+    from engine.video.shorts_pipeline import load_scenario, run_gate
 
-    # A1 decision (v2.2): Veo 3.1 Fast $0.15/s × 8s = $1.20
-    # (generate_audio=False removed due to API 400 on 2026-04-20 run #6; Veo default audio ON)
-    # Audio track will be stripped in Phase V4 ffmpeg assembly if needed.
-    estimated_cost = 1.20
-    try:
-        if dry_run:
-            logger.info(
-                f"[6V] DRY_RUN: skipping budget check "
-                f"(would-be estimated_cost=${estimated_cost:.4f})"
-            )
-        else:
-            budget_summary = check_before_generation(estimated_cost_usd=estimated_cost)
-            logger.info(
-                f"[6V] Budget check passed: spent=${budget_summary['monthly_spent_usd']:.4f}/"
-                f"${budget_summary['budget_cap_usd']:.2f} "
-                f"remaining=${budget_summary['remaining_usd']:.4f}"
-            )
-    except BudgetExceededError:
-        logger.exception("[6V] Budget cap would be exceeded — aborting generation")
-        raise
-    except BudgetCheckError:
-        logger.exception("[6V] Budget check FAILED (fail-closed) — aborting generation")
-        raise
+    target_date = _resolve_target_date()
+    gate = run_gate(target_date)
+    if not gate.passed:
+        logger.info(f"[S3/S4] gate BLOCKED — reason={gate.reason} (정상 종료)")
+        sys.exit(0)
 
-    # Step B: Load prompt
-    try:
-        full_prompt, negative_prompt = _load_cut1_prompt()
-    except Exception as e:
-        logger.exception(f"[6V] Failed to load cut1 prompt: {e}")
-        raise
-    logger.info(
-        f"[6V] Prompt loaded: prompt_len={len(full_prompt)} negative_len={len(negative_prompt)}"
-    )
+    scenario = load_scenario(gate.episode_id)
+    if scenario is None:
+        # DRY_RUN narrative 단계에서는 각색을 스킵하므로 시나리오가 없을 수 있다.
+        logger.warning(
+            "[S3/S4] shorts_scenario_json 없음 — narrative(S2) 실발행 실행 필요 (정상 종료)"
+        )
+        sys.exit(0)
 
-    # Step C: Generate video
+    out_dir = Path(f"output/videos/{gate.episode_id}")
+    media: MediaResult = generate_bookend_images(scenario, out_dir / "images")
+    media = generate_cut_videos(scenario, out_dir / "cuts", media)
+
+    dry_run = os.environ.get("DRY_RUN", "true").lower() == "true"
     if dry_run:
-        size = _create_dummy_mp4(output_path)
-        logger.info(f"[6V] DRY_RUN: created dummy mp4 at {output_path} ({size} bytes)")
-        gen_result = {
-            "video_uri": output_path,
-            "duration_sec": 8,
-            "cost_usd": 0.0,
-            "generation_ms": 0,
-            "file_size_mb": round(size / 1024 / 1024, 3),
-            "resolution": "720p",
-            "aspect_ratio": "9:16",
-            "audio_generated": True,
-            "dry_run": True,
-        }
-    else:
-        logger.info(
-            "[6V] Calling Veo API (estimated charge $1.20, audio included by Veo default)..."
-        )
-        from engine.video.veo_client import VeoClient
+        logger.info("[S3/S4] DRY_RUN — Supabase 기록 스킵 (더미 산출물만 생성)")
+        return
 
-        veo = VeoClient()
-        # v1.4.2: person_generation removed — Gemini API preview rejects with 400.
-        # See engine/video/veo_client.py v1.3.2 docstring for full context.
-        gen_result = veo.generate_text_to_video(
-            prompt=full_prompt,
-            output_path=output_path,
-            duration_sec=8,
-            resolution="720p",
-            aspect_ratio="9:16",
-            negative_prompt=negative_prompt,
-            generate_audio=False,
-        )
-        logger.info(
-            f"[6V] Veo cut 1 generated: path={gen_result['video_uri']} "
-            f"size={gen_result['file_size_mb']}MB "
-            f"elapsed={gen_result['generation_ms']}ms "
-            f"cost=${gen_result['cost_usd']:.4f} "
-            f"audio={gen_result['audio_generated']}"
-        )
-
-    # Step D: Supabase UPDATE
-    if not dry_run:
-        sb = _get_supabase_client()
-        try:
-            _safe_video_assets_update(
-                sb,
-                episode_id,
-                {
-                    "cut1_video_uri": gen_result["video_uri"],
-                    "veo_cost_usd": gen_result["cost_usd"],
-                    "generation_ms": gen_result["generation_ms"],
-                    "artifact_run_id": os.environ.get("GITHUB_RUN_ID"),
-                },
-                context="6V",
-            )
-            logger.info(f"[6V] Supabase updated: episode_id={episode_id}")
-        except Exception as e:
-            logger.exception(f"[6V] Supabase update failed (video saved locally): {e}")
-            # Don't re-raise — video is already generated and saved locally.
-            # Supabase update failure should not lose the generated asset.
-    else:
-        logger.info("[6V] DRY_RUN: skipping Supabase update")
-
-    logger.info("[6V] Cut 1 complete. V2 MVP Phase 2 (cut2/cut3 I2V) is NOT yet implemented.")
+    persist_media(gate.episode_id, media)
+    logger.info(
+        f"[S3/S4] 미디어 생성 완료: episode_id={gate.episode_id} "
+        f"cost=${media.total_cost_usd:.4f}"
+    )
 
 
 def stage_assembly():
-    """STEP 7V: FFmpeg concat + audio overlay + subtitle burn-in + final render."""
-    logger.info("[7V] FFmpeg assembly start")
-    # TODO: from engine.video.ffmpeg_composer import concat_cuts, compose_final
-    # TODO: from engine.video.audio_overlay import mix_audio
-    # TODO: from engine.video.subtitle_renderer import build_ass, burn_in
-    logger.info("[7V] final mp4 rendered to output/videos/today/final.mp4")
+    """STEP S5: 조립 — [인트로clip+3컷+아웃트로clip] concat → 자막 번인 → TTS 믹스 → 최종 렌더.
+
+    v1.6.0 실장. 산출물: output/videos/{episode_id}/assembly/final_shorts.mp4
+    TTS 개별 실패는 무음 fallback (자막으로 정보 전달 — 조립 중단 없음).
+    """
+    from engine.video.shorts_media import (
+        MediaResult,
+        assemble_shorts,
+        persist_assembled,
+    )
+    from engine.video.shorts_pipeline import load_scenario, run_gate
+
+    target_date = _resolve_target_date()
+    gate = run_gate(target_date)
+    if not gate.passed:
+        logger.info(f"[S5] gate BLOCKED — reason={gate.reason} (정상 종료)")
+        sys.exit(0)
+
+    scenario = load_scenario(gate.episode_id)
+    if scenario is None:
+        logger.warning("[S5] shorts_scenario_json 없음 — S2 선행 필요 (정상 종료)")
+        sys.exit(0)
+
+    out_dir = Path(f"output/videos/{gate.episode_id}")
+    images_dir = out_dir / "images"
+    cuts_dir = out_dir / "cuts"
+
+    media = MediaResult(
+        intro_image=images_dir / "P91.png",
+        outro_image=images_dir / "P92.png",
+        cut_paths=[cuts_dir / f"cut{i}.mp4" for i in (1, 2, 3)],
+    )
+    missing = [
+        str(p)
+        for p in [media.intro_image, media.outro_image, *media.cut_paths]
+        if not Path(p).exists()
+    ]
+    if missing:
+        raise FileNotFoundError(f"[S5] 조립 입력 누락 (S3/S4 선행 필요): {missing}")
+
+    final_path = assemble_shorts(scenario, media, out_dir / "assembly")
+
+    dry_run = os.environ.get("DRY_RUN", "true").lower() == "true"
+    if dry_run:
+        logger.info(f"[S5] DRY_RUN — Supabase 기록 스킵 (final={final_path})")
+        return
+
+    persist_assembled(gate.episode_id, final_path)
+    logger.info(f"[S5] 조립 완료: {final_path}")
 
 
 def stage_gate_notify():
@@ -721,32 +690,82 @@ def stage_publish_x():
 
 
 def stage_publish_shorts():
-    """STEP 8V-c: Publish to YouTube Shorts."""
-    logger.info("[8V-c] YouTube Shorts publish start")
+    """STEP S7: YouTube Shorts 업로드 (마스터 승인 후 publish 모드에서만 실행).
 
-    # TODO: from engine.publish.youtube_shorts_publisher import publish_to_youtube_shorts
-    # result = publish_to_youtube_shorts(
-    #     video_path=final_mp4_path,
-    #     title=yt_title,
-    #     description=yt_description,
-    #     episode_id=episode_id,
-    #     tags=["미주투자", "시장분석", "ICG"],
-    # )
-    # Update icg.video_assets.youtube_video_id = result["youtube_video_id"],
-    #                       .published_shorts = NOW()
+    v1.6.0 실장. 발행-기록 짝 규약: 업로드 성공 즉시 같은 함수 안에서
+    youtube_video_id + published_shorts 를 기록한다 (기록 누락 = 중복 발행 리스크).
+    DRY_RUN(기본 true)이면 실제 업로드 없이 메타데이터 검증만 수행.
+    """
+    from engine.publish.youtube_shorts_publisher import publish_to_youtube_shorts
+    from engine.video.shorts_pipeline import load_scenario
 
-    logger.info("[8V-c] Shorts publish done")
+    target_date = _resolve_target_date()
+    episode_id = _get_episode_id(target_date)
+    logger.info(f"[S7] YouTube Shorts publish start: episode_id={episode_id}")
+
+    scenario = load_scenario(episode_id)
+    if scenario is None:
+        raise RuntimeError(f"[S7] shorts_scenario_json 없음: {episode_id} — S2 선행 필요")
+
+    final_path = Path(f"output/videos/{episode_id}/assembly/final_shorts.mp4")
+    if not final_path.exists():
+        raise FileNotFoundError(
+            f"[S7] final mp4 없음: {final_path} — publish 모드에서는 "
+            f"artifact 복원 step(Restore assembled artifact)이 선행되어야 한다"
+        )
+
+    result = publish_to_youtube_shorts(
+        video_path=str(final_path),
+        title=scenario.youtube_title,
+        description=scenario.youtube_description,
+        episode_id=episode_id,
+        tags=["미국주식", "시장분석", "투자코믹", "EDT"],
+    )
+
+    if result["status"] == "dry_run":
+        logger.info("[S7] DRY_RUN — 업로드/기록 스킵")
+        return
+
+    # 발행-기록 짝: 업로드 성공 즉시 기록 (실패 시 예외 전파 — persist_final 미진행)
+    from datetime import UTC
+
+    from engine.common.supabase_client import icg_table
+
+    icg_table("video_assets").update(
+        {
+            "youtube_video_id": result["youtube_video_id"],
+            "published_shorts": datetime.now(UTC).isoformat(),
+        }
+    ).eq("episode_id", episode_id).execute()
+    logger.info(
+        f"[S7] 업로드 완료 + 기록: video_id={result['youtube_video_id']} "
+        f"url={result['youtube_url']}"
+    )
 
 
 def stage_persist_final():
-    """STEP 8V-d: Finalize icg.video_assets status='published' + Notion tracker."""
-    logger.info("[8V-d] persist final status")
+    """STEP S8: status='published' 확정 (youtube_video_id 기록 확인 후에만)."""
+    from engine.common.supabase_client import icg_table
+    from engine.video.shorts_pipeline import _load_video_asset_row
 
-    # TODO: UPDATE icg.video_assets SET status='published', updated_at=NOW()
-    # WHERE episode_id = %s
-    # TODO: Create/update Notion EpisodeTracker page with final URLs
+    target_date = _resolve_target_date()
+    episode_id = _get_episode_id(target_date)
 
-    logger.info("[8V-d] persist final done")
+    dry_run = os.environ.get("DRY_RUN", "true").lower() == "true"
+    if dry_run:
+        logger.info(f"[S8] DRY_RUN — 상태 확정 스킵: {episode_id}")
+        return
+
+    row = _load_video_asset_row(episode_id)
+    if not row or not row.get("youtube_video_id"):
+        raise RuntimeError(
+            f"[S8] youtube_video_id 미기록 상태에서 published 확정 불가: {episode_id}"
+        )
+
+    icg_table("video_assets").update({"status": "published"}).eq(
+        "episode_id", episode_id
+    ).execute()
+    logger.info(f"[S8] published 확정: {episode_id}")
 
 
 STAGES = {

@@ -545,6 +545,27 @@ def persist_gate_result(gate: GateResult) -> str:
     return status
 
 
+def load_scenario(episode_id: str) -> Optional[ShortsScenario]:
+    """video_assets.shorts_scenario_json 에서 각색 결과 복원 (S3~S5 stage 독립 실행용)."""
+    from engine.common.supabase_client import icg_table
+
+    rows = (
+        icg_table("video_assets")
+        .select("shorts_scenario_json")
+        .eq("episode_id", episode_id)
+        .limit(1)
+        .execute()
+    )
+    if not rows.data:
+        return None
+    payload = rows.data[0].get("shorts_scenario_json")
+    if not payload:
+        return None
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+    return ShortsScenario(**payload)
+
+
 def persist_scenario(gate: GateResult, scenario: ShortsScenario) -> None:
     """각색 결과 저장 → status='scenario_ready'."""
     from engine.common.supabase_client import icg_table

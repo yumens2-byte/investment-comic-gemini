@@ -14,24 +14,59 @@ import logging
 import os
 from pathlib import Path
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 logger = logging.getLogger(__name__)
 
 TARGET_LUFS = -14.0  # Social media standard (YouTube, TikTok, Instagram)
 
 
+def _pcm_to_wav_bytes(
+    pcm: bytes,
+    sample_rate: int = 24000,
+    channels: int = 1,
+    sample_width: int = 2,
+) -> bytes:
+    """Gemini TTS 응답(raw PCM s16le 24kHz mono)에 WAV 헤더를 붙인다."""
+    import struct
+
+    byte_rate = sample_rate * channels * sample_width
+    block_align = channels * sample_width
+    header = struct.pack(
+        "<4sI4s4sIHHIIHH4sI",
+        b"RIFF",
+        36 + len(pcm),
+        b"WAVE",
+        b"fmt ",
+        16,
+        1,  # PCM
+        channels,
+        sample_rate,
+        byte_rate,
+        block_align,
+        sample_width * 8,
+        b"data",
+        len(pcm),
+    )
+    return header + pcm
+
+
 def generate_tts(
     text: str,
     output_path: str,
-    voice: str = "ko-KR-Neural2-A",
+    voice: str = "Kore",
 ) -> str:
     """
     Generate TTS audio via Gemini 2.5 Flash Preview TTS.
 
+    v1.2.0: TODO 실장 (Daily Battle Shorts S5).
+      - 응답 inline_data 는 raw PCM(s16le/24kHz/mono) → WAV 로 저장.
+      - voice 기본값 교정: "ko-KR-Neural2-A"(Google Cloud TTS 보이스명)는
+        Gemini TTS prebuilt voice 가 아니어서 무효 → "Kore" (한국어 지원 prebuilt).
+
     Args:
         text: Korean narration text
-        output_path: Destination .mp3 or .wav path
-        voice: Voice model (Korean female/male neural)
+        output_path: Destination .wav path
+        voice: Gemini prebuilt voice name (예: "Kore", "Puck")
 
     Returns:
         output_path
@@ -46,18 +81,31 @@ def generate_tts(
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     logger.info(f"[audio_overlay] v{VERSION} TTS request: len={len(text)} voice={voice}")
 
-    # TODO: actual TTS API call via google-genai (V5)
-    # from google import genai
-    # client = genai.Client(api_key=api_key)
-    # response = client.models.generate_content(
-    #     model="gemini-2.5-flash-preview-tts",
-    #     contents=text,
-    #     config={"voice_config": {"name": voice}},
-    # )
-    # with open(output_path, "wb") as f:
-    #     f.write(response.audio_bytes)
+    from google import genai
+    from google.genai import types
 
-    logger.info(f"[audio_overlay] TTS generated: {output_path}")
+    client = genai.Client(api_key=api_key)
+    response = client.models.generate_content(
+        model="gemini-2.5-flash-preview-tts",
+        contents=text,
+        config=types.GenerateContentConfig(
+            response_modalities=["AUDIO"],
+            speech_config=types.SpeechConfig(
+                voice_config=types.VoiceConfig(
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voice)
+                )
+            ),
+        ),
+    )
+
+    try:
+        pcm = response.candidates[0].content.parts[0].inline_data.data
+    except (AttributeError, IndexError, TypeError) as exc:
+        raise RuntimeError(f"TTS 응답에서 오디오 데이터 추출 실패: {exc}") from exc
+
+    Path(output_path).write_bytes(_pcm_to_wav_bytes(pcm))
+
+    logger.info(f"[audio_overlay] TTS generated: {output_path} ({len(pcm)} bytes PCM)")
     return output_path
 
 
