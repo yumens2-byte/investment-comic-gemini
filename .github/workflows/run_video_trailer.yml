@@ -83,7 +83,9 @@ jobs:
       TELEGRAM_BOT_TOKEN:       ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
       TELEGRAM_PAID_CHANNEL_ID: ${{ secrets.TELEGRAM_PAID_CHANNEL_ID }}
-      MASTER_CHAT_ID:           ${{ secrets.MASTER_CHAT_ID }}
+      # 승인 알림 수신처: 마스터 지시(2026-08-29)로 TELEGRAM_PAID_CHANNEL_ID 채널 사용.
+      # 주의: 해당 채널 구독자 전원에게 승인 요청 영상이 노출된다.
+      MASTER_CHAT_ID:           ${{ secrets.TELEGRAM_PAID_CHANNEL_ID }}
       # ── YouTube Shorts (2026-08-29 Secrets 등록 완료 — 주석 해제) ─
       YOUTUBE_CLIENT_ID:        ${{ secrets.YOUTUBE_CLIENT_ID }}
       YOUTUBE_CLIENT_SECRET:    ${{ secrets.YOUTUBE_CLIENT_SECRET }}
