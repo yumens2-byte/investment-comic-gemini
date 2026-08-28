@@ -66,6 +66,7 @@ def build_story_beat_plan(
     scenario_type: str,
     hero_ids: list[str] | None = None,
     villain_ids: list[str] | None = None,
+    neutral_guest_ids: list[str] | None = None,
 ) -> StoryBeatPlan:
     """Build a deterministic 8-panel story plan for the current episode."""
     outcome = str(battle_result.get("outcome", "DRAW"))
@@ -83,6 +84,7 @@ def build_story_beat_plan(
     active_hero_ids = hero_ids or [hero_id]
     primary_hero = active_hero_ids[0] if active_hero_ids else hero_id
     support_heroes = active_hero_ids[1:]
+    neutral_guests = [str(item) for item in (neutral_guest_ids or []) if item]
     villain_reader_card = narrative_context_pack.get("villain_reader_card")
     thread_ledger = ((narrative_context_pack.get("continuity_window") or {}).get("thread_ledger") or [])
     due_threads = [
@@ -99,8 +101,13 @@ def build_story_beat_plan(
             emotional_shift = "Reset audience expectation from story to caution."
         elif scenario_type == "NO_BATTLE":
             required = [primary_hero]
-            dialogue_intent = "Observe the market calmly without introducing villain combat."
-            emotional_shift = "Move from observation to cautious confidence."
+            if neutral_guests and idx in (3, 4):
+                required.append(neutral_guests[0])
+            dialogue_intent = (
+                "Investigate uncertain market pressure through a falsifiable hypothesis, "
+                "a concrete action, resistance, and a visible state change. Never use BATTLE panel_type."
+            )
+            emotional_shift = "Move from uncertainty through a costly decision to cautious confidence."
         else:
             if scenario_type == "ALLIANCE" and idx in (4, 5) and support_heroes:
                 required = [primary_hero, support_heroes[0], primary_villain]
@@ -196,5 +203,8 @@ def build_story_beat_plan(
             "payoff_required": bool(due_threads or continuity_seed),
             "new_threads_limit": 1,
             "next_pressure": next_hook,
+            "next_hook_required": True,
+            "required_neutral_guests": neutral_guests,
+            "forbidden_panel_types": ["BATTLE"] if scenario_type == "NO_BATTLE" else [],
         },
     )

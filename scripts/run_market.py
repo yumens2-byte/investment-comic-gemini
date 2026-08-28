@@ -282,6 +282,9 @@ def _ensure_narrative_quality_inputs(ctx: dict) -> dict:
             scenario_type=str(rebuilt_ctx.get("scenario_type") or "ONE_VS_ONE"),
             hero_ids=rebuilt_ctx.get("heroes") or ([hero_id] if hero_id else []),
             villain_ids=rebuilt_ctx.get("villain_ids") or ([villain_id] if villain_id else []),
+            neutral_guest_ids=[
+                str(item[0]) for item in rebuilt_ctx.get("_guest_characters") or [] if item
+            ],
         ).model_dump()
 
     return rebuilt_ctx
@@ -1150,6 +1153,7 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                         scenario_type=scenario_type_v2,
                         hero_ids=heroes_v2,
                         villain_ids=villain_ids_v2,
+                        neutral_guest_ids=[c for c, _ in _guest_characters],
                     ).model_dump()
                 logger_inst.info(
                     "STEP_3",
@@ -1218,7 +1222,8 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
         )
 
         strict_continuity = _env_flag_enabled("CONTINUITY_STRICT_ENABLED")
-        max_continuity_attempts = 2 if strict_continuity else 1
+        strict_production = _env_flag_enabled("SERIAL_NARRATIVE_P0_ENABLED")
+        max_continuity_attempts = 2 if (strict_continuity or strict_production) else 1
         continuity_retry_feedback: str | None = None
         script_dict: dict | None = None
         continuity_warnings: list[str] = []
@@ -1268,6 +1273,16 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
                 ctx.get("story_beat_plan"),
                 strict=False,
             )
+            from engine.narrative.production_quality import validate_production_episode
+
+            production_violations = validate_production_episode(
+                script_dict,
+                delta=ctx.get("delta"),
+                context_pack=ctx.get("narrative_context_pack"),
+                story_beat_plan=ctx.get("story_beat_plan"),
+                scenario_type=str(ctx.get("scenario_type") or "ONE_VS_ONE"),
+                serial_required=strict_production,
+            )
             logger_inst.info(
                 "STEP_4",
                 "[StoryContinuity] previous=%s score=%.1f status=%s strict=%s attempt=%d/%d warnings=%d"
@@ -1282,7 +1297,10 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
                 ),
             )
 
-            if not (strict_continuity and continuity_warnings):
+            if not (
+                (strict_continuity and continuity_warnings)
+                or (strict_production and production_violations)
+            ):
                 break
             if continuity_attempt >= max_continuity_attempts:
                 break
@@ -1292,6 +1310,18 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
                 ctx.get("narrative_context_pack"),
                 ctx.get("story_beat_plan"),
             )
+            production_feedback = "\n".join(
+                [
+                    "## PRODUCTION QUALITY RETRY — all violations are mandatory fixes",
+                    *[f"- {item.code}: {item.detail}" for item in production_violations],
+                    "- Return a non-empty next_hook and at least one unresolved/resolved thread.",
+                    "- Follow required_character and scenario panel-type constraints exactly.",
+                    "- Use only evidence-supported numbers, units, and causal statements.",
+                ]
+            ) if production_violations else ""
+            continuity_retry_feedback = "\n\n".join(
+                item for item in (continuity_retry_feedback, production_feedback) if item
+            ) or None
             if not continuity_retry_feedback:
                 break
             logger_inst.warning(
@@ -1311,6 +1341,22 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
         )
         for warning in continuity_warnings:
             logger_inst.warning("STEP_4", f"[StoryContinuity] {warning}")
+
+        from engine.narrative.production_quality import validate_production_episode
+
+        production_violations = validate_production_episode(
+            script_dict,
+            delta=ctx.get("delta"),
+            context_pack=ctx.get("narrative_context_pack"),
+            story_beat_plan=ctx.get("story_beat_plan"),
+            scenario_type=str(ctx.get("scenario_type") or "ONE_VS_ONE"),
+            serial_required=strict_production,
+            strict=strict_production,
+        )
+        for violation in production_violations:
+            logger_inst.warning(
+                "STEP_4", f"[ProductionQuality] {violation.code}: {violation.detail}"
+            )
 
         # 에피소드 JSON 파일 저장 (로그 아카이브)
         ep_dir = Path("output") / "episodes" / episode_date
