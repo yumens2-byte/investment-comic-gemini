@@ -234,6 +234,7 @@ def test_retry_feedback_gives_actionable_fixes_without_enabling_serial_contract(
 
     assert feedback is not None
     assert "ALGORITHM FIX" in feedback
+    assert "ALGORITHM WORDING BAN" in feedback
     assert "ACTION FIX" in feedback
     assert "SERIAL FIX" not in feedback
     assert "next_hook" not in feedback

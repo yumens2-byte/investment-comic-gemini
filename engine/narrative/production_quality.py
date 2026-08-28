@@ -226,6 +226,11 @@ def build_production_retry_feedback(
             "pressured, reversed, recovered, raised, or lowered the market. Describe "
             "only the supplied price/rate observation; do not merely paraphrase the claim."
         )
+        lines.append(
+            "- ALGORITHM WORDING BAN: unless an evidence card explicitly mentions algorithmic "
+            "trading, do not place 'algorithm', '알고리즘', or '알고' in key_text, narration, "
+            "market_ref, or captions at all. This includes fictional metaphors in those fields."
+        )
     if "STATIC_ACTION_STREAK" in codes:
         lines.append(
             "- ACTION FIX: in at least half of non-card panels, replace stand/look/study/"

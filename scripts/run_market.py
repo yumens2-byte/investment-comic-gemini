@@ -149,6 +149,16 @@ def _production_quality_strict_enabled(*, continuity_strict: bool | None = None)
     return bool(continuity_strict) or _env_flag_enabled("SERIAL_NARRATIVE_P0_ENABLED")
 
 
+def _quality_attempt_limit(*, continuity_strict: bool, production_strict: bool) -> int:
+    """Give independent strict gates one repair opportunity apiece.
+
+    A shared two-attempt loop lets a continuity repair consume the only retry,
+    even when that response still has a production-only violation.  The third
+    attempt is only a ceiling: the loop still exits as soon as both gates pass.
+    """
+    return 1 + int(continuity_strict) + int(production_strict)
+
+
 _CONTINUITY_FLAG_NAMES = (
     "NARRATIVE_CONTEXT_ENABLED",
     "STORY_PLANNER_ENABLED",
@@ -1241,12 +1251,15 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
         # Serial fields are a separate rollout contract. Continuity strict keeps
         # factual/action quality fail-closed, but must not silently enable P0.
         serial_required = _env_flag_enabled("SERIAL_NARRATIVE_P0_ENABLED")
-        max_continuity_attempts = 2 if (strict_continuity or strict_production) else 1
+        max_quality_attempts = _quality_attempt_limit(
+            continuity_strict=strict_continuity,
+            production_strict=strict_production,
+        )
         continuity_retry_feedback: str | None = None
         script_dict: dict | None = None
         continuity_warnings: list[str] = []
 
-        for continuity_attempt in range(1, max_continuity_attempts + 1):
+        for continuity_attempt in range(1, max_quality_attempts + 1):
             script = generate_episode(
                 date=episode_date,
                 episode_id=episode_id,
@@ -1320,7 +1333,7 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
                     script_dict["_continuity_quality"].get("status"),
                     strict_continuity,
                     continuity_attempt,
-                    max_continuity_attempts,
+                    max_quality_attempts,
                     len(continuity_warnings),
                 ),
             )
@@ -1330,7 +1343,7 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
                 % (
                     strict_production,
                     continuity_attempt,
-                    max_continuity_attempts,
+                    max_quality_attempts,
                     script_dict["_production_quality"]["status"],
                     ",".join(script_dict["_production_quality"]["violation_codes"])
                     or "none",
@@ -1342,7 +1355,7 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
                 or (strict_production and production_violations)
             ):
                 break
-            if continuity_attempt >= max_continuity_attempts:
+            if continuity_attempt >= max_quality_attempts:
                 break
 
             continuity_retry_feedback = build_continuity_retry_feedback(
