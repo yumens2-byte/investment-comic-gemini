@@ -13,7 +13,10 @@ from engine.image.performance_schema import (
     StagingSpec,
     VisualContinuityState,
 )
-from engine.image.performance_validator import validate_panel_performance
+from engine.image.performance_validator import (
+    validate_episode_performance,
+    validate_panel_performance,
+)
 from engine.image.prompt_builder import build_panel_prompt
 
 
@@ -93,6 +96,21 @@ def test_episode_compiler_carries_visual_state_forward() -> None:
 
     assert specs[1].entering_state.location == "Wall Street canyon"
     assert specs[1].entering_state.character_positions["CHAR_HERO_001"] == "LEFT"
+
+
+def test_episode_validator_rejects_unexplained_prop_repair() -> None:
+    first = _panel("Hero punches the villain")
+    first["idx"] = 1
+    second = _panel("Hero punches the villain")
+    second["idx"] = 2
+    specs = compile_episode_performance({"panels": [first, second]})
+    specs[0].exiting_state = VisualContinuityState(prop_states={"shield": "broken"})
+    specs[1].entering_state = VisualContinuityState(prop_states={"shield": "intact"})
+
+    result = validate_episode_performance({"panels": [first, second]}, specs)
+
+    assert result.status == "FAIL"
+    assert "PERF_E_PROP_DISCONTINUITY" in {issue.code for issue in result.issues}
 
 
 def test_performance_prompt_contains_hard_action_contract(monkeypatch) -> None:

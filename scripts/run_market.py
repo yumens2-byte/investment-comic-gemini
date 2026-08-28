@@ -728,7 +728,24 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
             if scenario_type_v2 == "NO_BATTLE":
                 from engine.narrative.character_selector import select_for_no_battle
 
-                hero_id, _no_villain = select_for_no_battle(delta)
+                _serial_p0 = os.environ.get("SERIAL_NARRATIVE_P0_ENABLED", "false").lower() == "true"
+                _cast_history = None
+                if _serial_p0:
+                    from engine.narrative.continuity import load_continuity_window
+
+                    _cast_history = load_continuity_window(episode_date, limit=10).get(
+                        "cast_history"
+                    )
+                if _cast_history:
+                    hero_id, _no_villain, _cast_trace = select_for_no_battle(
+                        delta, cast_history=_cast_history, return_trace=True
+                    )
+                    character_selection_trace = {
+                        "version": "serial-casting-p0",
+                        **_cast_trace,
+                    }
+                else:
+                    hero_id, _no_villain = select_for_no_battle(delta)
                 villain_id = villain_id_base  # analysis_upsert용 유지 (None 방어)
                 heroes_v2 = [hero_id]
                 villain_ids_v2 = []
@@ -1096,6 +1113,24 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                     sector_heatmap=(curr_row.get("sector_heatmap") if _extended_context else None),
                 )
                 if _continuity_window.get("recent_threads"):
+                    _context_pack["continuity_window"] = _continuity_window
+                if os.environ.get("SERIAL_NARRATIVE_P0_ENABLED", "false").lower() == "true":
+                    from engine.narrative.serial_contracts import (
+                        build_villain_reader_card,
+                        validate_canon_mirrors,
+                    )
+
+                    _mirror_errors = validate_canon_mirrors(canon)
+                    if _mirror_errors:
+                        logger_inst.warning(
+                            "STEP_3", "[SerialP0] canon mirror warnings: " + "; ".join(_mirror_errors)
+                        )
+                    _recent_villains = _continuity_window.get("recurring_villains") or []
+                    _context_pack["villain_reader_card"] = build_villain_reader_card(
+                        canon,
+                        None if scenario_type_v2 == "NO_BATTLE" else villain_id,
+                        recently_seen=villain_id in _recent_villains,
+                    )
                     _context_pack["continuity_window"] = _continuity_window
                 if _arc_pivot.get("pivot_required"):
                     _context_pack["arc_pivot"] = _arc_pivot
