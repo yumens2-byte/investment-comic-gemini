@@ -1220,6 +1220,26 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
         from engine.narrative.claude_client import generate_episode
 
         ctx = _ensure_narrative_quality_inputs(ctx)
+
+        # ── Gate precedence: production(사실성) > continuity(연속성) ──────────
+        # 이전 회차 hook/beat plan이 evidence 미지원 알고리즘 인과 문구를 담고
+        # 있으면 프롬프트·연속성 스코어러·재시도 피드백에 도달하기 전에 중립화.
+        # (2026-08-29: strict continuity가 금지 문구 인용을 강제하여 strict
+        # production과 데드락 → 3회 소진 후 파이프라인 실패 재발 방지)
+        from engine.narrative.production_quality import sanitize_continuity_context
+
+        _s_pack, _s_plan, _sanitize_changes = sanitize_continuity_context(
+            ctx.get("narrative_context_pack"), ctx.get("story_beat_plan")
+        )
+        if _sanitize_changes:
+            ctx["narrative_context_pack"] = _s_pack
+            ctx["story_beat_plan"] = _s_plan
+            logger_inst.warning(
+                "STEP_4",
+                "[ContinuitySanitizer] evidence 미지원 알고리즘 인과 문구 중립화: %s"
+                % ",".join(_sanitize_changes),
+            )
+
         quality = _validate_narrative_quality_inputs(ctx)
         logger_inst.info(
             "STEP_4",
@@ -1315,7 +1335,7 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
                 serial_required=serial_required,
             )
             script_dict["_production_quality"] = {
-                "version": "production-quality-2",
+                "version": "production-quality-3",
                 "strict_enabled": strict_production,
                 "status": "pass" if not production_violations else "fail",
                 "violation_codes": [item.code for item in production_violations],

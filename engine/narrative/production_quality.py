@@ -23,6 +23,16 @@ _CAUSAL_ALGO_RE = re.compile(
     r"(?:방향을\s*바|압력|주도|움직|반등시|하락시|회복시|order flow)",
     re.IGNORECASE,
 )
+# Canon-locked fictional character names must never be treated as factual
+# algorithmic-trading causality claims (2026-08-29 incident: character-name
+# false positives can deadlock strict continuity vs. strict production gates).
+_CANON_ALGO_NAME_RE = re.compile(r"알고리즘\s*리퍼|Algorithm\s*Reaper", re.IGNORECASE)
+_ALGO_TOKEN_RE = re.compile(r"알고리즘|algorithmic|algorithms|algorithm", re.IGNORECASE)
+
+
+def _mask_canon_names(text: str) -> str:
+    """Replace canon algo-themed character names so causality checks skip them."""
+    return _CANON_ALGO_NAME_RE.sub("리퍼", text)
 _STATIC_ACTIONS = ("stand", "look", "study", "read", "watch", "sit")
 _THREAD_PLACEHOLDER_RE = re.compile(
     r"(?:Previous battle outcome remains unresolved emotionally|"
@@ -60,6 +70,108 @@ def _has_algo_evidence(context_pack: dict[str, Any] | None) -> bool:
         for value in item.values()
     ).lower()
     return any(term in evidence for term in ("algorithmic trading", "algo trading", "알고리즘 거래", "알고 트레이딩"))
+
+
+def has_algo_evidence(context_pack: dict[str, Any] | None) -> bool:
+    """Public wrapper: does today's evidence support algorithmic causality claims?"""
+    return _has_algo_evidence(context_pack)
+
+
+def neutralize_algo_causality(text: str) -> str:
+    """Rewrite algorithm-actor wording to a neutral market actor.
+
+    Used on continuity metadata (previous next_hook, beat-plan payoff text) so a
+    legacy hook can never force today's copy into an UNSUPPORTED_ALGORITHM_CAUSALITY
+    violation. Canon character names (알고리즘 리퍼 / Algorithm Reaper) are preserved
+    verbatim because they are fiction, not market claims.
+    """
+    if not text:
+        return text
+    stash: list[str] = []
+
+    def _protect(match: re.Match[str]) -> str:
+        stash.append(match.group(0))
+        return f"\x00{len(stash) - 1}\x00"
+
+    masked = _CANON_ALGO_NAME_RE.sub(_protect, text)
+    masked = _ALGO_TOKEN_RE.sub(
+        lambda m: "시장" if m.group(0) == "알고리즘" else "market", masked
+    )
+    for index, original in enumerate(stash):
+        masked = masked.replace(f"\x00{index}\x00", original)
+    return masked
+
+
+def sanitize_continuity_context(
+    context_pack: dict[str, Any] | None,
+    story_beat_plan: dict[str, Any] | None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None, list[str]]:
+    """Neutralize evidence-unsupported algorithm causality in continuity inputs.
+
+    Gate precedence is factual accuracy (production) over continuity: when today's
+    evidence does not support algorithmic causality, any such wording inherited from
+    the previous episode's hook or embedded in the beat plan is rewritten BEFORE it
+    reaches the prompt, the continuity scorer, and the retry feedback — so the two
+    strict gates can never issue contradictory instructions (2026-08-29 deadlock).
+
+    Returns (sanitized_pack, sanitized_plan, change_labels). Inputs are not mutated;
+    deep copies are returned only when a change was actually required.
+    """
+    if _has_algo_evidence(context_pack):
+        return context_pack, story_beat_plan, []
+
+    import copy
+
+    changes: list[str] = []
+
+    def _fix(container: dict[str, Any], key: str, label: str) -> None:
+        value = container.get(key)
+        if isinstance(value, str):
+            replaced = neutralize_algo_causality(value)
+            if replaced != value:
+                container[key] = replaced
+                changes.append(label)
+        elif isinstance(value, list):
+            replaced_list: list[Any] = []
+            changed = False
+            for item in value:
+                if isinstance(item, str):
+                    replaced_item = neutralize_algo_causality(item)
+                    changed = changed or replaced_item != item
+                    replaced_list.append(replaced_item)
+                else:
+                    replaced_list.append(item)
+            if changed:
+                container[key] = replaced_list
+                changes.append(label)
+
+    pack = copy.deepcopy(context_pack) if isinstance(context_pack, dict) else context_pack
+    plan = copy.deepcopy(story_beat_plan) if isinstance(story_beat_plan, dict) else story_beat_plan
+
+    if isinstance(pack, dict):
+        previous = pack.get("previous_episode")
+        if isinstance(previous, dict):
+            for key in ("next_hook", "must_continue_from", "final_panel_summary"):
+                _fix(previous, key, f"previous_episode.{key}")
+            for key in ("unresolved_threads", "resolved_threads"):
+                _fix(previous, key, f"previous_episode.{key}")
+            for index, thread in enumerate(previous.get("structured_threads") or []):
+                if isinstance(thread, dict):
+                    _fix(
+                        thread,
+                        "promise",
+                        f"previous_episode.structured_threads[{index}].promise",
+                    )
+
+    if isinstance(plan, dict):
+        for index, beat in enumerate(plan.get("panel_beats") or []):
+            if isinstance(beat, dict):
+                _fix(beat, "dialogue_intent", f"panel_beats[{index}].dialogue_intent")
+                _fix(beat, "continuity_payoff", f"panel_beats[{index}].continuity_payoff")
+
+    if not changes:
+        return context_pack, story_beat_plan, []
+    return pack, plan, changes
 
 
 def validate_production_episode(
@@ -109,7 +221,7 @@ def validate_production_episode(
 
     if not _has_algo_evidence(context_pack):
         for location, text in story_text:
-            if _CAUSAL_ALGO_RE.search(text):
+            if _CAUSAL_ALGO_RE.search(_mask_canon_names(text)):
                 violations.append(
                     ProductionViolation(
                         "UNSUPPORTED_ALGORITHM_CAUSALITY",

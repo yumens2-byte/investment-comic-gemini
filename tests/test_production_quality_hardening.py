@@ -238,3 +238,103 @@ def test_retry_feedback_gives_actionable_fixes_without_enabling_serial_contract(
     assert "ACTION FIX" in feedback
     assert "SERIAL FIX" not in feedback
     assert "next_hook" not in feedback
+
+
+def test_canon_character_name_is_not_flagged_as_algorithm_causality() -> None:
+    script = {
+        "panels": [
+            {
+                "idx": 1,
+                "panel_type": "AFTERMATH",
+                "characters": [{"char_id": "CHAR_VILLAIN_005"}],
+                "action": "Reaper crosses the trading floor.",
+                "narration": "알고리즘 리퍼가 남긴 그림자가 시장을 움직이는 듯했다.",
+            }
+        ],
+    }
+
+    violations = validate_production_episode(script, context_pack={"top_evidence": []})
+
+    assert "UNSUPPORTED_ALGORITHM_CAUSALITY" not in {item.code for item in violations}
+
+
+def test_plain_algorithm_causality_still_rejected_without_evidence() -> None:
+    script = {
+        "panels": [
+            {
+                "idx": 1,
+                "panel_type": "AFTERMATH",
+                "characters": [{"char_id": "CHAR_HERO_001"}],
+                "action": "EDT marks the board.",
+                "narration": "알고리즘 매매가 지수 하락시켰다.",
+            }
+        ],
+    }
+
+    violations = validate_production_episode(script, context_pack={"top_evidence": []})
+
+    assert "UNSUPPORTED_ALGORITHM_CAUSALITY" in {item.code for item in violations}
+
+
+def test_sanitizer_neutralizes_unsupported_hook_and_beat_plan() -> None:
+    from engine.narrative.production_quality import sanitize_continuity_context
+
+    hook = "① NASDAQ·SPY 하락: 알고리즘 압력 구간, 분산 포트폴리오 점검 필요"
+    pack = {
+        "top_evidence": [{"value": "SPY +0.15%"}],
+        "previous_episode": {
+            "next_hook": hook,
+            "must_continue_from": hook,
+            "final_panel_summary": hook,
+            "unresolved_threads": [hook],
+            "structured_threads": [{"promise": hook}],
+        },
+    }
+    plan = {
+        "panel_beats": [
+            {"panel_idx": 1, "dialogue_intent": f"pay off: {hook}", "continuity_payoff": hook}
+        ]
+    }
+
+    s_pack, s_plan, changes = sanitize_continuity_context(pack, plan)
+
+    assert changes
+    previous = s_pack["previous_episode"]
+    assert "알고리즘" not in previous["next_hook"]
+    assert "매도 압력" not in previous["next_hook"]  # 결정적 치환은 '시장'으로 통일
+    assert "시장 압력" in previous["next_hook"]
+    assert "알고리즘" not in s_plan["panel_beats"][0]["continuity_payoff"]
+    assert "알고리즘" not in previous["structured_threads"][0]["promise"]
+    # 원본 불변 (deep copy 반환)
+    assert "알고리즘" in pack["previous_episode"]["next_hook"]
+
+
+def test_sanitizer_is_noop_when_evidence_supports_algorithm() -> None:
+    from engine.narrative.production_quality import sanitize_continuity_context
+
+    pack = {
+        "top_evidence": [{"value": "algorithmic trading volume spike"}],
+        "previous_episode": {"next_hook": "알고리즘 압력 구간"},
+    }
+
+    s_pack, s_plan, changes = sanitize_continuity_context(pack, None)
+
+    assert changes == []
+    assert s_pack is pack
+    assert s_plan is None
+
+
+def test_sanitizer_preserves_canon_character_name() -> None:
+    from engine.narrative.production_quality import sanitize_continuity_context
+
+    pack = {
+        "top_evidence": [],
+        "previous_episode": {"next_hook": "알고리즘 리퍼는 알고리즘 압력의 배후였다."},
+    }
+
+    s_pack, _, changes = sanitize_continuity_context(pack, None)
+
+    hook = s_pack["previous_episode"]["next_hook"]
+    assert changes
+    assert "알고리즘 리퍼" in hook
+    assert hook == "알고리즘 리퍼는 시장 압력의 배후였다."

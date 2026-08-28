@@ -34,8 +34,11 @@ def _final_story_panel(script_dict: dict[str, Any]) -> dict[str, Any]:
     panels = script_dict.get("panels") if isinstance(script_dict, dict) else []
     if not isinstance(panels, list) or not panels:
         return {}
+    # TEXT_CARD (e.g. "오늘의 시장 인사이트" summary cards) is operational copy,
+    # not story state. Promoting it to next_hook seeded the 2026-08-29 gate
+    # deadlock, so both card types are excluded from continuity seeding.
     for panel in reversed(panels):
-        if isinstance(panel, dict) and panel.get("panel_type") != "DISCLAIMER":
+        if isinstance(panel, dict) and panel.get("panel_type") not in ("DISCLAIMER", "TEXT_CARD"):
             return panel
     return panels[-1] if isinstance(panels[-1], dict) else {}
 
@@ -78,6 +81,21 @@ def build_continuity_bundle(
     unresolved_threads = _derive_threads(script_dict, ctx)
     if not unresolved_threads and next_hook:
         unresolved_threads = [next_hook]
+
+    # Publish-time guard: next_hook becomes a MANDATORY constraint for the next
+    # episode's strict continuity gate, but is itself outside the production
+    # quality gate's validated fields. Never persist algorithm-causality wording
+    # into the seed unless today's evidence supports it — otherwise tomorrow's
+    # run inherits an unsatisfiable contract (2026-08-29 incident).
+    from engine.narrative.production_quality import (
+        has_algo_evidence,
+        neutralize_algo_causality,
+    )
+
+    if not has_algo_evidence(ctx.get("narrative_context_pack")):
+        next_hook = neutralize_algo_causality(next_hook)
+        final_summary = neutralize_algo_causality(final_summary)
+        unresolved_threads = [neutralize_algo_causality(item) for item in unresolved_threads]
     from engine.narrative.serial_contracts import normalize_thread
 
     structured_threads = [

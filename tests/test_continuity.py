@@ -144,3 +144,62 @@ def test_detect_arc_pivot_requires_explanation_for_villain_change() -> None:
     assert pivot["pivot_required"] is True
     assert "active_villain_changed" in pivot["pivot_reasons"]
     assert "arc_tension_jump" in pivot["pivot_reasons"]
+
+
+def test_final_story_panel_skips_text_card_and_disclaimer() -> None:
+    script = _script()
+    script["panels"] = [
+        {"idx": 1, "panel_type": "COVER", "narration": "균열이 열렸다."},
+        {"idx": 6, "panel_type": "AFTERMATH", "narration": "문은 아직 닫히지 않았다."},
+        {"idx": 7, "panel_type": "TEXT_CARD", "narration": "① 오늘의 시장 인사이트 요약"},
+        {"idx": 8, "panel_type": "DISCLAIMER", "narration": "투자 권유가 아닙니다."},
+    ]
+
+    bundle = build_continuity_bundle(
+        "ICG-2026-08-29-001",
+        "2026-08-29",
+        {"event_type": "INTEL", "scenario_type": "NO_BATTLE", "heroes": ["CHAR_HERO_001"]},
+        script,
+    )
+
+    assert bundle["next_hook"] == "문은 아직 닫히지 않았다."
+    assert bundle["final_panel_summary"] == "문은 아직 닫히지 않았다."
+
+
+def test_bundle_neutralizes_unsupported_algorithm_causality_in_hook() -> None:
+    script = _script()
+    script["panels"][1]["narration"] = "알고리즘 압력 구간이 계속된다."
+
+    bundle = build_continuity_bundle(
+        "ICG-2026-08-29-001",
+        "2026-08-29",
+        {
+            "event_type": "INTEL",
+            "scenario_type": "NO_BATTLE",
+            "heroes": ["CHAR_HERO_001"],
+            "narrative_context_pack": {"top_evidence": [{"value": "SPY +0.15%"}]},
+        },
+        script,
+    )
+
+    assert bundle["next_hook"] == "시장 압력 구간이 계속된다."
+    assert all("알고리즘" not in item for item in bundle["unresolved_threads"])
+
+
+def test_bundle_keeps_algorithm_wording_when_evidence_supports_it() -> None:
+    script = _script()
+    script["panels"][1]["narration"] = "알고리즘 거래 물량이 압력을 만들었다."
+
+    bundle = build_continuity_bundle(
+        "ICG-2026-08-29-001",
+        "2026-08-29",
+        {
+            "event_type": "INTEL",
+            "scenario_type": "NO_BATTLE",
+            "heroes": ["CHAR_HERO_001"],
+            "narrative_context_pack": {"top_evidence": [{"value": "알고리즘 거래 급증"}]},
+        },
+        script,
+    )
+
+    assert bundle["next_hook"] == "알고리즘 거래 물량이 압력을 만들었다."
