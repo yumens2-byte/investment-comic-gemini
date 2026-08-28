@@ -122,11 +122,13 @@ def _trim_str(text: str, max_len: int) -> str:
     if len(text) <= max_len:
         return text
     truncated = text[: max_len - 1]
-    # 마지막 문장 부호 기준으로 자름
-    for sep in (".", "。", "!", "?", "다", "요"):
-        idx = truncated.rfind(sep)
-        if idx > max_len // 2:
-            return truncated[: idx + 1]
+    # Decimal points are not sentence boundaries. The former rfind(".") could
+    # turn a long market sentence into the misleading fragment "BTC +1.".
+    sentence_ends = list(
+        re.finditer(r"(?:[.!?。](?=\s|$)|[다요](?=[.!?。]?\s|$))", truncated)
+    )
+    if sentence_ends and sentence_ends[-1].end() > max_len // 2:
+        return truncated[: sentence_ends[-1].end()].rstrip()
     return truncated + "…"
 
 

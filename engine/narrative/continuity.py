@@ -49,12 +49,9 @@ def _derive_threads(script_dict: dict[str, Any], ctx: dict[str, Any]) -> list[st
         text = str(thread).strip()
         if text:
             threads.append(text)
-    outcome = (ctx.get("battle_result") or {}).get("outcome")
-    villain = ctx.get("villain_id")
-    if outcome:
-        threads.append(f"Previous battle outcome remains unresolved emotionally: {outcome}.")
-    if villain:
-        threads.append(f"Track continuing pressure from villain {villain}.")
+    # Never manufacture reader-facing threads from operational outcome/villain
+    # fields. These English placeholders leaked into generated scripts and even
+    # introduced villain pressure in NO_BATTLE episodes.
     # Preserve order while removing duplicates/empties.
     result: list[str] = []
     for item in threads:
@@ -79,6 +76,8 @@ def build_continuity_bundle(
         next_hook = final_summary
 
     unresolved_threads = _derive_threads(script_dict, ctx)
+    if not unresolved_threads and next_hook:
+        unresolved_threads = [next_hook]
     from engine.narrative.serial_contracts import normalize_thread
 
     structured_threads = [

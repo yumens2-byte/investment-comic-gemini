@@ -3,6 +3,7 @@ import pytest
 from scripts.run_market import (
     _ensure_narrative_quality_inputs,
     _feature_flag_snapshot,
+    _production_quality_strict_enabled,
     _record_context_error,
     _validate_narrative_quality_inputs,
 )
@@ -79,8 +80,15 @@ def test_feature_flag_snapshot_captures_continuity_flags(monkeypatch) -> None:
     assert snapshot["EPISODE_TYPE_V3_ENABLED"] is True
 
 
-def test_feature_flag_snapshot_captures_all_11_flags(monkeypatch) -> None:
-    """관측성 확장(2026-06-30): 11개 플래그 전부 기록 + scenario/battle 값 검증."""
+def test_continuity_strict_also_makes_production_quality_fail_closed(monkeypatch) -> None:
+    monkeypatch.setenv("SERIAL_NARRATIVE_P0_ENABLED", "false")
+
+    assert _production_quality_strict_enabled(continuity_strict=True) is True
+    assert _production_quality_strict_enabled(continuity_strict=False) is False
+
+
+def test_feature_flag_snapshot_captures_all_12_flags(monkeypatch) -> None:
+    """관측성 확장: production strict flag를 포함한 전체 플래그를 기록한다."""
     all_flags = [
         "NARRATIVE_CONTEXT_ENABLED",
         "STORY_PLANNER_ENABLED",
@@ -93,6 +101,7 @@ def test_feature_flag_snapshot_captures_all_11_flags(monkeypatch) -> None:
         "CROWD_MODIFIER_ENABLED",
         "VILLAIN_SIGNATURE_BONUS_ENABLED",
         "EMERGENCE_DEFICIT_ENABLED",
+        "SERIAL_NARRATIVE_P0_ENABLED",
     ]
     for name in all_flags:
         monkeypatch.setenv(name, "true")
@@ -100,7 +109,7 @@ def test_feature_flag_snapshot_captures_all_11_flags(monkeypatch) -> None:
 
     snapshot = _feature_flag_snapshot()
 
-    # 11개 키 전부 기록
+    # 12개 키 전부 기록
     assert set(snapshot.keys()) == set(all_flags)
     # scenario/battle 6개 값 정확성
     assert snapshot["SCENARIO_V2_ENABLED"] is True
@@ -109,6 +118,7 @@ def test_feature_flag_snapshot_captures_all_11_flags(monkeypatch) -> None:
     assert snapshot["CROWD_MODIFIER_ENABLED"] is True
     assert snapshot["VILLAIN_SIGNATURE_BONUS_ENABLED"] is True
     assert snapshot["EMERGENCE_DEFICIT_ENABLED"] is True
+    assert snapshot["SERIAL_NARRATIVE_P0_ENABLED"] is True
 
 
 def test_quality_inputs_rebuild_from_core_ctx_when_enabled(monkeypatch) -> None:

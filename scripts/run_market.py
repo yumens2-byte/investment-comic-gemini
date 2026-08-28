@@ -142,16 +142,24 @@ def _env_flag_enabled(name: str) -> bool:
     return os.environ.get(name, "false").strip().lower() == "true"
 
 
+def _production_quality_strict_enabled(*, continuity_strict: bool | None = None) -> bool:
+    """Production violations are fail-closed whenever continuity is strict."""
+    if continuity_strict is None:
+        continuity_strict = _env_flag_enabled("CONTINUITY_STRICT_ENABLED")
+    return bool(continuity_strict) or _env_flag_enabled("SERIAL_NARRATIVE_P0_ENABLED")
+
+
 _CONTINUITY_FLAG_NAMES = (
     "NARRATIVE_CONTEXT_ENABLED",
     "STORY_PLANNER_ENABLED",
     "CONTINUITY_STRICT_ENABLED",
     "ARC_STATE_V3_ENABLED",
     "EPISODE_TYPE_V3_ENABLED",
+    "SERIAL_NARRATIVE_P0_ENABLED",
 )
 
 # scenario/battle 파이프라인 플래그 (관측성 확장 2026-06-30):
-# run_market.yml env 블록에 매핑된 6개. continuity 5개와 합쳐 전체 11개를 audit.
+# run_market.yml env 블록에 매핑된 6개. continuity/serial 6개와 합쳐 12개를 audit.
 _SCENARIO_BATTLE_FLAG_NAMES = (
     "SCENARIO_V2_ENABLED",
     "NARRATIVE_DEPTH_ENABLED",
@@ -161,15 +169,15 @@ _SCENARIO_BATTLE_FLAG_NAMES = (
     "EMERGENCE_DEFICIT_ENABLED",
 )
 
-# 전체 11개 플래그 (rollout audit). 기존 continuity 5개 키는 모두 보존(상위호환).
+# 전체 12개 플래그 (rollout audit). 기존 키는 모두 보존(상위호환).
 _ALL_FEATURE_FLAG_NAMES = _CONTINUITY_FLAG_NAMES + _SCENARIO_BATTLE_FLAG_NAMES
 
 
 def _feature_flag_snapshot() -> dict[str, bool]:
-    """Capture all 11 feature flags for cross-stage diagnostics and rollout audit.
+    """Capture all 12 feature flags for cross-stage diagnostics and rollout audit.
 
-    확장(2026-06-30): 기존 continuity 5개 → 전체 11개(continuity 5 + scenario/battle 6).
-    기존 5개 키는 모두 보존하므로 상위호환이며, analysis_ctx_json(JSONB)에 저장되어
+    확장: continuity/serial 6개 + scenario/battle 6개의 전체 12개를 기록한다.
+    기존 키는 모두 보존하므로 상위호환이며, analysis_ctx_json(JSONB)에 저장되어
     DB 스키마 변경은 없다. '전부-true' 운영을 데이터로 검증하기 위한 관측성 확장.
     """
     return {name: _env_flag_enabled(name) for name in _ALL_FEATURE_FLAG_NAMES}
@@ -1222,7 +1230,14 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
         )
 
         strict_continuity = _env_flag_enabled("CONTINUITY_STRICT_ENABLED")
-        strict_production = _env_flag_enabled("SERIAL_NARRATIVE_P0_ENABLED")
+        # Continuity strict is the production rollout's fail-closed umbrella.
+        # The 2026-08-28 run had continuity strict enabled but omitted the new
+        # serial flag from workflow env, so five production violations were
+        # logged and then persisted.  Never downgrade them to warnings in a
+        # strict continuity run.
+        strict_production = _production_quality_strict_enabled(
+            continuity_strict=strict_continuity
+        )
         max_continuity_attempts = 2 if (strict_continuity or strict_production) else 1
         continuity_retry_feedback: str | None = None
         script_dict: dict | None = None
@@ -1283,6 +1298,16 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
                 scenario_type=str(ctx.get("scenario_type") or "ONE_VS_ONE"),
                 serial_required=strict_production,
             )
+            script_dict["_production_quality"] = {
+                "version": "production-quality-2",
+                "strict_enabled": strict_production,
+                "status": "pass" if not production_violations else "fail",
+                "violation_codes": [item.code for item in production_violations],
+                "violations": [
+                    {"code": item.code, "detail": item.detail}
+                    for item in production_violations
+                ],
+            }
             logger_inst.info(
                 "STEP_4",
                 "[StoryContinuity] previous=%s score=%.1f status=%s strict=%s attempt=%d/%d warnings=%d"
@@ -1294,6 +1319,18 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
                     continuity_attempt,
                     max_continuity_attempts,
                     len(continuity_warnings),
+                ),
+            )
+            logger_inst.info(
+                "STEP_4",
+                "[ProductionQuality] strict=%s attempt=%d/%d status=%s violations=%s"
+                % (
+                    strict_production,
+                    continuity_attempt,
+                    max_continuity_attempts,
+                    script_dict["_production_quality"]["status"],
+                    ",".join(script_dict["_production_quality"]["violation_codes"])
+                    or "none",
                 ),
             )
 
@@ -1324,10 +1361,18 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
             ) or None
             if not continuity_retry_feedback:
                 break
+            continuity_reasons = list(
+                script_dict["_continuity_quality"].get("missing_requirements") or []
+            )
+            if strict_continuity and continuity_warnings and not continuity_reasons:
+                continuity_reasons.append("continuity_score_below_threshold")
+            retry_reasons = continuity_reasons + [
+                item.code for item in production_violations
+            ]
             logger_inst.warning(
                 "STEP_4",
-                "[StoryContinuity] strict retry requested: %s"
-                % ",".join(script_dict["_continuity_quality"].get("missing_requirements") or []),
+                "[QualityRetry] strict retry requested: %s"
+                % (",".join(dict.fromkeys(retry_reasons)) or "unspecified_quality_failure"),
             )
 
         if script_dict is None:

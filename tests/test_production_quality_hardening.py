@@ -181,3 +181,41 @@ def test_registered_neutral_guest_is_accepted_as_npc() -> None:
     )
 
     _validate_canon(script, scenario_type="NO_BATTLE")
+
+
+def test_gate_rejects_operational_thread_placeholders_and_truncated_decimal() -> None:
+    violations = validate_production_episode(
+        {
+            "next_hook": "다음 감정 임계점을 확인한다",
+            "unresolved_threads": ["Track continuing pressure from villain CHAR_VILLAIN_004"],
+            "resolved_threads": [
+                "Previous battle outcome remains unresolved emotionally: PEACEFUL_GROWTH."
+            ],
+            "panels": [
+                {
+                    "idx": 7,
+                    "panel_type": "TEXT_CARD",
+                    "characters": [],
+                    "action": "Cards appear.",
+                    "narration": "VIX -6.08%, BTC +1.",
+                }
+            ],
+        },
+        scenario_type="NO_BATTLE",
+        serial_required=True,
+    )
+
+    codes = {item.code for item in violations}
+    assert "SYNTHETIC_THREAD_PLACEHOLDER" in codes
+    assert "NO_BATTLE_VILLAIN_THREAD" in codes
+    assert "TRUNCATED_NUMERIC_SENTENCE" in codes
+
+
+def test_trim_does_not_treat_decimal_point_as_sentence_boundary() -> None:
+    from engine.narrative.claude_client import _trim_str
+
+    text = "시장 요약 " + ("흐름 " * 30) + "BTC +1.28% 상승 신호를 계속 확인한다"
+    trimmed = _trim_str(text, 120)
+
+    assert not trimmed.endswith("+1.")
+    assert trimmed.endswith("…")

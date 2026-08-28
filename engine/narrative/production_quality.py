@@ -24,6 +24,12 @@ _CAUSAL_ALGO_RE = re.compile(
     re.IGNORECASE,
 )
 _STATIC_ACTIONS = ("stand", "look", "study", "read", "watch", "sit")
+_THREAD_PLACEHOLDER_RE = re.compile(
+    r"(?:Previous battle outcome remains unresolved emotionally|"
+    r"Track continuing pressure from villain\s+CHAR_|\bPEACEFUL_GROWTH\b)",
+    re.IGNORECASE,
+)
+_DANGLING_DECIMAL_RE = re.compile(r"(?:^|\s)[+-]?\d+\.$")
 
 
 def _all_story_text(script: dict[str, Any]) -> list[tuple[str, str]]:
@@ -147,6 +153,34 @@ def validate_production_episode(
         if not (script.get("unresolved_threads") or script.get("resolved_threads")):
             violations.append(
                 ProductionViolation("SERIAL_THREAD_LEDGER_EMPTY", "no unresolved/resolved thread")
+            )
+        for field in ("unresolved_threads", "resolved_threads"):
+            for idx, thread in enumerate(script.get(field) or []):
+                text = str(thread).strip()
+                if _THREAD_PLACEHOLDER_RE.search(text):
+                    violations.append(
+                        ProductionViolation(
+                            "SYNTHETIC_THREAD_PLACEHOLDER",
+                            f"{field}[{idx}] is operational boilerplate, not a story state",
+                        )
+                    )
+                if scenario_type == "NO_BATTLE" and re.search(
+                    r"villain\s+CHAR_VILLAIN_", text, re.IGNORECASE
+                ):
+                    violations.append(
+                        ProductionViolation(
+                            "NO_BATTLE_VILLAIN_THREAD",
+                            f"{field}[{idx}] introduces villain pressure in NO_BATTLE",
+                        )
+                    )
+
+    for location, text in story_text:
+        if _DANGLING_DECIMAL_RE.search(text.strip()):
+            violations.append(
+                ProductionViolation(
+                    "TRUNCATED_NUMERIC_SENTENCE",
+                    f"{location} ends at an incomplete decimal token",
+                )
             )
 
     action_roots: list[set[str]] = []
