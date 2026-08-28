@@ -203,3 +203,22 @@ def test_bundle_keeps_algorithm_wording_when_evidence_supports_it() -> None:
     )
 
     assert bundle["next_hook"] == "알고리즘 거래 물량이 압력을 만들었다."
+
+
+def test_derive_threads_drops_operational_placeholders() -> None:
+    script = _script()
+    script["next_hook"] = "문 뒤의 발소리는 누구의 것인가."
+    script["unresolved_threads"] = [
+        "Previous battle outcome remains unresolved emotionally: PEACEFUL_GROWTH.",
+        "EDT가 남긴 메모의 의미",
+        "Track continuing pressure from villain CHAR_VILLAIN_004.",
+    ]
+
+    bundle = build_continuity_bundle(
+        "ICG-2026-08-29-001",
+        "2026-08-29",
+        {"event_type": "INTEL", "scenario_type": "NO_BATTLE", "heroes": ["CHAR_HERO_001"]},
+        script,
+    )
+
+    assert bundle["unresolved_threads"] == ["문 뒤의 발소리는 누구의 것인가.", "EDT가 남긴 메모의 의미"]

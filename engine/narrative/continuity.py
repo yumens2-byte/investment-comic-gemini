@@ -55,10 +55,14 @@ def _derive_threads(script_dict: dict[str, Any], ctx: dict[str, Any]) -> list[st
     # Never manufacture reader-facing threads from operational outcome/villain
     # fields. These English placeholders leaked into generated scripts and even
     # introduced villain pressure in NO_BATTLE episodes.
-    # Preserve order while removing duplicates/empties.
+    # Preserve order while removing duplicates/empties, and drop any surviving
+    # operational placeholder so it can never become tomorrow's mandatory seed
+    # (2026-08-29 #2: legacy placeholder threads deadlocked serial-strict runs).
+    from engine.narrative.production_quality import _THREAD_PLACEHOLDER_RE
+
     result: list[str] = []
     for item in threads:
-        if item and item not in result:
+        if item and item not in result and not _THREAD_PLACEHOLDER_RE.search(item):
             result.append(item)
     return result[:3]
 

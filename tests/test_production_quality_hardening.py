@@ -338,3 +338,69 @@ def test_sanitizer_preserves_canon_character_name() -> None:
     assert changes
     assert "알고리즘 리퍼" in hook
     assert hook == "알고리즘 리퍼는 시장 압력의 배후였다."
+
+
+def test_sanitizer_strips_placeholder_threads_everywhere() -> None:
+    from engine.narrative.production_quality import sanitize_continuity_context
+
+    ph1 = "Previous battle outcome remains unresolved emotionally: PEACEFUL_GROWTH."
+    ph2 = "Track continuing pressure from villain CHAR_VILLAIN_004."
+    real = "EDT는 어제 남긴 질문의 답을 아직 찾지 못했다."
+    pack = {
+        "top_evidence": [{"value": "SPY +0.15%"}],
+        "previous_episode": {
+            "next_hook": "다음 관문은 여전히 열려 있다.",
+            "unresolved_threads": [ph1, real, ph2],
+            "resolved_threads": [ph2],
+            "structured_threads": [
+                {"promise": ph1, "status": "OPEN"},
+                {"promise": real, "status": "OPEN"},
+            ],
+        },
+        "continuity_window": {
+            "thread_ledger": [{"promise": ph1, "status": "OPEN"}, {"promise": ph2, "status": "OPEN"}],
+            "recent_threads": [ph1, ph2],
+            "primary_previous": {"unresolved_threads": [ph2]},
+        },
+    }
+    plan = {
+        "panel_beats": [],
+        "serial_contract": {
+            "due_threads": [{"promise": ph1, "status": "OPEN"}],
+            "previous_consequence": "다음 관문은 여전히 열려 있다.",
+        },
+    }
+
+    s_pack, s_plan, changes = sanitize_continuity_context(pack, plan)
+
+    assert changes
+    previous = s_pack["previous_episode"]
+    assert previous["unresolved_threads"] == [real]
+    assert previous["resolved_threads"] == []
+    assert [t["promise"] for t in previous["structured_threads"]] == [real]
+    window = s_pack["continuity_window"]
+    assert window["thread_ledger"] == []
+    assert window["recent_threads"] == []
+    assert window["primary_previous"]["unresolved_threads"] == []
+    assert s_plan["serial_contract"]["due_threads"] == []
+    # placeholder strip은 evidence와 무관하게 항상 적용, 원본은 불변
+    assert pack["previous_episode"]["unresolved_threads"] == [ph1, real, ph2]
+
+
+def test_sanitizer_strips_placeholders_even_with_algo_evidence() -> None:
+    from engine.narrative.production_quality import sanitize_continuity_context
+
+    pack = {
+        "top_evidence": [{"value": "algorithmic trading volume spike"}],
+        "previous_episode": {
+            "next_hook": "알고리즘 압력 구간",
+            "unresolved_threads": ["Track continuing pressure from villain CHAR_VILLAIN_004."],
+        },
+    }
+
+    s_pack, _, changes = sanitize_continuity_context(pack, None)
+
+    assert changes == ["previous_episode.unresolved_threads"]
+    assert s_pack["previous_episode"]["unresolved_threads"] == []
+    # evidence가 알고리즘을 지지하므로 hook 원문은 유지
+    assert s_pack["previous_episode"]["next_hook"] == "알고리즘 압력 구간"
