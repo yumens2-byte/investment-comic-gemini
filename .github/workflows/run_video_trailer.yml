@@ -1,9 +1,23 @@
 name: Run Video Trailer (ICG Video Track)
 
+# ─────────────────────────────────────────────────────────────
+# Daily Battle Shorts (v1.6.0, 2026-08-29 개편)
+#
+# cron ↔ 모드 매핑 (공통 지침 규약 — cron 수정 시 아래 주석 동기화 필수):
+#   '17 18 * * 1-6' (UTC) = KST 03:17 화~일
+#     → run_market.yml('30 16 * * 1-6' = KST 01:30 시작) 완료 후 +1h47m 버퍼
+#     → 미국장 마감 데이터 기반 episode_assets 확정 이후 실행 (장마감 후 생성)
+#     → schedule 실행 = daily_shorts 모드 (게이트→각색→미디어→조립→승인요청)
+#   오프셋 :17분 — GitHub Actions 정각 고부하 skip 방지 규약
+#
+# 발행(publish 모드)은 마스터 승인 후 workflow_dispatch 로만 실행:
+#   operation_mode=publish + confirm=YES + dry_run=false
+#   → 조립 run 의 artifact 를 video_assets.artifact_run_id 로 복원 후 업로드
+# ─────────────────────────────────────────────────────────────
+
 on:
   schedule:
-    # 토요일 KST 09:00 = UTC 00:00 (토)
-    - cron: '0 0 * * 6'
+    - cron: '17 18 * * 1-6'
   workflow_dispatch:
     inputs:
       target_date:
@@ -23,17 +37,22 @@ on:
           - INFO
           - WARNING
       operation_mode:
-        description: 'manual_prompt=텔레그램 프롬프트 전송(수기 생성), full_pipeline=Veo/assembly/gate 실행'
+        description: 'daily_shorts=일일 배틀쇼츠 생성, publish=승인 후 YouTube 업로드, manual_prompt=구 수동모드'
         required: false
-        default: 'manual_prompt'
+        default: 'daily_shorts'
         type: choice
         options:
+          - daily_shorts
+          - publish
           - manual_prompt
-          - full_pipeline
+      confirm:
+        description: 'publish 모드 실발행 확인 — 반드시 YES 입력 (publish_sns 패턴)'
+        required: false
+        default: ''
 
 permissions:
   contents: read
-  actions: write
+  actions: read
 
 jobs:
   video_pipeline:
@@ -46,6 +65,9 @@ jobs:
       TZ: Asia/Seoul
       # ── Core APIs (ICG 레포 규약 준수) ───────────────────────────
       ANTHROPIC_API_KEY:        ${{ secrets.ANTHROPIC_API_KEY }}
+      GEMINI_API_KEY:           ${{ secrets.GEMINI_API_KEY }}            # 북엔드 이미지 (기존 이미지 트랙 키 로테이션)
+      GEMINI_API_SUB_KEY:       ${{ secrets.GEMINI_API_SUB_KEY }}
+      GEMINI_API_SUB_SUB_KEY:   ${{ secrets.GEMINI_API_SUB_SUB_KEY }}
       GEMINI_API_SUB_PAY_KEY:   ${{ secrets.GEMINI_API_SUB_PAY_KEY }}    # Veo + TTS 공용 Paid 키
       FRED_API_KEY:             ${{ secrets.FRED_API_KEY }}
       NOTION_API_KEY:           ${{ secrets.NOTION_API_KEY }}
@@ -62,16 +84,18 @@ jobs:
       TELEGRAM_BOT_TOKEN:       ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
       TELEGRAM_PAID_CHANNEL_ID: ${{ secrets.TELEGRAM_PAID_CHANNEL_ID }}
-      MASTER_CHAT_ID:           ${{ secrets.MASTER_CHAT_ID }}            # ⚠️ Phase V5 게이트 전 등록 필요
-      # ── YouTube Shorts (Phase V5 시작 시 주석 해제) ──────────────
-      # YOUTUBE_CLIENT_ID:      ${{ secrets.YOUTUBE_CLIENT_ID }}
-      # YOUTUBE_CLIENT_SECRET:  ${{ secrets.YOUTUBE_CLIENT_SECRET }}
-      # YOUTUBE_REFRESH_TOKEN:  ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+      MASTER_CHAT_ID:           ${{ secrets.MASTER_CHAT_ID }}
+      # ── YouTube Shorts (2026-08-29 Secrets 등록 완료 — 주석 해제) ─
+      YOUTUBE_CLIENT_ID:        ${{ secrets.YOUTUBE_CLIENT_ID }}
+      YOUTUBE_CLIENT_SECRET:    ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+      YOUTUBE_REFRESH_TOKEN:    ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
       # ── Runtime flags ───────────────────────────────────────────
       VIDEO_BUDGET_USD_MONTHLY: '80'
-      DRY_RUN:                  ${{ inputs.dry_run || 'false' }}
+      # DRY_RUN 통일 규약: schedule 실행 시 빈 값 → 반드시 'true' fallback
+      DRY_RUN:                  ${{ inputs.dry_run || 'true' }}
       LOG_LEVEL:                ${{ inputs.log_level || 'INFO' }}
-      OPERATION_MODE:           ${{ inputs.operation_mode || 'manual_prompt' }}
+      OPERATION_MODE:           ${{ inputs.operation_mode || 'daily_shorts' }}
+      TARGET_DATE:              ${{ inputs.target_date || '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -86,31 +110,69 @@ jobs:
       - name: Install Python deps
         run: pip install -r requirements-video.txt
 
-      - name: STEP 1V-2V data load
+      - name: Guard publish confirm (publish 모드는 confirm=YES 필수)
+        if: ${{ env.OPERATION_MODE == 'publish' && inputs.confirm != 'YES' }}
+        run: |
+          echo "::error::publish 모드는 confirm=YES 입력이 필요합니다 (실발행 이중 확인)"
+          exit 1
+
+      # ── daily_shorts: 게이트 → 각색 → 미디어 → 조립 → 승인요청 ──
+      - name: S1 gate check (major event AND battle)
+        if: ${{ env.OPERATION_MODE == 'daily_shorts' }}
         run: python -m scripts.run_video_trailer --stage data
 
-      - name: STEP 3V scenario
-        run: python -m scripts.run_video_trailer --stage scenario
-
-      - name: STEP 4V narrative
+      - name: S2 Claude adaptation (shorts scenario)
+        if: ${{ env.OPERATION_MODE == 'daily_shorts' }}
         run: python -m scripts.run_video_trailer --stage narrative
 
-      - name: STEP 5V persist init
-        if: ${{ env.OPERATION_MODE == 'full_pipeline' }}
-        run: python -m scripts.run_video_trailer --stage persist_init
-
-      - name: STEP 6V veo generate
-        if: ${{ env.OPERATION_MODE == 'full_pipeline' }}
+      - name: S3+S4 bookend images + Veo cuts
+        if: ${{ env.OPERATION_MODE == 'daily_shorts' }}
         run: python -m scripts.run_video_trailer --stage veo
 
-      - name: STEP 7V ffmpeg assembly
-        if: ${{ env.OPERATION_MODE == 'full_pipeline' }}
+      - name: S5 ffmpeg assembly
+        if: ${{ env.OPERATION_MODE == 'daily_shorts' }}
         run: python -m scripts.run_video_trailer --stage assembly
 
-      - name: PAUSE human gate notify
-        if: ${{ env.OPERATION_MODE == 'full_pipeline' }}
+      - name: S6 PAUSE human gate notify
+        if: ${{ env.OPERATION_MODE == 'daily_shorts' }}
         run: python -m scripts.run_video_trailer --stage gate_notify
 
+      # ── publish: artifact 복원 → 업로드 → published 확정 ─────────
+      - name: Restore assembled artifact (from artifact_run_id)
+        if: ${{ env.OPERATION_MODE == 'publish' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RUN_ID=$(python - << 'PYEOF2'
+          import os
+          from engine.common.supabase_client import icg_table
+          from engine.video.shorts_pipeline import build_shorts_episode_id
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+          date = os.environ.get("TARGET_DATE") or str(datetime.now(ZoneInfo("Asia/Seoul")).date())
+          eid = build_shorts_episode_id(date)
+          rows = icg_table("video_assets").select("artifact_run_id").eq("episode_id", eid).limit(1).execute()
+          rid = (rows.data[0].get("artifact_run_id") if rows.data else "") or ""
+          print(rid)
+          PYEOF2
+          )
+          echo "artifact_run_id=${RUN_ID}"
+          if [ -z "${RUN_ID}" ]; then
+            echo "::error::video_assets.artifact_run_id 없음 — daily_shorts 조립 run 선행 필요"
+            exit 1
+          fi
+          gh run download "${RUN_ID}" -n "video-${RUN_ID}" -R "${GITHUB_REPOSITORY}"
+          ls -R output/videos | head -30
+
+      - name: S7 YouTube Shorts upload
+        if: ${{ env.OPERATION_MODE == 'publish' }}
+        run: python -m scripts.run_video_trailer --stage publish_shorts
+
+      - name: S8 persist final (status=published)
+        if: ${{ env.OPERATION_MODE == 'publish' }}
+        run: python -m scripts.run_video_trailer --stage persist_final
+
+      # ── manual_prompt: 구 수동모드 보존 (Phase V3.5) ─────────────
       - name: PRE-OP manual prompt notify (Telegram)
         if: ${{ env.OPERATION_MODE == 'manual_prompt' }}
         run: python -m scripts.run_video_trailer --stage manual_prompt_notify
