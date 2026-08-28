@@ -257,6 +257,8 @@ def _append_always_on_grounding_guardrails(rendered: str) -> str:
         "- Every Story Beat Plan required_character must appear in the specified panel contract.",
         "- For scenario_type=NO_BATTLE never emit panel_type=BATTLE; use TENSION, CLIMAX, "
         "or AFTERMATH while showing hypothesis, resistance, decision, and state change.",
+        "- Vary physical actions across narrative panels. Fewer than 80% may rely on "
+        "stand/look/study/read/watch/sit; use visible state-changing actions instead.",
     ]
     return rendered + "\n" + "\n".join(lines)
 
