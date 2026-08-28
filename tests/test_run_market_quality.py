@@ -4,6 +4,7 @@ from scripts.run_market import (
     _ensure_narrative_quality_inputs,
     _feature_flag_snapshot,
     _production_quality_strict_enabled,
+    _quality_attempt_limit,
     _record_context_error,
     _validate_narrative_quality_inputs,
 )
@@ -85,6 +86,13 @@ def test_continuity_strict_also_makes_production_quality_fail_closed(monkeypatch
 
     assert _production_quality_strict_enabled(continuity_strict=True) is True
     assert _production_quality_strict_enabled(continuity_strict=False) is False
+
+
+def test_strict_quality_gates_receive_independent_retry_budgets() -> None:
+    assert _quality_attempt_limit(continuity_strict=False, production_strict=False) == 1
+    assert _quality_attempt_limit(continuity_strict=True, production_strict=False) == 2
+    assert _quality_attempt_limit(continuity_strict=False, production_strict=True) == 2
+    assert _quality_attempt_limit(continuity_strict=True, production_strict=True) == 3
 
 
 def test_feature_flag_snapshot_captures_all_12_flags(monkeypatch) -> None:

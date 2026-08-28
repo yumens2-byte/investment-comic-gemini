@@ -5,6 +5,8 @@ from engine.analysis.story_context_builder import build_narrative_context_pack
 from engine.narrative.claude_client import _validate_canon
 from engine.narrative.production_quality import (
     ProductionQualityError,
+    ProductionViolation,
+    build_production_retry_feedback,
     validate_production_episode,
 )
 from engine.narrative.schema import EpisodeScript
@@ -219,3 +221,20 @@ def test_trim_does_not_treat_decimal_point_as_sentence_boundary() -> None:
 
     assert not trimmed.endswith("+1.")
     assert trimmed.endswith("…")
+
+
+def test_retry_feedback_gives_actionable_fixes_without_enabling_serial_contract() -> None:
+    feedback = build_production_retry_feedback(
+        [
+            ProductionViolation("UNSUPPORTED_ALGORITHM_CAUSALITY", "P1.key_text"),
+            ProductionViolation("STATIC_ACTION_STREAK", "too static"),
+        ],
+        serial_required=False,
+    )
+
+    assert feedback is not None
+    assert "ALGORITHM FIX" in feedback
+    assert "ALGORITHM WORDING BAN" in feedback
+    assert "ACTION FIX" in feedback
+    assert "SERIAL FIX" not in feedback
+    assert "next_hook" not in feedback
