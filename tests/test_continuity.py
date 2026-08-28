@@ -32,6 +32,8 @@ def test_build_continuity_bundle_uses_final_non_disclaimer_panel_as_hook() -> No
     assert bundle["final_panel_summary"] == "문은 아직 닫히지 않았다."
     assert bundle["next_hook"] == "문은 아직 닫히지 않았다."
     assert bundle["unresolved_threads"]
+    assert not any("Previous battle outcome" in item for item in bundle["unresolved_threads"])
+    assert not any("Track continuing pressure" in item for item in bundle["unresolved_threads"])
 
 
 def test_bundle_from_episode_row_prefers_embedded_continuity() -> None:

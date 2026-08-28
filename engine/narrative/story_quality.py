@@ -104,7 +104,8 @@ def build_continuity_retry_feedback(
         "## STRICT CONTINUITY RETRY — previous episode payoff is mandatory",
         f"- prior_source_episode_id: {score.source_episode_id or previous.get('source_episode_id', '')}",
         f"- current_continuity_score: {score.total_score:.1f} ({score.status})",
-        "- missing_requirements: " + (", ".join(score.missing_requirements) or "none"),
+        "- missing_requirements: "
+        + (", ".join(score.missing_requirements) or "continuity_score_below_threshold"),
     ]
     if score.seed:
         anchor = f"이전 회차의 단서: {score.seed}"

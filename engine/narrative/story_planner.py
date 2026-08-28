@@ -26,6 +26,17 @@ _FUNCTIONS = [
 ]
 
 
+def _episode_archetype(context_pack: dict[str, Any], scenario_type: str) -> str:
+    if scenario_type == "NO_BATTLE":
+        return "DATA_MYSTERY"
+    card = context_pack.get("villain_reader_card") or {}
+    if card.get("intro_mode") == "FULL":
+        return "VILLAIN_REVEAL"
+    if str(context_pack.get("event_type") or "").upper() == "AFTERMATH":
+        return "AFTERMATH_AND_RIFT"
+    return "TACTICAL_REVERSAL"
+
+
 def _evidence_ids(context_pack: dict[str, Any], idx: int) -> list[str]:
     evidence = context_pack.get("top_evidence") or []
     if not evidence:
@@ -55,6 +66,7 @@ def build_story_beat_plan(
     scenario_type: str,
     hero_ids: list[str] | None = None,
     villain_ids: list[str] | None = None,
+    neutral_guest_ids: list[str] | None = None,
 ) -> StoryBeatPlan:
     """Build a deterministic 8-panel story plan for the current episode."""
     outcome = str(battle_result.get("outcome", "DRAW"))
@@ -72,6 +84,14 @@ def build_story_beat_plan(
     active_hero_ids = hero_ids or [hero_id]
     primary_hero = active_hero_ids[0] if active_hero_ids else hero_id
     support_heroes = active_hero_ids[1:]
+    neutral_guests = [str(item) for item in (neutral_guest_ids or []) if item]
+    villain_reader_card = narrative_context_pack.get("villain_reader_card")
+    thread_ledger = ((narrative_context_pack.get("continuity_window") or {}).get("thread_ledger") or [])
+    due_threads = [
+        item for item in thread_ledger
+        if isinstance(item, dict) and item.get("status") in {"OPEN", "DUE"}
+    ][:2]
+    episode_archetype = _episode_archetype(narrative_context_pack, scenario_type)
 
     beats: list[StoryBeat] = []
     for idx, function in enumerate(_FUNCTIONS, 1):
@@ -81,8 +101,13 @@ def build_story_beat_plan(
             emotional_shift = "Reset audience expectation from story to caution."
         elif scenario_type == "NO_BATTLE":
             required = [primary_hero]
-            dialogue_intent = "Observe the market calmly without introducing villain combat."
-            emotional_shift = "Move from observation to cautious confidence."
+            if neutral_guests and idx in (3, 4):
+                required.append(neutral_guests[0])
+            dialogue_intent = (
+                "Investigate uncertain market pressure through a falsifiable hypothesis, "
+                "a concrete action, resistance, and a visible state change. Never use BATTLE panel_type."
+            )
+            emotional_shift = "Move from uncertainty through a costly decision to cautious confidence."
         else:
             if scenario_type == "ALLIANCE" and idx in (4, 5) and support_heroes:
                 required = [primary_hero, support_heroes[0], primary_villain]
@@ -121,6 +146,11 @@ def build_story_beat_plan(
         if function == "NEXT_HOOK":
             dialogue_intent = f"Foreshadow: {next_hook}"
             emotional_shift = "Leave a clear but non-predictive unresolved question."
+
+        if villain_reader_card and idx in (2, 3, 4):
+            steps = villain_reader_card.get("required_reveal_steps") or []
+            step = steps[min(idx - 2, len(steps) - 1)] if steps else "MECHANISM"
+            dialogue_intent += f" Reveal villain reader step {step} using supplied canon facts."
 
         forbidden = [
             "Do not change battle_result.outcome.",
@@ -165,4 +195,16 @@ def build_story_beat_plan(
         panel_beats=beats,
         next_hook_seed=next_hook,
         factuality_guardrails=list(narrative_context_pack.get("prohibited_claims") or []),
+        episode_archetype=episode_archetype,
+        villain_reader_card=villain_reader_card,
+        serial_contract={
+            "previous_consequence": continuity_seed,
+            "due_threads": due_threads,
+            "payoff_required": bool(due_threads or continuity_seed),
+            "new_threads_limit": 1,
+            "next_pressure": next_hook,
+            "next_hook_required": True,
+            "required_neutral_guests": neutral_guests,
+            "forbidden_panel_types": ["BATTLE"] if scenario_type == "NO_BATTLE" else [],
+        },
     )

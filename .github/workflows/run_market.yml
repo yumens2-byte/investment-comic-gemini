@@ -121,6 +121,7 @@ jobs:
       NARRATIVE_CONTEXT_ENABLED: ${{ (inputs.narrative_context != '' && inputs.narrative_context != 'auto') && inputs.narrative_context || vars.NARRATIVE_CONTEXT_ENABLED || 'false' }}
       STORY_PLANNER_ENABLED: ${{ (inputs.story_planner != '' && inputs.story_planner != 'auto') && inputs.story_planner || vars.STORY_PLANNER_ENABLED || 'false' }}
       CONTINUITY_STRICT_ENABLED: ${{ (inputs.continuity_strict != '' && inputs.continuity_strict != 'auto') && inputs.continuity_strict || vars.CONTINUITY_STRICT_ENABLED || 'false' }}
+      SERIAL_NARRATIVE_P0_ENABLED: ${{ vars.SERIAL_NARRATIVE_P0_ENABLED || 'false' }}
 
       PYTHONPATH: .
       ICG_ROLLOUT_VERSION: narrative-context-story-quality-v2
@@ -229,6 +230,7 @@ jobs:
           echo "  CONTINUITY_STRICT_ENABLED       = $(flag_label "$CONTINUITY_STRICT_ENABLED")"
           echo "  NARRATIVE_CONTEXT_ENABLED       = $(flag_label "$NARRATIVE_CONTEXT_ENABLED")"
           echo "  STORY_PLANNER_ENABLED           = $(flag_label "$STORY_PLANNER_ENABLED")"
+          echo "  SERIAL_NARRATIVE_P0_ENABLED     = $(flag_label "$SERIAL_NARRATIVE_P0_ENABLED")"
           if [ "${CONTINUITY_STRICT_ENABLED,,}" = "true" ]; then
             echo "⚠️  CONTINUITY_STRICT_ENABLED=true: previous-hook payoff failures will stop STEP 4."
           fi
