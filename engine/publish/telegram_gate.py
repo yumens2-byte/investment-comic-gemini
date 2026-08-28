@@ -25,7 +25,7 @@ import logging
 import os
 from pathlib import Path
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 logger = logging.getLogger(__name__)
 
 # Telegram sendVideo body limit (bot API, standard server)
@@ -96,26 +96,54 @@ def send_approval_request(
         len(reply_markup["inline_keyboard"]),
     )
 
-    # TODO: actual Telegram sendVideo API call (V5)
-    # from telegram import Bot
-    # bot = Bot(token=bot_token)
-    # with open(video_path, "rb") as f:
-    #     msg = bot.send_video(
-    #         chat_id=chat_id,
-    #         video=f,
-    #         caption=caption,
-    #         parse_mode="HTML",
-    #         reply_markup=reply_markup,
-    #         supports_streaming=True,
-    #     )
-    # return {"message_id": msg.message_id, "chat_id": chat_id, "sent_at": msg.date.isoformat()}
+    # v1.1.0: TODO 실장 — Telegram Bot API sendVideo (requests 동기 호출).
+    # python-telegram-bot(async) 대신 requests 사용: run_video_trailer 의
+    # _send_telegram_text 와 동일한 동기 패턴 (GitHub Actions 단발 실행에 적합).
+    if os.environ.get("DRY_RUN", "true").lower() == "true":
+        logger.info("[telegram_gate] DRY_RUN — sendVideo 스킵")
+        return {
+            "message_id": None,
+            "chat_id": chat_id,
+            "sent_at": None,
+            "status": "dry_run",
+        }
 
-    logger.info("[telegram_gate] approval request sent (SKELETON — implement in V5)")
+    import json as _json
+
+    import requests
+
+    url = f"https://api.telegram.org/bot{bot_token}/sendVideo"
+    with open(video_path, "rb") as f:
+        response = requests.post(
+            url,
+            data={
+                "chat_id": chat_id,
+                "caption": caption,
+                "parse_mode": "HTML",
+                "supports_streaming": "true",
+                "reply_markup": _json.dumps(reply_markup),
+            },
+            files={"video": (Path(video_path).name, f, "video/mp4")},
+            timeout=120,
+        )
+
+    payload = response.json()
+    if not payload.get("ok"):
+        raise TelegramGateError(
+            f"sendVideo 실패: HTTP {response.status_code} — {payload.get('description')}"
+        )
+
+    msg = payload["result"]
+    logger.info(
+        "[telegram_gate] approval request sent: message_id=%s chat_id=%s",
+        msg.get("message_id"),
+        chat_id,
+    )
     return {
-        "message_id": None,
+        "message_id": msg.get("message_id"),
         "chat_id": chat_id,
-        "sent_at": None,
-        "status": "skeleton",
+        "sent_at": str(msg.get("date")),
+        "status": "sent",
     }
 
 
