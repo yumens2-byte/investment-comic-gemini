@@ -43,7 +43,7 @@ def _ensure_repo_root_on_path() -> None:
 
 _ensure_repo_root_on_path()
 
-VERSION = "1.6.1"
+VERSION = "1.6.2"
 
 logger = logging.getLogger("run_video_trailer")
 
@@ -101,6 +101,14 @@ def _setup_logging(stage: str) -> Path:
     for h in root.handlers[:]:
         root.removeHandler(h)
     root.setLevel(logging.DEBUG)  # capture everything; handlers filter
+
+    # ── SECURITY (v1.6.2, 2026-08-29 회고) ─────────────────────────────
+    # hpack 은 DEBUG 레벨에서 HTTP/2 요청 헤더 전문을 덤프하는데,
+    # supabase-py 의 'apikey' 헤더는 sensitive 마킹이 없어 service_role JWT 가
+    # 로그 파일(artifact)에 평문 노출됐다. 네트워크 계층 로거는 레벨 무관하게
+    # WARNING 으로 고정해 레코드 생성 자체를 차단한다 (파일 핸들러 DEBUG 포함).
+    for noisy in ("hpack", "httpcore", "httpx", "h2", "hyperframe", "urllib3", "requests"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
     fmt = logging.Formatter(
         "%(asctime)s | %(levelname)s | %(name)s | %(message)s",
