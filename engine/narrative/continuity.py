@@ -78,6 +78,12 @@ def build_continuity_bundle(
         # final story panel as a safe continuity seed.
         next_hook = final_summary
 
+    unresolved_threads = _derive_threads(script_dict, ctx)
+    from engine.narrative.serial_contracts import normalize_thread
+
+    structured_threads = [
+        normalize_thread(item, source_episode_id=episode_id) for item in unresolved_threads
+    ]
     return {
         "version": "continuity-1",
         "source_episode_id": episode_id,
@@ -91,7 +97,8 @@ def build_continuity_bundle(
         "scenario_type": ctx.get("scenario_type"),
         "hero_ids": ctx.get("heroes") or [ctx.get("hero_id")],
         "villain_id": ctx.get("villain_id"),
-        "unresolved_threads": _derive_threads(script_dict, ctx),
+        "unresolved_threads": unresolved_threads,
+        "structured_threads": structured_threads,
         "resolved_threads": [
             str(item).strip()
             for item in script_dict.get("resolved_threads") or []
@@ -226,12 +233,16 @@ def _merge_recent_window(bundles: list[dict[str, Any]]) -> dict[str, Any]:
         rel = bundle.get("relationship_delta") or {}
         if isinstance(rel, dict):
             relationship_memory.update(rel)
+    from engine.narrative.serial_contracts import merge_thread_ledger, summarize_cast_history
+
     return {
         "version": "continuity-window-1",
         "primary_previous": primary,
         "recent_threads": recent_threads[:5],
         "recurring_villains": recurring_villains[:5],
         "relationship_memory": relationship_memory,
+        "cast_history": summarize_cast_history(bundles),
+        "thread_ledger": merge_thread_ledger(bundles),
     }
 
 

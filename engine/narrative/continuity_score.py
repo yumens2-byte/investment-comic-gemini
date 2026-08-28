@@ -117,7 +117,8 @@ def score_story_continuity(
     missing: list[str] = []
     matched_terms: list[str] = []
 
-    opening_score = 40.0
+    opening_applicable = bool(seed)
+    opening_score = 0.0
     if seed:
         opening_score, opening_matches = _overlap_score(seed, _panel_text(script_dict, 2), 40.0)
         matched_terms.extend(opening_matches)
@@ -131,7 +132,8 @@ def score_story_continuity(
     resolved_text = "\n".join(
         str(item) for item in script_dict.get("resolved_threads") or []
     ).lower()
-    thread_score = 30.0
+    thread_applicable = bool(unresolved)
+    thread_score = 0.0
     if unresolved:
         thread_scores: list[float] = []
         for thread in unresolved[:3]:
@@ -140,19 +142,12 @@ def score_story_continuity(
             matched_terms.extend(matches)
         thread_score = round(30.0 * (max(thread_scores) if thread_scores else 0.0), 2)
 
-        # Operational strict runs showed that Claude can correctly pay off the
-        # previous_next_hook in P1/P2 while paraphrasing the broader
-        # unresolved_threads too heavily for exact keyword overlap.  Treat a
-        # strong opening hook payoff as a deterministic acknowledgement of the
-        # prior unresolved thread so strict mode does not fail on wording alone.
-        if thread_score < 15 and seed and opening_score >= 20:
-            thread_score = 15.0
-
         if thread_score < 10:
             missing.append("unresolved_thread_resolution")
 
     relationship_delta = previous.get("relationship_delta") or {}
-    relationship_score = 20.0
+    relationship_applicable = isinstance(relationship_delta, dict) and bool(relationship_delta)
+    relationship_score = 0.0
     if isinstance(relationship_delta, dict) and relationship_delta:
         relation_terms: list[str] = []
         for pair, delta in list(relationship_delta.items())[:3]:
@@ -168,11 +163,12 @@ def score_story_continuity(
             if relationship_score == 0:
                 missing.append("relationship_delta_reuse")
 
-    beat_score = 10.0
+    beat_score = 0.0
     beats = (story_beat_plan or {}).get("panel_beats") or []
     must_beats = [
         beat for beat in beats if isinstance(beat, dict) and beat.get("must_reference_previous")
     ]
+    beat_applicable = bool(must_beats)
     if must_beats:
         panels = [p for p in (script_dict.get("panels") or []) if isinstance(p, dict)]
         compliant = 0
@@ -190,13 +186,29 @@ def score_story_continuity(
                 if panel
                 else ""
             )
-            if panel_text.strip():
+            required_chars = set(str(item) for item in beat.get("required_character") or [])
+            rendered_chars = {
+                str(item.get("char_id"))
+                for item in (panel or {}).get("characters") or []
+                if isinstance(item, dict) and item.get("char_id")
+            }
+            character_ok = not required_chars or required_chars.issubset(rendered_chars)
+            payoff_terms = continuity_keywords(str(beat.get("continuity_payoff") or ""), limit=4)
+            payoff_ok = not payoff_terms or any(term in panel_text.lower() for term in payoff_terms)
+            if panel_text.strip() and character_ok and payoff_ok:
                 compliant += 1
         beat_score = round(10.0 * (compliant / len(must_beats)), 2)
         if beat_score < 10:
             missing.append("must_reference_previous_panel_text")
 
-    total = round(opening_score + thread_score + relationship_score + beat_score, 2)
+    applicable_max = (
+        (40.0 if opening_applicable else 0.0)
+        + (30.0 if thread_applicable else 0.0)
+        + (20.0 if relationship_applicable else 0.0)
+        + (10.0 if beat_applicable else 0.0)
+    )
+    earned = opening_score + thread_score + relationship_score + beat_score
+    total = round(100.0 * earned / applicable_max, 2) if applicable_max else 0.0
     if seed and "opening_hook_payoff" in missing:
         # Missing the opening payoff is the most visible continuity break; cap
         # the total so strict/shadow gates cannot treat incidental defaults as pass.

@@ -40,8 +40,8 @@ def test_score_story_continuity_fails_when_opening_ignores_previous() -> None:
     assert "opening_hook_payoff" in score.missing_requirements
 
 
-def test_score_story_continuity_accepts_hook_payoff_as_thread_acknowledgement() -> None:
-    """Regression for strict Run Market failures on paraphrased unresolved threads."""
+def test_score_story_continuity_does_not_treat_hook_as_thread_resolution() -> None:
+    """A hook keyword match must not silently resolve a different thread."""
     script = {
         "resolved_threads": [],
         "panels": [
@@ -63,6 +63,16 @@ def test_score_story_continuity_accepts_hook_payoff_as_thread_acknowledgement() 
 
     score = score_story_continuity(script, context, plan)
 
-    assert score.status == "pass"
-    assert "unresolved_thread_resolution" not in score.missing_requirements
-    assert score.thread_resolution_score == 15.0
+    assert score.status != "pass"
+    assert "unresolved_thread_resolution" in score.missing_requirements
+    assert score.thread_resolution_score == 0.0
+
+
+def test_score_does_not_award_relationship_points_when_no_relationship_exists() -> None:
+    score = score_story_continuity(
+        {"panels": [{"idx": 1, "narration": "검은 문은 아직 닫히지 않았다."}]},
+        {"previous_episode": {"next_hook": "검은 문은 아직 닫히지 않았다"}},
+    )
+
+    assert score.relationship_reuse_score == 0.0
+    assert score.total_score == 100.0
