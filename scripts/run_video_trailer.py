@@ -43,7 +43,7 @@ def _ensure_repo_root_on_path() -> None:
 
 _ensure_repo_root_on_path()
 
-VERSION = "1.4.3"
+VERSION = "1.5.0"
 
 logger = logging.getLogger("run_video_trailer")
 
@@ -173,46 +173,83 @@ def _log_environment_info(stage: str, log_file: Path) -> None:
     logger.info("-" * 72)
 
 
-def stage_data():
-    """STEP 1V-2V: scheduler check + DB read (read-only)."""
-    logger.info("[1V] scheduler / holiday / budget check")
-    # TODO: US market holiday check
-    # TODO: Budget Cap check (icg.video_assets.veo_cost_usd monthly sum vs VIDEO_BUDGET_USD_MONTHLY)
+def _resolve_target_date() -> str:
+    """대상 날짜: env TARGET_DATE (YYYY-MM-DD) 우선, 없으면 오늘(KST)."""
+    override = os.environ.get("TARGET_DATE", "").strip()
+    if override:
+        return override
+    return str(datetime.now(ZoneInfo("Asia/Seoul")).date())
 
-    logger.info("[2V] load snapshot + analysis (read-only)")
-    today = datetime.now(ZoneInfo("Asia/Seoul")).date()
-    # TODO: Reuse existing image track modules (Strict Isolation compatible — common/data OK):
-    #   from engine.common.supabase_client import get_supabase_client
-    #   from engine.analysis.reader import read_snapshot, read_analysis
-    #   sb = get_supabase_client()
-    #   snapshot = read_snapshot(sb, today)
-    #   analysis = read_analysis(sb, today)
-    logger.info(f"[2V] target date: {today}")
-    return {"snapshot_date": str(today)}
+
+def stage_data():
+    """STEP S1: Daily Battle Shorts 게이트 — 메이저 이벤트 AND 배틀 존재 시에만 진행.
+
+    스토리 소스는 이미지 트랙 산출물(icg.episode_assets)을 읽기 전용 재사용한다 (R2).
+    게이트 미통과는 skipped 기록 후 정상 종료(rc=0) — 알림 스팸 없음 (R3).
+    """
+    from engine.video.shorts_pipeline import persist_gate_result, run_gate
+
+    target_date = _resolve_target_date()
+    logger.info(f"[S1] gate check start: date={target_date}")
+
+    gate = run_gate(target_date)
+    status = persist_gate_result(gate)
+
+    if not gate.passed:
+        logger.info(
+            f"[S1] gate BLOCKED — reason={gate.reason} status={status} "
+            f"(정상 종료, 영상 미생성)"
+        )
+        sys.exit(0)
+
+    logger.info(
+        f"[S1] gate PASS: event_type={gate.event_type} "
+        f"scenario={gate.scenario_type} episode_id={gate.episode_id}"
+    )
+    return {"episode_date": target_date, "episode_id": gate.episode_id}
 
 
 def stage_scenario():
-    """STEP 3V: scenario selection (reuses ICG image track v2.0 selector)."""
-    logger.info("[3V] scenario selection")
-    # TODO: from engine.narrative.scenario_selector import select_scenario
-    #       (existing module path in repo; NOT engine.analysis.scenario_selector)
-    #       scenario = select_scenario(risk_level=..., event_type=...)
-    # NO_BATTLE is not suitable for news-format trailer → skip
-    scenario = "ONE_VS_ONE"  # placeholder
-    logger.info(f"[3V] scenario: {scenario}")
-    if scenario == "NO_BATTLE":
-        logger.warning("[3V] NO_BATTLE scenario — video track skips this episode")
+    """STEP S1(재검): 시나리오는 episode_assets 확정값 승계 — 선택 로직 재실행 금지 (R2/R5)."""
+    from engine.video.shorts_pipeline import run_gate
+
+    target_date = _resolve_target_date()
+    gate = run_gate(target_date)
+    if not gate.passed:
+        logger.info(f"[S1-recheck] gate BLOCKED — reason={gate.reason} (정상 종료)")
         sys.exit(0)
-    return scenario
+    logger.info(f"[S1-recheck] scenario 승계: {gate.scenario_type} (episode_assets 확정값)")
+    return gate.scenario_type
 
 
 def stage_narrative():
-    """STEP 4V: Claude video scenario generation (3 cuts x 8s)."""
-    logger.info("[4V] Claude video script generation")
-    # TODO: Render config/prompts/video_scenario.j2
-    # TODO: Call Claude API → VideoEpisodeScript JSON
-    # TODO: Validate 3 cuts x 8s, character lock, title card no-text rule
-    logger.info("[4V] video script generated")
+    """STEP S2: Claude 각색 — 8패널 스크립트 → 인트로+3컷+아웃트로 쇼츠 시나리오.
+
+    승패/캐스팅은 Immutable Facts 강제 주입 + Consistency Guard 로 불변 보장.
+    DRY_RUN 이면 Claude 미호출(비용 0) — 게이트 결과만 기록.
+    """
+    from engine.video.shorts_pipeline import (
+        generate_shorts_scenario,
+        persist_scenario,
+        run_gate,
+    )
+
+    target_date = _resolve_target_date()
+    gate = run_gate(target_date)
+    if not gate.passed:
+        logger.info(f"[S2] gate BLOCKED — reason={gate.reason} (정상 종료)")
+        sys.exit(0)
+
+    scenario, cost = generate_shorts_scenario(gate)
+    if scenario is None:
+        logger.info("[S2] DRY_RUN — 각색 스킵 (게이트 기록만 유지)")
+        return
+
+    persist_scenario(gate, scenario)
+    logger.info(
+        f"[S2] 각색 저장 완료: episode_id={gate.episode_id} "
+        f"total={scenario.total_duration_sec()}s cost=${cost:.4f}"
+    )
 
 
 def _get_episode_id(today: str) -> str:
