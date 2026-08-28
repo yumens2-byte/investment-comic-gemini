@@ -43,7 +43,7 @@ def _ensure_repo_root_on_path() -> None:
 
 _ensure_repo_root_on_path()
 
-VERSION = "1.6.0"
+VERSION = "1.6.1"
 
 logger = logging.getLogger("run_video_trailer")
 
@@ -543,20 +543,63 @@ def stage_assembly():
 
 
 def stage_gate_notify():
-    """PAUSE: Telegram master approval request (sends final mp4 to master personal chat)."""
-    logger.info("[PAUSE] Telegram master approval request")
+    """PAUSE(S6): 마스터 승인 요청 — 게이트 통과 + 조립 완료일에만 발송.
 
-    # TODO: Load final mp4 path + metadata from icg.video_assets (status='assembled')
-    # TODO: Call engine.publish.telegram_gate.send_approval_request()
-    # from engine.publish.telegram_gate import send_approval_request
-    # send_approval_request(
-    #     video_path=final_mp4_path,
-    #     episode_id=episode_id,
-    #     scenario_type=scenario_type,
-    #     cost_usd=total_cost,
-    #     generation_ms=total_ms,
-    # )
-    # Update icg.video_assets status='pending_approval'
+    v1.6.1 실장 + 갭 보완: 게이트 미통과(skipped)일에는 알림을 보내지 않는다
+    (2026-08-29 dry_run #33216557560 점검 — 게이트 체크 없이 매일 실행되던 갭).
+    발송 성공 시 status='pending_approval' 전이. DRY_RUN 이면 발송/전이 스킵.
+    """
+    from engine.video.shorts_pipeline import load_scenario, run_gate
+
+    target_date = _resolve_target_date()
+    gate = run_gate(target_date)
+    if not gate.passed:
+        logger.info(f"[S6] gate BLOCKED — reason={gate.reason} (알림 미발송, 정상 종료)")
+        sys.exit(0)
+
+    scenario = load_scenario(gate.episode_id)
+    final_path = Path(f"output/videos/{gate.episode_id}/assembly/final_shorts.mp4")
+
+    dry_run = os.environ.get("DRY_RUN", "true").lower() == "true"
+    if dry_run:
+        logger.info(
+            f"[S6] DRY_RUN — 승인 요청 스킵 (episode_id={gate.episode_id}, "
+            f"final_exists={final_path.exists()})"
+        )
+        return
+
+    if scenario is None or not final_path.exists():
+        raise RuntimeError(
+            f"[S6] 승인 요청 불가 — scenario={'있음' if scenario else '없음'} "
+            f"final_mp4={'있음' if final_path.exists() else '없음'} (S2~S5 선행 필요)"
+        )
+
+    from engine.publish.telegram_gate import send_approval_request
+
+    sb_row = None
+    try:
+        from engine.video.shorts_pipeline import _load_video_asset_row
+
+        sb_row = _load_video_asset_row(gate.episode_id)
+    except Exception as exc:
+        logger.warning(f"[S6] video_assets 조회 실패 (비용 0 표기로 진행): {exc}")
+
+    cost_usd = float((sb_row or {}).get("veo_cost_usd") or 0.0)
+
+    send_approval_request(
+        video_path=str(final_path),
+        episode_id=gate.episode_id,
+        scenario_type=gate.scenario_type,
+        cost_usd=cost_usd,
+        generation_ms=int((sb_row or {}).get("generation_ms") or 0),
+    )
+
+    from engine.common.supabase_client import icg_table
+
+    icg_table("video_assets").update({"status": "pending_approval"}).eq(
+        "episode_id", gate.episode_id
+    ).execute()
+    logger.info(f"[S6] 승인 요청 발송 + pending_approval 전이: {gate.episode_id}")
 
     logger.info("[PAUSE] awaiting master approval — workflow ends here")
 
