@@ -39,7 +39,21 @@ _SUPPORT_PRIORITY: dict[str, list[str]] = {
 }
 
 
-def select_for_no_battle(delta: dict) -> tuple[str, None]:
+def _no_battle_market_scores(delta: dict) -> dict[str, int]:
+    """Express the legacy branches as comparable market-fit scores."""
+    vix = delta.get("VIX", {}).get("curr", 20) or 20
+    spy_pct = delta.get("SPY", {}).get("pct", 0) or 0
+    scores = {hero_id: 10 for hero_id in CANON_HERO_IDS}
+    scores["CHAR_HERO_001"] += 60 if vix < 16 and spy_pct > 0 else 0
+    scores["CHAR_HERO_004"] += 55 if spy_pct > 1.0 else 0
+    scores["CHAR_HERO_005"] += 55 if vix > 18 else 0
+    scores["CHAR_HERO_002"] += 30
+    return scores
+
+
+def select_for_no_battle(
+    delta: dict, *, cast_history: dict | None = None, return_trace: bool = False
+) -> tuple[str, None] | tuple[str, None, dict]:
     """
     NO_BATTLE 시나리오: Villain 없는 히어로 단독 서사.
 
@@ -67,10 +81,18 @@ def select_for_no_battle(delta: dict) -> tuple[str, None]:
     else:
         hero_id = "CHAR_HERO_002"
 
+    trace: dict = {"reason": "LEGACY_MARKET_RULE", "selected": hero_id}
+    if cast_history:
+        from engine.narrative.serial_contracts import rotate_hero
+
+        hero_id, trace = rotate_hero(_no_battle_market_scores(delta), cast_history)
+
     logger.debug(
         "[CharSelector v%s] NO_BATTLE → hero=%s (VIX=%.1f SPY=%+.2f%%)",
         VERSION, hero_id, vix, spy_pct,
     )
+    if return_trace:
+        return hero_id, None, trace
     return hero_id, None
 
 

@@ -68,6 +68,33 @@ def validate_episode_performance(
     issues: list[QualityIssue] = []
     for spec in specs:
         issues.extend(validate_panel_performance(panels.get(spec.panel_idx, {}), spec).issues)
+    narrative_specs = [
+        spec for spec in specs
+        if panels.get(spec.panel_idx, {}).get("panel_type") not in {"TEXT_CARD", "DISCLAIMER"}
+    ]
+    for previous, current in zip(narrative_specs, narrative_specs[1:]):
+        before = previous.exiting_state
+        after = current.entering_state
+        if before.location and after.location and before.location != after.location:
+            issues.append(
+                _issue(current, "PERF_W_LOCATION_DISCONTINUITY", "WARNING", "location changed between panels")
+            )
+        state_groups = (
+            ("character_positions", "PERF_W_POSITION_DISCONTINUITY", "WARNING"),
+            ("prop_states", "PERF_E_PROP_DISCONTINUITY", "ERROR"),
+            ("injury_states", "PERF_E_INJURY_DISCONTINUITY", "ERROR"),
+            ("environment_states", "PERF_E_ENVIRONMENT_DISCONTINUITY", "ERROR"),
+        )
+        for field, code, severity in state_groups:
+            previous_values = getattr(before, field)
+            current_values = getattr(after, field)
+            changed = {
+                key: (previous_values[key], current_values[key])
+                for key in previous_values.keys() & current_values.keys()
+                if previous_values[key] != current_values[key]
+            }
+            if changed:
+                issues.append(_issue(current, code, severity, f"unexplained state change: {changed}"))
     errors = sum(issue.severity == "ERROR" for issue in issues)
     warnings = sum(issue.severity == "WARNING" for issue in issues)
     score = max(0, 100 - errors * 25 - warnings * 5)
