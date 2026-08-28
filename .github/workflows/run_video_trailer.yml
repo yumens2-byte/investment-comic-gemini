@@ -65,10 +65,9 @@ jobs:
       TZ: Asia/Seoul
       # ── Core APIs (ICG 레포 규약 준수) ───────────────────────────
       ANTHROPIC_API_KEY:        ${{ secrets.ANTHROPIC_API_KEY }}
-      GEMINI_API_KEY:           ${{ secrets.GEMINI_API_KEY }}            # 북엔드 이미지 (기존 이미지 트랙 키 로테이션)
-      GEMINI_API_SUB_KEY:       ${{ secrets.GEMINI_API_SUB_KEY }}
-      GEMINI_API_SUB_SUB_KEY:   ${{ secrets.GEMINI_API_SUB_SUB_KEY }}
-      GEMINI_API_SUB_PAY_KEY:   ${{ secrets.GEMINI_API_SUB_PAY_KEY }}    # Veo + TTS 공용 Paid 키
+      # ICG 규약(doc 19 patch): 이미지/Veo/TTS 모두 GEMINI_API_SUB_PAY_KEY 고정.
+      # GEMINI_API_KEY 등 다른 이름 사용 금지 (2026-08-29 dry_run #33216146552 회고).
+      GEMINI_API_SUB_PAY_KEY:   ${{ secrets.GEMINI_API_SUB_PAY_KEY }}
       FRED_API_KEY:             ${{ secrets.FRED_API_KEY }}
       NOTION_API_KEY:           ${{ secrets.NOTION_API_KEY }}
       # ── Supabase ─────────────────────────────────────────────────
