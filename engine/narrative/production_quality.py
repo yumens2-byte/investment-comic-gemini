@@ -204,3 +204,49 @@ def validate_production_episode(
             "; ".join(f"{item.code}: {item.detail}" for item in violations)
         )
     return violations
+
+
+def build_production_retry_feedback(
+    violations: list[ProductionViolation],
+    *,
+    serial_required: bool = False,
+) -> str | None:
+    """Turn gate failures into concrete, non-conflicting regeneration rules."""
+    if not violations:
+        return None
+
+    codes = {item.code for item in violations}
+    lines = [
+        "## PRODUCTION QUALITY RETRY — every listed violation is a mandatory fix",
+        *[f"- {item.code}: {item.detail}" for item in violations],
+    ]
+    if "UNSUPPORTED_ALGORITHM_CAUSALITY" in codes:
+        lines.append(
+            "- ALGORITHM FIX: remove every claim that an algorithm changed, drove, "
+            "pressured, reversed, recovered, raised, or lowered the market. Describe "
+            "only the supplied price/rate observation; do not merely paraphrase the claim."
+        )
+    if "STATIC_ACTION_STREAK" in codes:
+        lines.append(
+            "- ACTION FIX: in at least half of non-card panels, replace stand/look/study/"
+            "read/watch/sit actions with distinct physical state-changing verbs such as "
+            "crosses, marks, closes, hands over, blocks, opens, or turns away."
+        )
+    if "SYNTHETIC_THREAD_PLACEHOLDER" in codes:
+        lines.append(
+            "- THREAD FIX: remove operational/template wording (Track continuing, CHAR_*, "
+            "PEACEFUL_GROWTH). Write a concrete in-world character decision or unanswered clue."
+        )
+    if serial_required:
+        lines.append(
+            "- SERIAL FIX: return a non-empty next_hook and at least one concrete "
+            "unresolved_threads or resolved_threads entry."
+        )
+    lines.extend(
+        [
+            "- Follow required_character and scenario panel-type constraints exactly.",
+            "- Use only evidence-supported numbers, units, and causal statements.",
+            "- Return the complete EpisodeScript JSON only.",
+        ]
+    )
+    return "\n".join(lines)
