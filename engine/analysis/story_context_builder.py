@@ -20,8 +20,10 @@ _METRIC_STORY_MAP: dict[str, tuple[str, str, str]] = {
     "VIX": ("volatility", "Volatility Hydra pressure", "red volatility siren"),
     "WTI": ("oil", "Oil Shock Titan pressure", "oil port under black waves"),
     "DGS10": ("rates", "Debt Titan pressure", "bond auction hall"),
-    "SPY": ("equity", "Algorithm Reaper pressure", "falling market billboard"),
-    "NASDAQ": ("tech", "Algorithm Reaper pressure", "AI data-center tower"),
+    # Price movement alone is not evidence of algorithmic order flow.  Keep the
+    # fictional motif in visual symbols, never in the factual story role.
+    "SPY": ("equity", "broad-market movement", "falling market billboard"),
+    "NASDAQ": ("tech", "technology-market movement", "AI data-center tower"),
     "BTC": ("crypto", "Liquidity Leviathan ripple", "digital coin vault"),
     "USDKRW": ("fx", "currency gate tension", "currency exchange gate"),
     "HY_SPREAD": ("credit", "Liquidity Leviathan pressure", "cracked credit bridge"),
@@ -42,12 +44,18 @@ def _as_float(value: Any) -> float | None:
 def _fmt_metric_value(metric: str, row: dict[str, Any]) -> str:
     curr = _as_float(row.get("curr"))
     pct = _as_float(row.get("pct"))
+    semantic_type = str(row.get("semantic_type") or "level")
     parts: list[str] = []
+    if semantic_type == "daily_return_pct" and curr is not None:
+        return f"{metric} {curr:+g}%"
     if curr is not None:
         parts.append(f"{metric} {curr:g}")
-    if pct is not None:
+    if pct is not None and semantic_type == "level":
         sign = "+" if pct > 0 else ""
         parts.append(f"({sign}{pct:g}%)")
+    change = _as_float(row.get("change"))
+    if change is not None and semantic_type in {"rate", "spread", "index_score"}:
+        parts.append(f"(change {change:+g} {row.get('unit') or 'unit'})")
     return " ".join(parts) if parts else metric
 
 
@@ -56,6 +64,9 @@ def _score_metric(row: dict[str, Any]) -> float:
     curr = _as_float(row.get("curr"))
     if pct is not None:
         return abs(pct)
+    change = _as_float(row.get("change"))
+    if change is not None:
+        return abs(change)
     if curr is not None:
         return abs(curr) / 1000
     return 0.0
@@ -178,6 +189,9 @@ def build_narrative_context_pack(
     sector_heatmap: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a compact context packet for richer, better-grounded narrative generation."""
+    from engine.narrative.continuity import sanitize_continuity_bundle
+
+    previous_episode = sanitize_continuity_bundle(previous_episode)
     metric_evidence = _top_delta_evidence(delta)
     news_evidence = _select_news_evidence(news_items)
     if news_evidence:

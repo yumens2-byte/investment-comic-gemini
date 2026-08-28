@@ -90,13 +90,20 @@ def build_continuity_retry_feedback(
     that cites only the already-supplied previous_episode state and the missing
     deterministic requirements.
     """
+    from engine.narrative.continuity import sanitize_continuity_bundle
     from engine.narrative.continuity_score import score_story_continuity
 
-    score = score_story_continuity(script_dict, context_pack, story_beat_plan)
+    safe_context = dict(context_pack or {})
+    safe_context["previous_episode"] = sanitize_continuity_bundle(
+        safe_context.get("previous_episode") or {}
+    ) or {}
+    score = score_story_continuity(script_dict, safe_context, story_beat_plan)
     if score.status == "pass" or not (score.seed or score.source_episode_id):
         return None
 
-    previous = (context_pack or {}).get("previous_episode") or {}
+    previous = sanitize_continuity_bundle(
+        safe_context.get("previous_episode") or {}
+    ) or {}
     unresolved = [
         str(item).strip() for item in previous.get("unresolved_threads") or [] if str(item).strip()
     ]
@@ -104,29 +111,28 @@ def build_continuity_retry_feedback(
         "## STRICT CONTINUITY RETRY — previous episode payoff is mandatory",
         f"- prior_source_episode_id: {score.source_episode_id or previous.get('source_episode_id', '')}",
         f"- current_continuity_score: {score.total_score:.1f} ({score.status})",
-        "- missing_requirements: " + (", ".join(score.missing_requirements) or "none"),
+        "- missing_requirements: "
+        + (", ".join(score.missing_requirements) or "continuity_score_below_threshold"),
     ]
     if score.seed:
-        anchor = f"이전 회차의 단서: {score.seed}"
         lines.extend(
             [
                 f"- previous_next_hook_to_pay_off: {score.seed}",
-                f"- EXACT_OPENING_ANCHOR: {anchor}",
-                "- Required: panel 1 narration or key_text must include EXACT_OPENING_ANCHOR verbatim before today's market cause.",
+                "- Required: panel 1 must paraphrase the safe prior hook and show its concrete consequence before today's cause.",
+                "- Do not copy unsupported causal wording merely because it appeared in an older episode.",
             ]
         )
     if unresolved:
-        first_thread = unresolved[0]
         lines.extend(
             [
                 "- unresolved_threads_to_resolve_or_acknowledge: " + "; ".join(unresolved[:3]),
-                f"- EXACT_RESOLVED_THREAD: {first_thread}",
-                "- Required: put EXACT_RESOLVED_THREAD verbatim in the top-level resolved_threads array.",
+                "- Required: acknowledge, advance, or resolve a supplied reader-facing thread through an observable panel action.",
+                "- Put a thread in resolved_threads only when the episode visibly resolves it; otherwise keep it unresolved.",
             ]
         )
     lines.extend(
         [
-            "- Do not invent new previous-episode facts; use only the hook/thread text above.",
+            "- Do not invent new previous-episode facts or copy operational English placeholders.",
             "- Keep all EpisodeScript schema limits, including panel narration/key_text lengths, and return JSON only.",
         ]
     )

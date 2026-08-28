@@ -9,7 +9,7 @@ Claude API 출력 JSON을 이 스키마로 검증한다.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -48,6 +48,9 @@ class StoryBeatPlan(BaseModel):
     panel_beats: list[StoryBeat] = Field(min_length=8, max_length=8)
     next_hook_seed: str
     factuality_guardrails: list[str] = Field(default_factory=list)
+    episode_archetype: str = "TACTICAL_REVERSAL"
+    villain_reader_card: dict[str, Any] | None = None
+    serial_contract: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_panel_sequence(self) -> "StoryBeatPlan":

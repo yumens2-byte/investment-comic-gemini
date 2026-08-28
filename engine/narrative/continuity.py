@@ -12,10 +12,74 @@ migration.
 
 from __future__ import annotations
 
+import copy
 import logging
+import re
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+_OPERATIONAL_THREAD_RE = re.compile(
+    r"(?:Previous battle outcome remains unresolved emotionally|"
+    r"Track continuing pressure from villain\s+CHAR_|\bPEACEFUL_GROWTH\b)",
+    re.IGNORECASE,
+)
+_UNSUPPORTED_ALGO_HISTORY_RE = re.compile(
+    r"(?:NASDAQ[·ㆍ・/\s]*SPY|SPY[·ㆍ・/\s]*NASDAQ)?\s*"
+    r"(?:하락[:：]?\s*)?알고리즘\s*압력\s*구간",
+    re.IGNORECASE,
+)
+
+
+def sanitize_continuity_bundle(bundle: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Remove legacy operational prose and unsupported causality from memory.
+
+    Old persisted bundles are immutable production history.  Sanitize them at
+    the read boundary so strict retry does not demand text that the production
+    quality gate simultaneously forbids.
+    """
+    if not isinstance(bundle, dict):
+        return bundle
+    cleaned = copy.deepcopy(bundle)
+    for field in ("unresolved_threads", "resolved_threads"):
+        if field not in cleaned:
+            continue
+        cleaned[field] = [
+            str(item).strip()
+            for item in cleaned.get(field) or []
+            if str(item).strip() and not _OPERATIONAL_THREAD_RE.search(str(item))
+        ][:3]
+    for field in ("next_hook", "must_continue_from", "final_panel_summary"):
+        value = cleaned.get(field)
+        if isinstance(value, str):
+            cleaned[field] = _UNSUPPORTED_ALGO_HISTORY_RE.sub(
+                "이전 회차에서 묘사한 시장 압력 구간", value
+            )
+    return cleaned
+
+
+def sanitize_continuity_window(window: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Sanitize cached window aggregates restored from a pre-hardening run."""
+    if not isinstance(window, dict):
+        return window
+    cleaned = copy.deepcopy(window)
+    cleaned["primary_previous"] = sanitize_continuity_bundle(
+        cleaned.get("primary_previous")
+    )
+    cleaned["recent_threads"] = [
+        str(item).strip()
+        for item in cleaned.get("recent_threads") or []
+        if str(item).strip() and not _OPERATIONAL_THREAD_RE.search(str(item))
+    ][:5]
+    cleaned["thread_ledger"] = [
+        item
+        for item in cleaned.get("thread_ledger") or []
+        if isinstance(item, dict)
+        and not _OPERATIONAL_THREAD_RE.search(
+            str(item.get("summary") or item.get("text") or "")
+        )
+    ]
+    return cleaned
 
 
 def _episode_id(episode_date: str, episode_no: int | str | None) -> str:
@@ -49,12 +113,9 @@ def _derive_threads(script_dict: dict[str, Any], ctx: dict[str, Any]) -> list[st
         text = str(thread).strip()
         if text:
             threads.append(text)
-    outcome = (ctx.get("battle_result") or {}).get("outcome")
-    villain = ctx.get("villain_id")
-    if outcome:
-        threads.append(f"Previous battle outcome remains unresolved emotionally: {outcome}.")
-    if villain:
-        threads.append(f"Track continuing pressure from villain {villain}.")
+    # Never manufacture reader-facing threads from operational outcome/villain
+    # fields. These English placeholders leaked into generated scripts and even
+    # introduced villain pressure in NO_BATTLE episodes.
     # Preserve order while removing duplicates/empties.
     result: list[str] = []
     for item in threads:
@@ -78,6 +139,14 @@ def build_continuity_bundle(
         # final story panel as a safe continuity seed.
         next_hook = final_summary
 
+    unresolved_threads = _derive_threads(script_dict, ctx)
+    if not unresolved_threads and next_hook:
+        unresolved_threads = [next_hook]
+    from engine.narrative.serial_contracts import normalize_thread
+
+    structured_threads = [
+        normalize_thread(item, source_episode_id=episode_id) for item in unresolved_threads
+    ]
     return {
         "version": "continuity-1",
         "source_episode_id": episode_id,
@@ -91,7 +160,8 @@ def build_continuity_bundle(
         "scenario_type": ctx.get("scenario_type"),
         "hero_ids": ctx.get("heroes") or [ctx.get("hero_id")],
         "villain_id": ctx.get("villain_id"),
-        "unresolved_threads": _derive_threads(script_dict, ctx),
+        "unresolved_threads": unresolved_threads,
+        "structured_threads": structured_threads,
         "resolved_threads": [
             str(item).strip()
             for item in script_dict.get("resolved_threads") or []
@@ -114,7 +184,7 @@ def bundle_from_episode_row(row: dict[str, Any]) -> dict[str, Any] | None:
         return None
     embedded = script.get("_continuity")
     if isinstance(embedded, dict) and embedded.get("source_episode_id"):
-        return embedded
+        return sanitize_continuity_bundle(embedded)
     episode_date = str(row.get("episode_date") or row.get("source_date") or "")
     if not episode_date:
         return None
@@ -126,7 +196,9 @@ def bundle_from_episode_row(row: dict[str, Any]) -> dict[str, Any] | None:
         "heroes": row.get("heroes_json") or [],
         "villain_id": (row.get("battle_json") or {}).get("villain_id"),
     }
-    return build_continuity_bundle(_episode_id(episode_date, episode_no), episode_date, ctx, script)
+    return sanitize_continuity_bundle(
+        build_continuity_bundle(_episode_id(episode_date, episode_no), episode_date, ctx, script)
+    )
 
 
 def load_previous_continuity(episode_date: str) -> dict[str, Any] | None:
@@ -226,12 +298,16 @@ def _merge_recent_window(bundles: list[dict[str, Any]]) -> dict[str, Any]:
         rel = bundle.get("relationship_delta") or {}
         if isinstance(rel, dict):
             relationship_memory.update(rel)
+    from engine.narrative.serial_contracts import merge_thread_ledger, summarize_cast_history
+
     return {
         "version": "continuity-window-1",
         "primary_previous": primary,
         "recent_threads": recent_threads[:5],
         "recurring_villains": recurring_villains[:5],
         "relationship_memory": relationship_memory,
+        "cast_history": summarize_cast_history(bundles),
+        "thread_ledger": merge_thread_ledger(bundles),
     }
 
 

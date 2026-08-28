@@ -54,6 +54,15 @@ _CANON_VILLAIN_NAMES: set[str] = {
     "War Dominion",
 }
 
+# Neutral characters are selected by engine.character.character_engine rather
+# than characters.yaml.  They are still registered production IDs and must be
+# allowed as NPCs; otherwise a correctly rendered guest is rejected after the
+# planner explicitly requires it.
+_REGISTERED_NEUTRAL_GUEST_IDS: set[str] = {
+    "SENTINEL_YIELD",
+    "CRYPTO_SHADE",
+}
+
 # 각 필드별 max_length (schema.py와 동기화)
 _FIELD_LIMITS: dict[str, int] = {
     "narration": 120,
@@ -113,11 +122,13 @@ def _trim_str(text: str, max_len: int) -> str:
     if len(text) <= max_len:
         return text
     truncated = text[: max_len - 1]
-    # 마지막 문장 부호 기준으로 자름
-    for sep in (".", "。", "!", "?", "다", "요"):
-        idx = truncated.rfind(sep)
-        if idx > max_len // 2:
-            return truncated[: idx + 1]
+    # Decimal points are not sentence boundaries. The former rfind(".") could
+    # turn a long market sentence into the misleading fragment "BTC +1.".
+    sentence_ends = list(
+        re.finditer(r"(?:[.!?。](?=\s|$)|[다요](?=[.!?。]?\s|$))", truncated)
+    )
+    if sentence_ends and sentence_ends[-1].end() > max_len // 2:
+        return truncated[: sentence_ends[-1].end()].rstrip()
     return truncated + "…"
 
 
@@ -219,8 +230,13 @@ def _validate_canon(script: EpisodeScript, scenario_type: str = "ONE_VS_ONE") ->
     for panel in script.panels:
         for char in panel.characters:
             # ── Canon ID 검증 ────────────────────────────────────────────────
-            if char.char_id not in all_char_ids:
+            if char.char_id not in all_char_ids and char.char_id not in _REGISTERED_NEUTRAL_GUEST_IDS:
                 raise ValueError(f"Canon 외 char_id 사용: {char.char_id}")
+
+            if char.char_id in _REGISTERED_NEUTRAL_GUEST_IDS and char.role != "npc":
+                raise ValueError(
+                    f"중립 게스트는 npc role이어야 합니다: {char.char_id} role={char.role}"
+                )
 
             # ── villain 이름 Canon 검증 ──────────────────────────────────────
             if char.role == "villain":

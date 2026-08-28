@@ -3,6 +3,7 @@ import pytest
 from scripts.run_market import (
     _ensure_narrative_quality_inputs,
     _feature_flag_snapshot,
+    _production_quality_strict_enabled,
     _record_context_error,
     _validate_narrative_quality_inputs,
 )
@@ -79,8 +80,15 @@ def test_feature_flag_snapshot_captures_continuity_flags(monkeypatch) -> None:
     assert snapshot["EPISODE_TYPE_V3_ENABLED"] is True
 
 
-def test_feature_flag_snapshot_captures_all_11_flags(monkeypatch) -> None:
-    """관측성 확장(2026-06-30): 11개 플래그 전부 기록 + scenario/battle 값 검증."""
+def test_continuity_strict_also_makes_production_quality_fail_closed(monkeypatch) -> None:
+    monkeypatch.setenv("SERIAL_NARRATIVE_P0_ENABLED", "false")
+
+    assert _production_quality_strict_enabled(continuity_strict=True) is True
+    assert _production_quality_strict_enabled(continuity_strict=False) is False
+
+
+def test_feature_flag_snapshot_captures_all_12_flags(monkeypatch) -> None:
+    """관측성 확장: production strict flag를 포함한 전체 플래그를 기록한다."""
     all_flags = [
         "NARRATIVE_CONTEXT_ENABLED",
         "STORY_PLANNER_ENABLED",
@@ -93,6 +101,7 @@ def test_feature_flag_snapshot_captures_all_11_flags(monkeypatch) -> None:
         "CROWD_MODIFIER_ENABLED",
         "VILLAIN_SIGNATURE_BONUS_ENABLED",
         "EMERGENCE_DEFICIT_ENABLED",
+        "SERIAL_NARRATIVE_P0_ENABLED",
     ]
     for name in all_flags:
         monkeypatch.setenv(name, "true")
@@ -100,7 +109,7 @@ def test_feature_flag_snapshot_captures_all_11_flags(monkeypatch) -> None:
 
     snapshot = _feature_flag_snapshot()
 
-    # 11개 키 전부 기록
+    # 12개 키 전부 기록
     assert set(snapshot.keys()) == set(all_flags)
     # scenario/battle 6개 값 정확성
     assert snapshot["SCENARIO_V2_ENABLED"] is True
@@ -109,6 +118,7 @@ def test_feature_flag_snapshot_captures_all_11_flags(monkeypatch) -> None:
     assert snapshot["CROWD_MODIFIER_ENABLED"] is True
     assert snapshot["VILLAIN_SIGNATURE_BONUS_ENABLED"] is True
     assert snapshot["EMERGENCE_DEFICIT_ENABLED"] is True
+    assert snapshot["SERIAL_NARRATIVE_P0_ENABLED"] is True
 
 
 def test_quality_inputs_rebuild_from_core_ctx_when_enabled(monkeypatch) -> None:
@@ -153,3 +163,43 @@ def test_quality_inputs_do_not_require_optional_story_enrichment(monkeypatch) ->
     )
 
     assert rebuilt["narrative_context_pack"]["top_evidence"][0]["id"] == "metric:SPY"
+
+
+def test_restored_context_is_sanitized_and_plan_is_rebuilt(monkeypatch) -> None:
+    monkeypatch.setenv("NARRATIVE_CONTEXT_ENABLED", "true")
+    monkeypatch.setenv("STORY_PLANNER_ENABLED", "true")
+    restored = {
+        "event_type": "INTEL",
+        "delta": {"SPY": {"curr": 0.5, "pct": 0.5}},
+        "battle_result": {"outcome": "PEACEFUL_GROWTH", "balance": 0},
+        "hero_id": "CHAR_HERO_001",
+        "villain_id": "CHAR_VILLAIN_004",
+        "villain_ids": [],
+        "scenario_type": "NO_BATTLE",
+        "heroes": ["CHAR_HERO_001"],
+        "narrative_context_pack": {
+            "top_evidence": [{"id": "metric:SPY", "value": "SPY +0.5%"}],
+            "previous_episode": {
+                "source_episode_id": "ICG-2026-08-27-001",
+                "next_hook": "NASDAQ·SPY 하락: 알고리즘 압력 구간",
+                "unresolved_threads": [
+                    "Track continuing pressure from villain CHAR_VILLAIN_004"
+                ],
+            },
+            "continuity_window": {
+                "thread_ledger": [{"thread_id": "bad", "summary": "PEACEFUL_GROWTH"}]
+            },
+        },
+        "story_beat_plan": {
+            "panel_beats": [{"panel_idx": idx} for idx in range(1, 9)],
+            "next_hook_seed": "알고리즘 압력 구간",
+        },
+    }
+
+    rebuilt = _ensure_narrative_quality_inputs(restored)
+    serialized = str(rebuilt["story_beat_plan"])
+
+    assert "알고리즘 압력 구간" not in serialized
+    assert "PEACEFUL_GROWTH" in serialized  # fixed battle outcome remains valid metadata
+    assert rebuilt["narrative_context_pack"]["continuity_window"]["thread_ledger"] == []
+    assert rebuilt["narrative_context_pack"]["previous_episode"]["unresolved_threads"] == []
