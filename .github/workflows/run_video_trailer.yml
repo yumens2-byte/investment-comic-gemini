@@ -49,6 +49,7 @@ on:
           - daily_shorts
           - publish
           - abort
+          - verify_auth
           - manual_prompt
       confirm:
         description: 'publish 모드 실발행 확인 — 반드시 YES 입력 (publish_sns 패턴)'
@@ -215,6 +216,10 @@ jobs:
         run: python -m scripts.run_video_trailer --stage persist_final
 
       # ── manual_prompt: 구 수동모드 보존 (Phase V3.5) ─────────────
+      - name: VERIFY — YouTube 자격증명 점검 (쿼터 0)
+        if: ${{ env.OPERATION_MODE == 'verify_auth' }}
+        run: python -m scripts.run_video_trailer --stage verify_auth
+
       - name: ABORT — 자동 발행 중단
         if: ${{ env.OPERATION_MODE == 'abort' }}
         run: python -m scripts.run_video_trailer --stage abort
