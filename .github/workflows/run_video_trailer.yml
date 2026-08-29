@@ -48,9 +48,14 @@ on:
         options:
           - daily_shorts
           - publish
+          - abort
           - manual_prompt
       confirm:
         description: 'publish 모드 실발행 확인 — 반드시 YES 입력 (publish_sns 패턴)'
+        required: false
+        default: ''
+      abort_reason:
+        description: 'abort 모드 중단 사유 (기록용)'
         required: false
         default: ''
 
@@ -96,6 +101,10 @@ jobs:
       YOUTUBE_REFRESH_TOKEN:    ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
       # ── Runtime flags ───────────────────────────────────────────
       VIDEO_BUDGET_USD_MONTHLY: '80'
+      # hold-and-release: 조립 완료 후 이 시간이 지나면 Publish Shorts 가 자동 발행.
+      # 마스터는 그 전에 operation_mode=abort 로 중단할 수 있다.
+      PUBLISH_HOLD_HOURS: '6'
+      ABORT_REASON: ${{ inputs.abort_reason || 'master_abort' }}
       # DRY_RUN 은 job env 에서 정의하지 않는다.
       # GitHub 표현식 `inputs.dry_run || 'true'` 는 문자열 'false' 의 truthy 판정에
       # 의존해 취약하다(2026-08-29 run #33229224093: false 선택에도 true 로 해석).
@@ -206,6 +215,10 @@ jobs:
         run: python -m scripts.run_video_trailer --stage persist_final
 
       # ── manual_prompt: 구 수동모드 보존 (Phase V3.5) ─────────────
+      - name: ABORT — 자동 발행 중단
+        if: ${{ env.OPERATION_MODE == 'abort' }}
+        run: python -m scripts.run_video_trailer --stage abort
+
       - name: PRE-OP manual prompt notify (Telegram)
         if: ${{ env.OPERATION_MODE == 'manual_prompt' }}
         run: python -m scripts.run_video_trailer --stage manual_prompt_notify

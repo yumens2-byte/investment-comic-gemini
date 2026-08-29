@@ -1,0 +1,152 @@
+name: Publish Shorts (ICG Video Track)
+
+# ─────────────────────────────────────────────────────────────
+# 지연 자동발행 (hold-and-release, v1.0.0 / 2026-08-29)
+#
+# 설계: daily_shorts 가 조립을 끝내면 status='pending_approval' + release_at
+#       (기본 +6시간)을 기록하고 텔레그램으로 검토 영상을 보낸다.
+#       본 워크플로가 release_at 이 지난 건을 찾아 자동 발행한다.
+#       마스터가 그 사이에 abort 하면 발행되지 않는다 (기본 발행, 개입 시 중단).
+#
+# cron ↔ 동작 매핑 (cron 수정 시 이 주석 동기화 필수):
+#   '23 * * * *' (UTC) = 매시 :23분
+#     → daily_shorts(KST 03:17 생성) + 홀드 6h ≈ KST 09:17 이후 첫 정각대에 발행
+#     → 대상이 없으면 아무 것도 하지 않고 정상 종료(found=false)
+#   오프셋 :23분 — GitHub Actions 정각 고부하 skip 방지 규약
+#
+# 안전장치:
+#   - 대상 조건: status='pending_approval' AND release_at<=now AND
+#                youtube_video_id IS NULL AND artifact_run_id IS NOT NULL
+#   - 업로드 성공 즉시 youtube_video_id 기록 (중복 발행 차단)
+#   - 조립본 mp4 는 daily_shorts run 의 artifact 에서 복원 (재생성 비용 0)
+# ─────────────────────────────────────────────────────────────
+
+on:
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch:
+    inputs:
+      episode_id:
+        description: '특정 에피소드 지정 (미입력 시 자동 선택)'
+        required: false
+        default: ''
+      dry_run:
+        description: 'true = 업로드 없이 대상 확인만'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: icg-publish-shorts
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    name: Resolve release target
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      found:           ${{ steps.pick.outputs.found }}
+      episode_id:      ${{ steps.pick.outputs.episode_id }}
+      episode_date:    ${{ steps.pick.outputs.episode_date }}
+      artifact_run_id: ${{ steps.pick.outputs.artifact_run_id }}
+    env:
+      TZ: Asia/Seoul
+      SUPABASE_URL:    ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY:    ${{ secrets.SUPABASE_KEY }}
+      SUPABASE_SCHEMA: icg
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install deps
+        run: pip install -r requirements-video.txt
+      - name: Pick release target
+        id: pick
+        env:
+          INPUT_EPISODE_ID: ${{ inputs.episode_id }}
+        run: python -m scripts.resolve_shorts_release --episode-id "$INPUT_EPISODE_ID"
+
+  publish:
+    name: Upload to YouTube Shorts
+    needs: resolve
+    if: needs.resolve.outputs.found == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TZ: Asia/Seoul
+      SUPABASE_URL:          ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY:          ${{ secrets.SUPABASE_KEY }}
+      SUPABASE_SCHEMA:       icg
+      YOUTUBE_CLIENT_ID:     ${{ secrets.YOUTUBE_CLIENT_ID }}
+      YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+      YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+      TELEGRAM_BOT_TOKEN:    ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      MASTER_CHAT_ID:        ${{ secrets.TELEGRAM_PAID_CHANNEL_ID }}
+      TARGET_DATE:           ${{ needs.resolve.outputs.episode_date }}
+    steps:
+      - name: Normalize run flags (DRY_RUN fail-safe)
+        env:
+          EVENT_NAME:    ${{ github.event_name }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          # schedule 실행이 자동 발행의 정상 경로이므로 false 로 수렴시킨다.
+          # workflow_dispatch 는 명시 선택을 따르며 미선택 시 안전하게 true.
+          if [ "$EVENT_NAME" = "schedule" ]; then
+            RESOLVED=false
+          elif [ "$INPUT_DRY_RUN" = "false" ]; then
+            RESOLVED=false
+          else
+            RESOLVED=true
+          fi
+          echo "DRY_RUN=$RESOLVED" >> "$GITHUB_ENV"
+          echo "Resolved DRY_RUN=$RESOLVED (event=$EVENT_NAME, raw_input='$INPUT_DRY_RUN')"
+
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install deps
+        run: pip install -r requirements-video.txt
+
+      - name: Restore assembled video artifact
+        uses: actions/download-artifact@v4
+        with:
+          pattern: video-*
+          path: .
+          merge-multiple: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ needs.resolve.outputs.artifact_run_id }}
+
+      - name: Verify final mp4 exists
+        run: |
+          EID="${{ needs.resolve.outputs.episode_id }}"
+          FINAL="output/videos/${EID}/assembly/final_shorts.mp4"
+          if [ ! -f "$FINAL" ]; then
+            echo "::error::조립본 없음: $FINAL (artifact 만료 가능 — 재생성 필요)"
+            exit 1
+          fi
+          echo "복원 확인: $FINAL ($(du -h "$FINAL" | cut -f1))"
+
+      - name: Upload to YouTube Shorts
+        run: python -m scripts.run_video_trailer --stage publish_shorts
+
+      - name: Persist final status
+        run: python -m scripts.run_video_trailer --stage persist_final
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: publish-shorts-${{ github.run_id }}
+          path: logs/
+          retention-days: 30
