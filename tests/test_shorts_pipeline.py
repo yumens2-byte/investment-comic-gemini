@@ -157,8 +157,9 @@ def _scenario_dict(**overrides):
         "caption": "금리 하락",
         "narration_tts": "국채금리가 내려가며 전선이 열립니다.",
         "video_prompt": (
-            "Cinematic vertical 9:16 Manhwa style. Tiger warrior with chainsaw, "
-            "blue bodysuit and glowing D emblem confronts a five-headed hydra serpent."
+            "Cinematic vertical 9:16 Manhwa style. Anthropomorphic Bengal tiger-headed "
+            "hero with navy blue bodysuit and gold D emblem wielding a chainsaw "
+            "confronts a five-headed hydra of purple lightning."
         ),
         "duration_sec": 8,
     }
@@ -320,21 +321,26 @@ def test_generate_uses_sdk_compat_kwargs_without_temperature(monkeypatch, tmp_pa
 
 def _canon_prompt(*extra: str) -> str:
     base = (
-        "Cinematic vertical 9:16 Manhwa style. Tiger warrior with chainsaw, "
-        "blue bodysuit and glowing D emblem faces a five-headed hydra serpent."
+        "Cinematic vertical 9:16 Manhwa style. Anthropomorphic Bengal tiger-headed "
+        "hero with orange striped fur, navy blue bodysuit and gold D emblem, "
+        "wielding a chainsaw, faces a five-headed hydra of purple lightning."
     )
     return base + " " + " ".join(extra)
 
 
-def test_canon_block_includes_form_description():
+def test_canon_block_includes_species_first():
+    """EDT 정체성(호랑이)이 프롬프트 블록에 반드시 들어가야 한다."""
     from engine.video.shorts_pipeline import build_canon_visual_block
 
     block = build_canon_visual_block(["CHAR_HERO_001", "CHAR_VILLAIN_004"])
     if not block:
         pytest.skip("config/characters.yaml 미존재 환경")
+    lower = block.lower()
     assert "CHAR_HERO_001" in block
-    assert "chainsaw" in block.lower()
-    assert "CHAR_VILLAIN_004" in block
+    assert "tiger" in lower  # 종족 — characters.yaml 에는 없는 정보
+    assert "종족 필수 단어" in block
+    assert "chainsaw" in lower
+    assert "hydra" in lower
 
 
 def test_canon_guard_passes_with_canon_keywords():
@@ -375,7 +381,9 @@ def test_canon_guard_requires_all_alliance_heroes():
         enforce_canon_visuals(scenario)
 
     for cut in data["cuts"]:
-        cut["video_prompt"] = _canon_prompt("A shirtless muscle man with flame hair.")
+        cut["video_prompt"] = _canon_prompt(
+            "Beside him a human male bodybuilder, shirtless with flaming hair."
+        )
     enforce_canon_visuals(ShortsScenario(**data))  # 전원 등장 시 통과
 
 
@@ -423,3 +431,61 @@ def test_schema_accepts_disclaimer_within_bookend_limit():
     data = _scenario_dict()
     data["outro"]["narration_tts"] = disclaimer
     ShortsScenario(**data)
+
+
+# ── v1.1.0 종족(species) 강제 — EDT 정체성 손상 회귀 방지 ────
+# 2026-08-29 마스터 리포트: 생성 영상의 EDT 가 호랑이가 아닌 평범한 남성 히어로.
+# 원인: characters.yaml 에 종족 정보가 전혀 없음(name_en 의 "Tiger" 뿐).
+
+
+def test_canon_spec_defines_species_for_every_character():
+    from engine.video.shorts_pipeline import CANON_VISUAL_SPEC
+
+    for cid, spec in CANON_VISUAL_SPEC.items():
+        assert spec["species"], f"{cid} 종족 미정의"
+        assert spec["full"], f"{cid} VISUAL 기술 미정의"
+
+
+def test_edt_species_is_tiger():
+    from engine.video.shorts_pipeline import CANON_VISUAL_SPEC
+
+    spec = CANON_VISUAL_SPEC["CHAR_HERO_001"]
+    assert "tiger" in spec["species"]
+    assert "tiger" in str(spec["full"]).lower()
+
+
+def test_guard_blocks_prompt_missing_tiger_species():
+    """장비(체인소/D엠블럼)만 있고 호랑이가 없으면 반드시 차단."""
+    from engine.video.shorts_pipeline import CanonGuardError, enforce_canon_visuals
+
+    data = _scenario_dict()
+    for cut in data["cuts"]:
+        cut["video_prompt"] = (
+            "Cinematic vertical 9:16. A muscular male hero in a navy blue bodysuit "
+            "with a gold D emblem wields a chainsaw against a five-headed hydra."
+        )
+    with pytest.raises(CanonGuardError, match="종족 단어 누락"):
+        enforce_canon_visuals(ShortsScenario(**data))
+
+
+def test_guard_blocks_species_only_without_features():
+    """종족만 있고 식별 요소(체인소/D엠블럼 등)가 없어도 차단."""
+    from engine.video.shorts_pipeline import CanonGuardError, enforce_canon_visuals
+
+    data = _scenario_dict()
+    for cut in data["cuts"]:
+        cut["video_prompt"] = (
+            "Cinematic vertical 9:16. A tiger stands in a war room facing "
+            "a five-headed hydra of purple lightning."
+        )
+    with pytest.raises(CanonGuardError, match="식별 요소 누락"):
+        enforce_canon_visuals(ShortsScenario(**data))
+
+
+def test_adaptation_prompt_carries_species_warning():
+    from engine.video.shorts_pipeline import _build_adaptation_prompt
+
+    facts = extract_immutable_facts(_passed_gate())
+    prompt = _build_adaptation_prompt(facts, {"panels": []})
+    assert "tiger" in prompt.lower()
+    assert "종족 필수 단어" in prompt

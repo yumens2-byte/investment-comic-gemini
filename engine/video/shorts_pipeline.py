@@ -347,12 +347,57 @@ def enforce_consistency(
 
 CANON_PATH = Path("config/characters.yaml")
 
-# Canon Guard: 캐릭터별 필수 시각 키워드 (video_prompt 에 반드시 등장)
-# 근거: config/characters.yaml forms[].description / villains[].description 실측
+# ── 영상 트랙 전용 시각 사전 (v1.1.0) ──────────────────────────────
+# 배경: config/characters.yaml 의 forms[].description 은 "체인소+블루바디수트+
+#       D엠블럼" 처럼 장비만 기술하고 종족·해부 구조가 전혀 없다. 이미지 트랙은
+#       REF 이미지를 Gemini 에 직접 주입하므로 문제가 없었으나, Veo T2V 는
+#       이미지를 받지 못해 텍스트만으로 생성한다 → EDT 가 호랑이가 아닌 평범한
+#       남성 히어로로 생성되는 정체성 손상 발생 (2026-08-29 마스터 리포트).
+#
+# 대응: assets/characters/*.png REF 실물 기준으로 "종족 우선" 시각 사전을
+#       영상 트랙 로컬에 정의한다. characters.yaml(이미지 트랙 공용)은
+#       변경하지 않는다 (오염 방지 원칙).
+#
+# species  : 정체성의 핵심. video_prompt 에 반드시 포함되어야 한다 (AND 조건).
+# features : 보조 식별 요소. 최소 1개 이상 포함되어야 한다 (OR 조건).
+# full     : 프롬프트에 주입할 완성 영문 기술.
+
+CANON_VISUAL_SPEC: dict[str, dict[str, object]] = {
+    "CHAR_HERO_001": {
+        "species": ("tiger",),
+        "features": ("chainsaw", "d emblem", "blue bodysuit", "navy bodysuit"),
+        "full": (
+            "anthropomorphic Bengal TIGER-HEADED male hero (NOT a human face): "
+            "orange fur with black stripes, white muzzle, blue eyes, feline ears; "
+            "muscular humanoid body in a navy-blue bodysuit with gold trim and a "
+            "large gold circular 'D' emblem on the chest; orange-furred hands; "
+            "carries a chainsaw whose blade is wrapped in blue lightning and flames"
+        ),
+    },
+    "CHAR_HERO_003": {
+        "species": ("human",),
+        "features": ("flaming hair", "flame hair", "shirtless", "bodybuilder"),
+        "full": (
+            "human male bodybuilder, shirtless with heavily defined muscles and "
+            "glowing ember cracks on the skin, hair made of orange flames, glowing "
+            "amber eyes, black cargo pants with a belt, black combat boots"
+        ),
+    },
+    "CHAR_VILLAIN_004": {
+        "species": ("hydra",),
+        "features": ("five", "serpent", "purple lightning"),
+        "full": (
+            "colossal city-scale five-headed serpentine HYDRA made of black storm "
+            "clouds, each head with glowing purple lightning eyes and white-hot jaws, "
+            "purple lightning arcing across the body, towering over a ruined skyline"
+        ),
+    },
+}
+
+# 하위호환: 기존 Guard 코드가 참조하던 평면 키워드 맵 (species + features)
 CANON_VISUAL_KEYWORDS: dict[str, tuple[str, ...]] = {
-    "CHAR_HERO_001": ("chainsaw", "blue bodysuit", "d emblem"),
-    "CHAR_HERO_003": ("flame hair", "shirtless"),
-    "CHAR_VILLAIN_004": ("hydra", "five", "serpent"),
+    cid: tuple(spec["species"]) + tuple(spec["features"])  # type: ignore[arg-type]
+    for cid, spec in CANON_VISUAL_SPEC.items()
 }
 
 
@@ -405,10 +450,13 @@ def build_canon_visual_block(char_ids: list[str]) -> str:
             if entry.get("description"):
                 lines.append(f"    외형: {entry['description']}")
 
-        keywords = CANON_VISUAL_KEYWORDS.get(cid)
-        if keywords:
+        spec = CANON_VISUAL_SPEC.get(cid)
+        if spec:
+            lines.append(f"    VISUAL(영문, 이 문구를 프롬프트에 반영): {spec['full']}")
+            species = ", ".join(spec["species"])  # type: ignore[arg-type]
             lines.append(
-                "    video_prompt 필수 영어 키워드(축어 포함): " + ", ".join(keywords)
+                f"    ⚠️ 종족 필수 단어(반드시 축어 포함): {species} "
+                "— 이 단어가 빠지면 전혀 다른 캐릭터가 생성된다"
             )
         blocks.append("\n".join(lines))
 
@@ -431,26 +479,32 @@ def enforce_canon_visuals(scenario: "ShortsScenario") -> None:
     (2026-08-29 run #33229690192: 'battle armor' 만 기술되어 비Canon 히어로 생성)
     """
     all_prompts = " ".join(c.video_prompt for c in scenario.cuts).lower()
-    missing: list[str] = []
+    problems: list[str] = []
 
     for cid in [*scenario.hero_ids, scenario.villain_id]:
-        keywords = CANON_VISUAL_KEYWORDS.get(cid)
-        if not keywords:
-            continue  # 키워드 미정의 캐릭터는 검사 제외 (오탐 방지)
-        if not any(kw in all_prompts for kw in keywords):
-            missing.append(f"{cid}(필요: {'/'.join(keywords)})")
+        spec = CANON_VISUAL_SPEC.get(cid)
+        if not spec:
+            continue  # 사전 미정의 캐릭터는 검사 제외 (오탐 방지)
 
-    if missing:
+        species = tuple(spec["species"])  # type: ignore[arg-type]
+        features = tuple(spec["features"])  # type: ignore[arg-type]
+
+        # 종족은 AND — 정체성의 핵심이라 누락되면 다른 캐릭터가 된다.
+        if not any(sp in all_prompts for sp in species):
+            problems.append(f"{cid}: 종족 단어 누락(필수: {'/'.join(species)})")
+            continue
+        # 보조 식별 요소는 최소 1개
+        if features and not any(ft in all_prompts for ft in features):
+            problems.append(f"{cid}: 식별 요소 누락(1개 이상 필요: {'/'.join(features)})")
+
+    if problems:
+        raise CanonGuardError("video_prompt Canon 위반 — " + " | ".join(problems))
+
+    # ALLIANCE 는 히어로 전원이 최소 1컷에 등장해야 한다 (위 루프에서 이미 검사됨).
+    if scenario.scenario_type.upper() == "ALLIANCE" and len(scenario.hero_ids) < 2:
         raise CanonGuardError(
-            "video_prompt 에 Canon 외형 키워드 누락: " + ", ".join(missing)
+            f"ALLIANCE 인데 hero_ids 가 {len(scenario.hero_ids)}명 — 최소 2명 필요"
         )
-
-    # ALLIANCE 는 히어로 전원이 최소 1컷에 등장해야 한다.
-    if scenario.scenario_type.upper() == "ALLIANCE" and len(scenario.hero_ids) > 1:
-        for cid in scenario.hero_ids:
-            keywords = CANON_VISUAL_KEYWORDS.get(cid)
-            if keywords and not any(kw in all_prompts for kw in keywords):
-                raise CanonGuardError(f"ALLIANCE 인데 {cid} 가 컷에 등장하지 않음")
 
 
 def _extract_json(text: str) -> str:
@@ -542,8 +596,10 @@ def _build_adaptation_prompt(facts: dict, script_json: dict) -> str:
         "2. 승패·전개 방향을 원본과 다르게 창작하지 않는다. 시장 수치는 원본 스크립트에 있는 값만 사용한다.\n"
         "3. cuts 는 정확히 3개 (seq 1,2,3 / duration_sec 8 고정). video_prompt 는 영어, "
         "cinematic vertical 9:16, Manhwa style 로 작성한다.\n"
-        "4. **[CANON 캐릭터 외형]의 필수 영어 키워드를 각 video_prompt 에 축어로 반드시 포함**한다. "
-        "영상 생성기는 참조 이미지를 받지 못하므로, 외형을 글로 쓰지 않으면 전혀 다른 캐릭터가 만들어진다. "
+        "4. **[CANON 캐릭터 외형]의 VISUAL 문구를 각 video_prompt 에 그대로 반영**하고, "
+        "**종족 필수 단어(예: tiger)는 반드시 축어로 포함**한다. 캐릭터가 등장하는 컷은 "
+        "인물 묘사를 '종족 + 외형' 순으로 먼저 쓴 뒤 배경·연출을 쓴다. "
+        "영상 생성기는 참조 이미지를 받지 못하므로, 종족을 글로 쓰지 않으면 전혀 다른 캐릭터가 만들어진다. "
         "hero_ids 가 2명 이상이면(ALLIANCE) 전원이 최소 1컷 이상에 등장해야 한다.\n"
         "5. caption / narration_tts 는 한국어. **narration_tts 글자 수 상한을 절대 넘기지 마라: "
         f"cuts 는 각 {CUT_NARRATION_MAX}자 이내, intro/outro 는 각 {BOOKEND_NARRATION_MAX}자 이내** "
