@@ -59,6 +59,14 @@ on:
         description: 'abort 모드 중단 사유 (기록용)'
         required: false
         default: ''
+      force_regenerate:
+        description: '이미 생성된 회차를 재생성 (Veo 비용 재발생 — 주의)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
 
 permissions:
   contents: read
@@ -105,6 +113,7 @@ jobs:
       # hold-and-release: 조립 완료 후 이 시간이 지나면 Publish Shorts 가 자동 발행.
       # 마스터는 그 전에 operation_mode=abort 로 중단할 수 있다.
       PUBLISH_HOLD_HOURS: '6'
+      FORCE_REGENERATE: ${{ inputs.force_regenerate || 'false' }}
       ABORT_REASON: ${{ inputs.abort_reason || 'master_abort' }}
       # DRY_RUN 은 job env 에서 정의하지 않는다.
       # GitHub 표현식 `inputs.dry_run || 'true'` 는 문자열 'false' 의 truthy 판정에
