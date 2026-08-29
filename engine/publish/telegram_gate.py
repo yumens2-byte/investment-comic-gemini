@@ -25,7 +25,7 @@ import logging
 import os
 from pathlib import Path
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 logger = logging.getLogger(__name__)
 
 # Telegram sendVideo body limit (bot API, standard server)
@@ -44,6 +44,7 @@ def send_approval_request(
     scenario_type: str,
     cost_usd: float,
     generation_ms: int,
+    release_at_kst: str | None = None,
 ) -> dict:
     """
     Send final video to master with inline approval buttons.
@@ -78,6 +79,7 @@ def send_approval_request(
         raise TelegramGateError("MASTER_CHAT_ID env not set")
 
     caption = _build_caption(
+        release_at_kst=release_at_kst,
         episode_id=episode_id,
         scenario_type=scenario_type,
         cost_usd=cost_usd,
@@ -157,23 +159,44 @@ def _build_caption(
     cost_usd: float,
     generation_ms: int,
     size_mb: float,
+    release_at_kst: str | None = None,
 ) -> str:
     """Build the master-facing caption with metadata."""
+    header = (
+        "🎬 <b>ICG Shorts — 자동 발행 예정</b>"
+        if release_at_kst
+        else "🎬 <b>ICG Video Trailer — 승인 대기</b>"
+    )
     caption = (
-        f"🎬 <b>ICG Video Trailer — 승인 대기</b>\n\n"
+        f"{header}\n\n"
         f"<b>Episode</b>: <code>{episode_id}</code>\n"
         f"<b>Scenario</b>: {scenario_type}\n"
         f"<b>Cost</b>: ${cost_usd:.4f}\n"
         f"<b>Time</b>: {generation_ms / 1000:.1f}s\n"
         f"<b>Size</b>: {size_mb:.2f} MB\n\n"
-        f"<b>승인 방법</b>\n"
-        f"GitHub Actions → Run Video Trailer → Run workflow\n"
-        f"  operation_mode=<code>publish</code>\n"
-        f"  dry_run=<code>false</code>\n"
-        f"  confirm=<code>YES</code>\n"
-        f"  target_date=<code>{episode_id[6:16]}</code>\n"
-        f"발행하지 않으려면 아무 것도 하지 않으면 됩니다."
     )
+    target_date = episode_id[6:16]
+    if release_at_kst:
+        # hold-and-release: 기본 발행. 마스터가 개입해야 중단된다.
+        caption += (
+            f"\n⏰ <b>{release_at_kst} KST 자동 발행</b>\n"
+            f"그대로 두면 유튜브에 발행됩니다.\n\n"
+            f"<b>중단하려면</b>\n"
+            f"Actions → Run Video Trailer → Run workflow\n"
+            f"  operation_mode=<code>abort</code>\n"
+            f"  dry_run=<code>false</code>\n"
+            f"  target_date=<code>{target_date}</code>"
+        )
+    else:
+        caption += (
+            f"\n<b>승인 방법</b>\n"
+            f"Actions → Run Video Trailer → Run workflow\n"
+            f"  operation_mode=<code>publish</code>\n"
+            f"  dry_run=<code>false</code>\n"
+            f"  confirm=<code>YES</code>\n"
+            f"  target_date=<code>{target_date}</code>\n"
+            f"발행하지 않으려면 아무 것도 하지 않으면 됩니다."
+        )
     if len(caption) > MAX_CAPTION_LEN:
         caption = caption[: MAX_CAPTION_LEN - 3] + "..."
     return caption

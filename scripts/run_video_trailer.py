@@ -43,7 +43,7 @@ def _ensure_repo_root_on_path() -> None:
 
 _ensure_repo_root_on_path()
 
-VERSION = "1.6.2"
+VERSION = "1.7.0"
 
 logger = logging.getLogger("run_video_trailer")
 
@@ -594,22 +594,41 @@ def stage_gate_notify():
 
     cost_usd = float((sb_row or {}).get("veo_cost_usd") or 0.0)
 
+    from datetime import UTC as _UTC
+    from datetime import datetime as _dt
+    from datetime import timedelta as _td
+    from zoneinfo import ZoneInfo as _ZI
+
+    _hold = float(os.environ.get("PUBLISH_HOLD_HOURS", "6"))
+    _release_kst = (_dt.now(_UTC) + _td(hours=_hold)).astimezone(_ZI("Asia/Seoul"))
+
     send_approval_request(
         video_path=str(final_path),
         episode_id=gate.episode_id,
         scenario_type=gate.scenario_type,
         cost_usd=cost_usd,
         generation_ms=int((sb_row or {}).get("generation_ms") or 0),
+        release_at_kst=_release_kst.strftime("%m/%d %H:%M"),
     )
+
+    from datetime import UTC, datetime, timedelta
 
     from engine.common.supabase_client import icg_table
 
-    icg_table("video_assets").update({"status": "pending_approval"}).eq(
-        "episode_id", gate.episode_id
-    ).execute()
-    logger.info(f"[S6] 승인 요청 발송 + pending_approval 전이: {gate.episode_id}")
+    # v1.7.0 hold-and-release: 기본은 자동 발행, 마스터가 개입하면 중단.
+    # release_at 이후 Publish Shorts 워크플로가 자동으로 업로드한다.
+    hold_hours = float(os.environ.get("PUBLISH_HOLD_HOURS", "6"))
+    release_at = datetime.now(UTC) + timedelta(hours=hold_hours)
 
-    logger.info("[PAUSE] awaiting master approval — workflow ends here")
+    icg_table("video_assets").update(
+        {"status": "pending_approval", "release_at": release_at.isoformat()}
+    ).eq("episode_id", gate.episode_id).execute()
+
+    logger.info(
+        f"[S6] 승인 요청 발송 + pending_approval 전이: {gate.episode_id} "
+        f"(hold={hold_hours}h, release_at={release_at.isoformat()})"
+    )
+    logger.info("[PAUSE] 홀드 시작 — 중단하지 않으면 release_at 이후 자동 발행")
 
 
 def _send_telegram_text(chat_id: str, text: str) -> dict:
@@ -794,6 +813,39 @@ def stage_publish_shorts():
     )
 
 
+def stage_abort():
+    """홀드 중인 에피소드의 자동 발행을 중단한다 (마스터 개입 경로).
+
+    v1.7.0: hold-and-release 구조에서 '중단' 은 마스터의 유일한 개입 수단이므로
+    별도 스테이지로 제공한다. status='aborted' 로 전이해 Publish 대상에서 제외.
+    """
+    from engine.common.supabase_client import icg_table
+    from engine.video.shorts_pipeline import _load_video_asset_row
+
+    target_date = _resolve_target_date()
+    episode_id = _get_episode_id(target_date)
+    reason = os.environ.get("ABORT_REASON", "master_abort")
+
+    row = _load_video_asset_row(episode_id)
+    if not row:
+        raise RuntimeError(f"[ABORT] video_assets 행 없음: {episode_id}")
+    if row.get("youtube_video_id"):
+        raise RuntimeError(
+            f"[ABORT] 이미 발행됨({row['youtube_video_id']}) — 중단 불가. "
+            f"YouTube Studio 에서 직접 삭제/비공개 처리하라"
+        )
+
+    dry_run = os.environ.get("DRY_RUN", "true").lower() == "true"
+    if dry_run:
+        logger.info(f"[ABORT] DRY_RUN — 중단 처리 스킵 (대상 status={row.get('status')})")
+        return
+
+    icg_table("video_assets").update(
+        {"status": "aborted", "abort_reason": reason}
+    ).eq("episode_id", episode_id).execute()
+    logger.info(f"[ABORT] 자동 발행 중단 완료: {episode_id} (reason={reason})")
+
+
 def stage_persist_final():
     """STEP S8: status='published' 확정 (youtube_video_id 기록 확인 후에만)."""
     from engine.common.supabase_client import icg_table
@@ -832,6 +884,7 @@ STAGES = {
     "publish_x": stage_publish_x,
     "publish_shorts": stage_publish_shorts,
     "persist_final": stage_persist_final,
+    "abort": stage_abort,
 }
 
 
