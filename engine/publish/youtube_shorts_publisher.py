@@ -33,7 +33,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 logger = logging.getLogger(__name__)
 
 MAX_TITLE_LEN = 100
@@ -104,6 +104,75 @@ def _validate_env() -> None:
             raise YouTubeShortsPublishError(f"{key} env not set")
 
 
+INVALID_GRANT_GUIDE = (
+    "YOUTUBE_REFRESH_TOKEN 이 유효하지 않습니다 (invalid_grant). 흔한 원인 순서대로:\n"
+    "  1) OAuth 동의 화면이 '테스트' 상태 — 이 경우 refresh token 은 7일 후 만료된다.\n"
+    "     → GCP Console > OAuth 동의 화면 > '앱 게시'(프로덕션) 후 토큰 재발급\n"
+    "  2) 토큰이 지금의 CLIENT_ID/SECRET 과 다른 클라이언트로 발급됨\n"
+    "     → 세 값을 반드시 같은 클라이언트에서 한 번에 재발급\n"
+    "  3) refresh token 이 아닌 값(인가 코드/액세스 토큰)이 등록됨\n"
+    "     → refresh token 은 보통 '1//' 로 시작한다\n"
+    "  4) 구글 계정에서 앱 액세스를 취소했거나 비밀번호를 변경함\n"
+    "재발급: python scripts/issue_youtube_token.py --client-id <ID> --client-secret <SECRET>"
+)
+
+
+def _refresh_token_shape_hint() -> str:
+    """토큰 형태만으로 알 수 있는 오등록 힌트 (값 자체는 절대 로그에 남기지 않는다)."""
+    token = os.environ.get("YOUTUBE_REFRESH_TOKEN", "")
+    hints: list[str] = []
+    if token != token.strip():
+        hints.append("앞뒤 공백/개행 포함")
+    stripped = token.strip()
+    if stripped.startswith("ya29."):
+        hints.append("액세스 토큰(ya29.)으로 보임 — refresh token 아님")
+    elif stripped.startswith("4/"):
+        hints.append("인가 코드(4/)로 보임 — refresh token 아님")
+    elif not stripped.startswith("1//"):
+        hints.append("일반적인 refresh token 접두사('1//')가 아님")
+    return " / ".join(hints)
+
+
+def verify_youtube_credentials() -> dict:
+    """
+    업로드 없이 토큰 교환만 시도해 자격증명 유효성을 검사한다 (쿼터 소모 0).
+
+    v1.2.0 신설 근거: 2026-08-29 run #33240050576 에서 업로드 시점에야
+    invalid_grant 이 드러났다. 발행 직전이 아니라 사전에 알 수 있어야 한다.
+
+    Returns:
+        dict: valid(bool), detail(str)
+    """
+    _validate_env()
+
+    try:
+        from google.auth.transport.requests import Request
+        from google.oauth2.credentials import Credentials
+    except ImportError as exc:  # pragma: no cover
+        raise YouTubeShortsPublishError("google-auth 미설치") from exc
+
+    creds = Credentials(
+        None,
+        refresh_token=os.environ["YOUTUBE_REFRESH_TOKEN"].strip(),
+        token_uri=TOKEN_URI,
+        client_id=os.environ["YOUTUBE_CLIENT_ID"].strip(),
+        client_secret=os.environ["YOUTUBE_CLIENT_SECRET"].strip(),
+    )
+    try:
+        creds.refresh(Request())
+    except Exception as exc:
+        hint = _refresh_token_shape_hint()
+        detail = f"{type(exc).__name__}: {exc}"
+        if hint:
+            detail += f" | 토큰 형태 점검: {hint}"
+        logger.error("[youtube_shorts_publisher] 자격증명 검증 실패 — %s", detail)
+        logger.error("[youtube_shorts_publisher] %s", INVALID_GRANT_GUIDE)
+        return {"valid": False, "detail": detail}
+
+    logger.info("[youtube_shorts_publisher] 자격증명 검증 통과 (토큰 갱신 성공)")
+    return {"valid": True, "detail": "ok"}
+
+
 def _build_youtube_service():
     """google-api-python-client 지연 import — 미설치 환경에서도 모듈 import 가능."""
     try:
@@ -117,10 +186,10 @@ def _build_youtube_service():
 
     creds = Credentials(
         None,
-        refresh_token=os.environ["YOUTUBE_REFRESH_TOKEN"],
+        refresh_token=os.environ["YOUTUBE_REFRESH_TOKEN"].strip(),
         token_uri=TOKEN_URI,
-        client_id=os.environ["YOUTUBE_CLIENT_ID"],
-        client_secret=os.environ["YOUTUBE_CLIENT_SECRET"],
+        client_id=os.environ["YOUTUBE_CLIENT_ID"].strip(),
+        client_secret=os.environ["YOUTUBE_CLIENT_SECRET"].strip(),
     )
     return build("youtube", "v3", credentials=creds, cache_discovery=False)
 
@@ -221,7 +290,15 @@ def publish_to_youtube_shorts(
     except ImportError as exc:  # pragma: no cover
         raise YouTubeShortsPublishError("googleapiclient 미설치") from exc
 
-    youtube = _build_youtube_service()
+    try:
+        from google.auth.exceptions import RefreshError
+    except ImportError:  # pragma: no cover
+        RefreshError = ()  # type: ignore[assignment]
+
+    try:
+        youtube = _build_youtube_service()
+    except Exception as exc:
+        raise YouTubeShortsPublishError(f"YouTube 서비스 생성 실패: {exc}") from exc
     media = MediaFileUpload(
         video_path,
         mimetype="video/mp4",
@@ -235,7 +312,15 @@ def publish_to_youtube_shorts(
     )
 
     start = time.monotonic()
-    response = _execute_resumable_upload(request)
+    try:
+        response = _execute_resumable_upload(request)
+    except RefreshError as exc:  # 토큰 만료/취소/불일치
+        hint = _refresh_token_shape_hint()
+        raise YouTubeShortsPublishError(
+            f"OAuth 토큰 갱신 실패({exc}). "
+            + (f"토큰 형태 점검: {hint}. " if hint else "")
+            + INVALID_GRANT_GUIDE
+        ) from exc
     elapsed_ms = int((time.monotonic() - start) * 1000)
 
     video_id = response["id"]

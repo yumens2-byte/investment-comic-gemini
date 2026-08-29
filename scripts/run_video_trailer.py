@@ -43,7 +43,7 @@ def _ensure_repo_root_on_path() -> None:
 
 _ensure_repo_root_on_path()
 
-VERSION = "1.7.0"
+VERSION = "1.7.1"
 
 logger = logging.getLogger("run_video_trailer")
 
@@ -813,6 +813,20 @@ def stage_publish_shorts():
     )
 
 
+def stage_verify_auth():
+    """YouTube 자격증명 사전 검증 (업로드/쿼터 소모 없음).
+
+    v1.7.1: 2026-08-29 run #33240050576 에서 발행 시점에야 invalid_grant 이
+    드러났다. 생성($3.7) 전이나 발행 전에 미리 확인할 수 있어야 한다.
+    """
+    from engine.publish.youtube_shorts_publisher import verify_youtube_credentials
+
+    result = verify_youtube_credentials()
+    if not result["valid"]:
+        raise RuntimeError(f"[VERIFY] YouTube 자격증명 무효: {result['detail']}")
+    logger.info("[VERIFY] YouTube 자격증명 정상 — 발행 가능")
+
+
 def stage_abort():
     """홀드 중인 에피소드의 자동 발행을 중단한다 (마스터 개입 경로).
 
@@ -885,6 +899,7 @@ STAGES = {
     "publish_shorts": stage_publish_shorts,
     "persist_final": stage_persist_final,
     "abort": stage_abort,
+    "verify_auth": stage_verify_auth,
 }
 
 

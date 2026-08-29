@@ -116,3 +116,113 @@ def test_publish_dry_run_skips_upload(monkeypatch, tmp_path):
     assert result["status"] == "dry_run"
     assert result["youtube_video_id"] is None
     assert result["quota_units"] == 0
+
+
+# ── v1.2.0 자격증명 검증 (2026-08-29 run #33240050576 회고) ──
+# 증상: 업로드 중 google.auth RefreshError(invalid_grant) 가 원시 트레이스백으로 노출.
+
+
+def test_token_shape_hint_detects_access_token(monkeypatch):
+    from engine.publish.youtube_shorts_publisher import _refresh_token_shape_hint
+
+    monkeypatch.setenv("YOUTUBE_REFRESH_TOKEN", "ya29.a0AfB_abcdef")
+    assert "액세스 토큰" in _refresh_token_shape_hint()
+
+
+def test_token_shape_hint_detects_auth_code(monkeypatch):
+    from engine.publish.youtube_shorts_publisher import _refresh_token_shape_hint
+
+    monkeypatch.setenv("YOUTUBE_REFRESH_TOKEN", "4/0AeanS0abcdef")
+    assert "인가 코드" in _refresh_token_shape_hint()
+
+
+def test_token_shape_hint_detects_whitespace(monkeypatch):
+    from engine.publish.youtube_shorts_publisher import _refresh_token_shape_hint
+
+    monkeypatch.setenv("YOUTUBE_REFRESH_TOKEN", "1//0abcdef\n")
+    assert "공백" in _refresh_token_shape_hint()
+
+
+def test_token_shape_hint_clean_for_valid_prefix(monkeypatch):
+    from engine.publish.youtube_shorts_publisher import _refresh_token_shape_hint
+
+    monkeypatch.setenv("YOUTUBE_REFRESH_TOKEN", "1//0abcdefGHIJK")
+    assert _refresh_token_shape_hint() == ""
+
+
+def test_verify_returns_invalid_on_refresh_failure(monkeypatch):
+    """invalid_grant 시 예외가 아니라 진단 결과를 돌려줘야 한다 (안내 로그 포함)."""
+    import sys
+    import types
+
+    from engine.publish import youtube_shorts_publisher as ysp
+
+    _set_required_env(monkeypatch)
+    monkeypatch.setenv("YOUTUBE_REFRESH_TOKEN", "1//broken")
+
+    class _Creds:
+        def __init__(self, *a, **k):
+            pass
+
+        def refresh(self, _request):
+            raise RuntimeError("invalid_grant: Bad Request")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "google.oauth2.credentials",
+        types.SimpleNamespace(Credentials=_Creds),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "google.auth.transport.requests",
+        types.SimpleNamespace(Request=lambda: object()),
+    )
+
+    result = ysp.verify_youtube_credentials()
+    assert result["valid"] is False
+    assert "invalid_grant" in result["detail"]
+
+
+def test_verify_returns_valid_on_success(monkeypatch):
+    import sys
+    import types
+
+    from engine.publish import youtube_shorts_publisher as ysp
+
+    _set_required_env(monkeypatch)
+
+    class _Creds:
+        def __init__(self, *a, **k):
+            pass
+
+        def refresh(self, _request):
+            return None
+
+    monkeypatch.setitem(
+        sys.modules,
+        "google.oauth2.credentials",
+        types.SimpleNamespace(Credentials=_Creds),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "google.auth.transport.requests",
+        types.SimpleNamespace(Request=lambda: object()),
+    )
+
+    assert ysp.verify_youtube_credentials()["valid"] is True
+
+
+def test_verify_requires_env(monkeypatch):
+    from engine.publish import youtube_shorts_publisher as ysp
+
+    _set_required_env(monkeypatch)
+    monkeypatch.delenv("YOUTUBE_REFRESH_TOKEN")
+    with pytest.raises(YouTubeShortsPublishError, match="YOUTUBE_REFRESH_TOKEN"):
+        ysp.verify_youtube_credentials()
+
+
+def test_invalid_grant_guide_is_actionable():
+    from engine.publish.youtube_shorts_publisher import INVALID_GRANT_GUIDE
+
+    assert "테스트" in INVALID_GRANT_GUIDE  # 7일 만료 원인
+    assert "issue_youtube_token.py" in INVALID_GRANT_GUIDE  # 재발급 경로
