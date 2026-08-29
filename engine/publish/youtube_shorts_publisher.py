@@ -33,7 +33,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 logger = logging.getLogger(__name__)
 
 MAX_TITLE_LEN = 100
@@ -104,17 +104,60 @@ def _validate_env() -> None:
             raise YouTubeShortsPublishError(f"{key} env not set")
 
 
-INVALID_GRANT_GUIDE = (
-    "YOUTUBE_REFRESH_TOKEN 이 유효하지 않습니다 (invalid_grant). 흔한 원인 순서대로:\n"
-    "  1) OAuth 동의 화면이 '테스트' 상태 — 이 경우 refresh token 은 7일 후 만료된다.\n"
-    "     → GCP Console > OAuth 동의 화면 > '앱 게시'(프로덕션) 후 토큰 재발급\n"
-    "  2) 토큰이 지금의 CLIENT_ID/SECRET 과 다른 클라이언트로 발급됨\n"
-    "     → 세 값을 반드시 같은 클라이언트에서 한 번에 재발급\n"
-    "  3) refresh token 이 아닌 값(인가 코드/액세스 토큰)이 등록됨\n"
-    "     → refresh token 은 보통 '1//' 로 시작한다\n"
-    "  4) 구글 계정에서 앱 액세스를 취소했거나 비밀번호를 변경함\n"
-    "재발급: python scripts/issue_youtube_token.py --client-id <ID> --client-secret <SECRET>"
+# OAuth 오류코드별 원인 안내 (v1.3.0)
+# 근거: 2026-08-29 run 에서 invalid_grant → unauthorized_client 로 코드가 바뀌었는데
+#       안내문이 invalid_grant 고정이라 오진을 유발했다. 코드별로 분기한다.
+_OAUTH_GUIDES: dict[str, str] = {
+    "unauthorized_client": (
+        "unauthorized_client — 토큰과 클라이언트가 서로 맞지 않습니다. 가장 흔한 원인:\n"
+        "  1) GitHub Secrets 의 CLIENT_ID/CLIENT_SECRET 이 토큰 발급에 쓴 값과 다름\n"
+        "     → 로컬에서 토큰을 새로 발급했다면 그때 입력한 ID/SECRET 도 함께 갱신해야 한다.\n"
+        "       (세 값은 반드시 같은 OAuth 클라이언트에서 나온 한 세트여야 한다)\n"
+        "  2) CLIENT_SECRET 이 다른 클라이언트의 것이거나 재생성되어 무효\n"
+        "  3) OAuth 클라이언트 유형이 '데스크톱 앱'이 아님 (웹 애플리케이션 등)\n"
+        "     → GCP Console > 사용자 인증 정보 에서 유형 확인, 필요 시 데스크톱 앱으로 새로 생성"
+    ),
+    "invalid_client": (
+        "invalid_client — CLIENT_ID 또는 CLIENT_SECRET 자체가 잘못되었습니다.\n"
+        "  → GCP Console > API 및 서비스 > 사용자 인증 정보 에서 두 값을 다시 복사해 등록"
+    ),
+    "invalid_grant": (
+        "invalid_grant — refresh token 이 만료·취소되었거나 형식이 잘못되었습니다.\n"
+        "  1) OAuth 동의 화면이 '테스트' 상태면 토큰이 7일 후 만료된다 → '앱 게시'(프로덕션)\n"
+        "  2) refresh token 이 아닌 값(인가 코드 '4/', 액세스 토큰 'ya29.')이 등록됨\n"
+        "  3) 구글 계정에서 앱 액세스를 취소했거나 비밀번호를 변경함"
+    ),
+}
+
+_GUIDE_TAIL = (
+    "\n[공통] 세 값(CLIENT_ID / CLIENT_SECRET / REFRESH_TOKEN)은 반드시 같은 클라이언트에서 "
+    "나온 한 세트여야 한다. 토큰만 새로 발급하고 ID/SECRET 을 예전 값으로 두면 실패한다.\n"
+    "재발급: python get_youtube_token.py (또는 scripts/issue_youtube_token.py)\n"
+    "검증:   Actions > Run Video Trailer > operation_mode=verify_auth"
 )
+
+# 하위호환 (기존 참조/테스트 유지)
+INVALID_GRANT_GUIDE = _OAUTH_GUIDES["invalid_grant"] + _GUIDE_TAIL
+
+
+def oauth_error_guide(error_text: str) -> str:
+    """오류 문자열에서 OAuth 코드를 식별해 해당 원인 안내를 돌려준다."""
+    lowered = str(error_text).lower()
+    for code, guide in _OAUTH_GUIDES.items():
+        if code in lowered:
+            return guide + _GUIDE_TAIL
+    return (
+        "OAuth 인증 실패. 세 값이 같은 클라이언트 한 세트인지 먼저 확인하십시오." + _GUIDE_TAIL
+    )
+
+
+def client_id_fingerprint() -> str:
+    """CLIENT_ID 식별용 지문 (공개 값이지만 안전하게 축약해서 비교용으로만 출력)."""
+    cid = os.environ.get("YOUTUBE_CLIENT_ID", "").strip()
+    if not cid:
+        return "(미설정)"
+    head = cid.split("-")[0]
+    return f"{head}-…apps.googleusercontent.com"
 
 
 def _refresh_token_shape_hint() -> str:
@@ -166,7 +209,12 @@ def verify_youtube_credentials() -> dict:
         if hint:
             detail += f" | 토큰 형태 점검: {hint}"
         logger.error("[youtube_shorts_publisher] 자격증명 검증 실패 — %s", detail)
-        logger.error("[youtube_shorts_publisher] %s", INVALID_GRANT_GUIDE)
+        logger.error(
+            "[youtube_shorts_publisher] 사용 중인 CLIENT_ID: %s "
+            "(토큰 발급 때 입력한 값과 같은지 확인)",
+            client_id_fingerprint(),
+        )
+        logger.error("[youtube_shorts_publisher] %s", oauth_error_guide(detail))
         return {"valid": False, "detail": detail}
 
     logger.info("[youtube_shorts_publisher] 자격증명 검증 통과 (토큰 갱신 성공)")
@@ -318,8 +366,9 @@ def publish_to_youtube_shorts(
         hint = _refresh_token_shape_hint()
         raise YouTubeShortsPublishError(
             f"OAuth 토큰 갱신 실패({exc}). "
+            f"사용 중인 CLIENT_ID={client_id_fingerprint()}. "
             + (f"토큰 형태 점검: {hint}. " if hint else "")
-            + INVALID_GRANT_GUIDE
+            + oauth_error_guide(str(exc))
         ) from exc
     elapsed_ms = int((time.monotonic() - start) * 1000)
 
