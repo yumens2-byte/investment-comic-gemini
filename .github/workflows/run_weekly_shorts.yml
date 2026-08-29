@@ -1,0 +1,153 @@
+name: Weekly Digest Shorts (ICG Video Track)
+
+# ─────────────────────────────────────────────────────────────
+# 주간 다이제스트 (v1.0.0 / 2026-08-29 마스터 확정)
+#
+# 정책: 월~금은 영상을 만들지 않는다(비용 0). 평일 episode_assets 를 누적하고,
+#       월요일 오전에 지난주 월~금 메인 스토리를 18초 1편으로 정리해 발행한다.
+#
+# 규격: 인트로 3s + Veo 6s × 2컷 + 아웃트로 3s = 18초
+# 비용: Veo $1.20 + 부대 ≈ $1.32/주 (월 약 $5.7 ≈ ₩7,900)
+#
+# cron ↔ 동작 매핑 (cron 수정 시 이 주석 동기화 필수):
+#   '13 22 * * 0' (UTC 일요일 22:13) = KST 월요일 07:13
+#     → run_market(KST 01:30) 과 시간대가 겹치지 않는다
+#     → 오프셋 :13분 — GitHub Actions 정각 고부하 skip 방지 규약
+#
+# 발행: W7 에서 텔레그램 검토본 발송 + release_at(+6h) 기록 →
+#       publish_shorts.yml 이 홀드 경과 후 자동 업로드.
+#       중단은 Run Video Trailer > operation_mode=abort.
+# ─────────────────────────────────────────────────────────────
+
+on:
+  schedule:
+    - cron: '13 22 * * 0'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'true = 생성/발행 없음(안전). 실제 생성은 false 선택 필수'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      log_level:
+        description: 'Console log level'
+        required: false
+        default: 'INFO'
+        type: choice
+        options:
+          - INFO
+          - DEBUG
+          - WARNING
+      force_regenerate:
+        description: '이미 생성된 주차를 재생성 (Veo 비용 재발생 — 주의)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: icg-weekly-shorts
+  cancel-in-progress: false
+
+jobs:
+  weekly_digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      TZ: Asia/Seoul
+      ANTHROPIC_API_KEY:        ${{ secrets.ANTHROPIC_API_KEY }}
+      # ICG 규약(doc 19 patch): 이미지/Veo/TTS 모두 이 키 고정
+      GEMINI_API_SUB_PAY_KEY:   ${{ secrets.GEMINI_API_SUB_PAY_KEY }}
+      SUPABASE_URL:             ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY:             ${{ secrets.SUPABASE_KEY }}
+      SUPABASE_SCHEMA:          icg
+      TELEGRAM_BOT_TOKEN:       ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      MASTER_CHAT_ID:           ${{ secrets.TELEGRAM_PAID_CHANNEL_ID }}
+      YOUTUBE_CLIENT_ID:        ${{ secrets.YOUTUBE_CLIENT_ID }}
+      YOUTUBE_CLIENT_SECRET:    ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+      YOUTUBE_REFRESH_TOKEN:    ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+      # 주간 1편 기준 월 상한 (영상 트랙 전용 — 메인 파이프라인 예산 보호)
+      VIDEO_BUDGET_USD_MONTHLY: '8'
+      PUBLISH_HOLD_HOURS:       '6'
+      LOG_LEVEL:                ${{ inputs.log_level || 'INFO' }}
+      FORCE_REGENERATE:         ${{ inputs.force_regenerate || 'false' }}
+    steps:
+      - name: Normalize run flags (DRY_RUN fail-safe)
+        env:
+          EVENT_NAME:    ${{ github.event_name }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          # schedule 실행이 정규 발행 경로이므로 false 로 수렴시킨다.
+          # workflow_dispatch 는 명시 선택을 따르며 미선택 시 안전하게 true.
+          if [ "$EVENT_NAME" = "schedule" ]; then
+            RESOLVED=false
+          elif [ "$INPUT_DRY_RUN" = "false" ]; then
+            RESOLVED=false
+          else
+            RESOLVED=true
+          fi
+          echo "DRY_RUN=$RESOLVED" >> "$GITHUB_ENV"
+          echo "Resolved DRY_RUN=$RESOLVED (event=$EVENT_NAME, raw_input='$INPUT_DRY_RUN')"
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install FFmpeg + CJK fonts
+        # 폰트 미설치 시 한글 자막이 두부(□)로 깨진다 (2026-08-29 회고).
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          sudo apt-get install -y fonts-noto-cjk --no-install-recommends -q
+          fc-cache -f
+          if ! fc-list | grep -qi "noto sans cjk"; then
+            echo "::error::Noto Sans CJK 폰트 미설치 — 자막이 깨지므로 중단"
+            exit 1
+          fi
+
+      - name: Install Python deps
+        run: pip install -r requirements-video.txt
+
+      - name: W1 weekly gate (지난주 월~금 수집)
+        run: python -m scripts.run_video_trailer --stage weekly_gate
+
+      - name: W3 weekly adaptation (메인 스토리 정리)
+        run: python -m scripts.run_video_trailer --stage weekly_narrative
+
+      - name: W4+W5 bookend images + Veo 2 cuts
+        run: python -m scripts.run_video_trailer --stage weekly_media
+
+      - name: W6 assembly (18s)
+        run: python -m scripts.run_video_trailer --stage weekly_assembly
+
+      - name: W7 telegram review + hold
+        run: python -m scripts.run_video_trailer --stage weekly_notify
+
+      - name: Summarize logs
+        if: always()
+        run: |
+          for f in $(find logs -type f -name "*.log" 2>/dev/null | sort); do
+            echo "---------- $f ----------"
+            tail -40 "$f"
+          done
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: video-${{ github.run_id }}
+          path: |
+            output/videos/
+            logs/
+          retention-days: 30
