@@ -260,3 +260,46 @@ def test_generate_refuses_unpassed_gate():
     )
     with pytest.raises(sp.ShortsPipelineError, match="gate 미통과"):
         generate_shorts_scenario(gate, dry_run=True)
+
+
+# ── Claude SDK 호환 (2026-08-29 run #33229450042 회고) ──────
+
+
+def test_generate_uses_sdk_compat_kwargs_without_temperature(monkeypatch, tmp_path):
+    """SDK 1.0(temperature 미지원)에서도 create 호출이 성공해야 한다."""
+    import json as _json
+    import sys
+    import types
+
+    captured = {}
+
+    class _FakeMessages:
+        # SDK 1.0 시그니처: temperature 없음
+        def create(self, *, model, max_tokens, system, messages):
+            captured["kwargs"] = {
+                "model": model,
+                "max_tokens": max_tokens,
+                "system": system,
+                "messages": messages,
+            }
+            payload = _scenario_dict()
+            block = types.SimpleNamespace(type="text", text=_json.dumps(payload))
+            usage = types.SimpleNamespace(input_tokens=100, output_tokens=200)
+            return types.SimpleNamespace(content=[block], usage=usage)
+
+    class _FakeAnthropic:
+        def __init__(self, *a, **k):
+            self.messages = _FakeMessages()
+
+    monkeypatch.setitem(
+        sys.modules, "anthropic", types.SimpleNamespace(Anthropic=_FakeAnthropic)
+    )
+    monkeypatch.setenv("DRY_RUN", "false")
+
+    scenario, cost = generate_shorts_scenario(_passed_gate())
+
+    assert scenario is not None
+    assert "temperature" not in captured["kwargs"]  # SDK 1.0 호환
+    assert captured["kwargs"]["model"] == "claude-sonnet-4-6"
+    assert captured["kwargs"]["system"]
+    assert cost > 0
