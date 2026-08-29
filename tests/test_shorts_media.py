@@ -9,7 +9,6 @@ import pytest
 
 from engine.video.audio_overlay import _pcm_to_wav_bytes
 from engine.video.shorts_media import (
-    BOOKEND_DURATION_SEC,
     MediaResult,
     build_subtitle_items,
     build_timeline,
@@ -59,11 +58,22 @@ def _scenario() -> ShortsScenario:
 # ── 타임라인/자막 ────────────────────────────────────────────
 
 
-def test_timeline_total_30s():
-    tl = build_timeline(_scenario())
+def test_timeline_structure_and_total():
+    """v1.1.0: 북엔드가 가변이므로 총 길이는 24s + intro/outro 실제 길이."""
+    from engine.video.shorts_media import bookend_duration
+
+    sc = _scenario()
+    tl = build_timeline(sc)
     assert [t.label for t in tl] == ["intro", "cut1", "cut2", "cut3", "outro"]
     assert tl[0].start_sec == 0.0
-    assert tl[-1].end_sec == 8 * 3 + BOOKEND_DURATION_SEC * 2  # 30초
+    expected = (
+        8 * 3
+        + bookend_duration(sc.intro.narration_tts)
+        + bookend_duration(sc.outro.narration_tts)
+    )
+    assert tl[-1].end_sec == expected
+    assert expected == sc.total_duration_sec()  # 스키마 계산과 일치
+    assert expected < 60  # Shorts 제한
 
 
 def test_timeline_contiguous():
@@ -153,3 +163,68 @@ def test_mix_narrations_with_segment(tmp_path):
     out = mix_narrations(src, [(0.1, wav)], tmp_path / "out.mp4")
     assert out.exists()
     assert out.stat().st_size > 1000
+
+
+# ── v1.1.0: 나레이션 슬롯 보정 / 북엔드 가변 길이 ────────────
+# (2026-08-29 run #33229690192 회고: TTS 12~15s vs 슬롯 3~8s → 음성 겹침)
+
+
+def test_bookend_duration_scales_with_narration():
+    from engine.video.shorts_media import bookend_duration
+
+    assert bookend_duration("짧다") == 3  # 하한
+    assert bookend_duration("가" * 25) == 5
+    assert bookend_duration("가" * 100) == 6  # 상한
+
+
+def test_timeline_uses_variable_bookend():
+    sc = _scenario()
+    sc.outro.narration_tts = "투자 참고 정보이며 투자 권유가 아닙니다"  # 21자 → 5초
+    tl = build_timeline(sc)
+    outro = tl[-1]
+    assert outro.end_sec - outro.start_sec == 5
+    # 컷 구간은 그대로 8초 유지
+    assert tl[1].end_sec - tl[1].start_sec == 8
+
+
+def test_timeline_still_contiguous_with_variable_bookend():
+    sc = _scenario()
+    sc.intro.narration_tts = "가" * 28
+    tl = build_timeline(sc)
+    for prev, nxt in zip(tl, tl[1:]):
+        assert prev.end_sec == nxt.start_sec
+
+
+@pytest.mark.skipif(not FFMPEG, reason="ffmpeg not available")
+def test_fit_narration_speeds_up_overlong_audio(tmp_path):
+    """슬롯 초과 나레이션이 슬롯 안으로 들어와야 한다 (겹침 방지 최종 방어선)."""
+    from engine.video.shorts_media import fit_narration_to_slot, probe_duration
+
+    src = tmp_path / "long.wav"
+    src.write_bytes(_pcm_to_wav_bytes(b"\x00\x01" * (24000 * 10)))  # 10초
+    assert probe_duration(src) == pytest.approx(10.0, abs=0.2)
+
+    out = fit_narration_to_slot(src, slot_sec=8.0, output_path=tmp_path / "fit.wav")
+    assert out != src
+    assert probe_duration(out) <= 8.0  # 슬롯 이내
+
+
+@pytest.mark.skipif(not FFMPEG, reason="ffmpeg not available")
+def test_fit_narration_keeps_short_audio_untouched(tmp_path):
+    from engine.video.shorts_media import fit_narration_to_slot
+
+    src = tmp_path / "short.wav"
+    src.write_bytes(_pcm_to_wav_bytes(b"\x00\x01" * (24000 * 2)))  # 2초
+    out = fit_narration_to_slot(src, slot_sec=8.0, output_path=tmp_path / "fit.wav")
+    assert out == src  # 원본 그대로
+
+
+@pytest.mark.skipif(not FFMPEG, reason="ffmpeg not available")
+def test_fit_narration_truncates_when_speedup_insufficient(tmp_path):
+    """가속 상한(1.3배)으로도 부족하면 절단해서라도 슬롯을 지켜야 한다."""
+    from engine.video.shorts_media import fit_narration_to_slot, probe_duration
+
+    src = tmp_path / "verylong.wav"
+    src.write_bytes(_pcm_to_wav_bytes(b"\x00\x01" * (24000 * 15)))  # 15초
+    out = fit_narration_to_slot(src, slot_sec=5.0, output_path=tmp_path / "fit.wav")
+    assert probe_duration(out) <= 5.0

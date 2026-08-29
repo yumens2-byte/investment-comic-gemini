@@ -25,11 +25,12 @@ import logging
 import os
 import time
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
-VERSION = "1.0.1"
+VERSION = "1.1.0"
 logger = logging.getLogger(__name__)
 
 # claude_client._MODEL_PRIMARY 와 동일 값 (내부 상수 직접 import 는 결합도 회피)
@@ -41,10 +42,21 @@ _SYSTEM_PROMPT = (
     "세로형 숏폼 영상 시나리오로만 각색한다. 항상 유효한 JSON 하나만 출력한다."
 )
 
+# ── 나레이션 길이 제한 (2026-08-29 run #33229690192 회고) ────────────
+# 한국어 TTS 실측 발화 속도 ≈ 5.5자/초. 슬롯을 넘으면 다음 구간과 겹친다.
+# 여유 10%를 둔 5자/초 기준으로 스키마에서 강제한다.
+CHARS_PER_SEC = 5
+# 북엔드는 조립 단계에서 3~6초로 가변 확장되므로 6초(30자)까지 허용한다.
+# (아웃트로는 면책 문구가 필수라 3초/15자로는 물리적으로 부족 — 실측 회고 반영)
+BOOKEND_NARRATION_MAX = 30
+BOOKEND_MIN_SEC = 3
+BOOKEND_MAX_SEC = 6
+CUT_NARRATION_MAX = 40  # 8초 슬롯 기준
+
 # Veo 3.1 fast preview 제약: 컷당 4/6/8초 (engine/video/veo_client.py 실측)
 ALLOWED_CUT_DURATIONS = (4, 6, 8)
 DEFAULT_CUT_DURATION = 8
-BOOKEND_DURATION_SEC = 3  # 인트로/아웃트로 정지 이미지 노출 시간
+BOOKEND_DURATION_SEC = 3  # 인트로/아웃트로 기본 노출 시간 (나레이션 길이로 가변 확장)
 
 
 class ShortsPipelineError(Exception):
@@ -53,6 +65,10 @@ class ShortsPipelineError(Exception):
 
 class ConsistencyGuardError(ShortsPipelineError):
     """각색 결과가 Immutable Facts 와 불일치."""
+
+
+class CanonGuardError(ShortsPipelineError):
+    """video_prompt 에 Canon 캐릭터 외형 지시가 누락됨."""
 
 
 def _is_dry_run(dry_run: Optional[bool] = None) -> bool:
@@ -246,7 +262,8 @@ class ShortsCut(BaseModel):
 
     seq: int = Field(ge=1, le=3)
     caption: str = Field(min_length=1, max_length=60)
-    narration_tts: str = Field(min_length=1, max_length=220)
+    # 8초 슬롯 × 5자/초 — 초과 시 나레이션이 다음 컷과 겹친다 (v1.1.0 강제)
+    narration_tts: str = Field(min_length=1, max_length=CUT_NARRATION_MAX)
     video_prompt: str = Field(min_length=20)
     duration_sec: Literal[4, 6, 8] = DEFAULT_CUT_DURATION
 
@@ -255,7 +272,8 @@ class ShortsBookend(BaseModel):
     """인트로/아웃트로 정지 이미지."""
 
     caption: str = Field(min_length=1, max_length=60)
-    narration_tts: str = Field(min_length=1, max_length=220)
+    # 3초 슬롯 기준. 초과분은 조립 단계에서 북엔드 길이를 늘려 흡수한다.
+    narration_tts: str = Field(min_length=1, max_length=BOOKEND_NARRATION_MAX)
     image_prompt: str = Field(min_length=20)
 
 
@@ -283,7 +301,18 @@ class ShortsScenario(BaseModel):
         return self
 
     def total_duration_sec(self) -> int:
-        return sum(c.duration_sec for c in self.cuts) + BOOKEND_DURATION_SEC * 2
+        """총 길이 = 3컷 + 가변 북엔드 2개 (나레이션 길이 기반)."""
+        import math as _math
+
+        def _bookend(text: str) -> int:
+            needed = _math.ceil(len(text) / CHARS_PER_SEC)
+            return max(BOOKEND_MIN_SEC, min(BOOKEND_MAX_SEC, needed))
+
+        return (
+            sum(c.duration_sec for c in self.cuts)
+            + _bookend(self.intro.narration_tts)
+            + _bookend(self.outro.narration_tts)
+        )
 
 
 def enforce_consistency(
@@ -314,6 +343,114 @@ def enforce_consistency(
 # ────────────────────────────────────────────────────────
 # STEP S2 — Claude 각색 호출
 # ────────────────────────────────────────────────────────
+
+
+CANON_PATH = Path("config/characters.yaml")
+
+# Canon Guard: 캐릭터별 필수 시각 키워드 (video_prompt 에 반드시 등장)
+# 근거: config/characters.yaml forms[].description / villains[].description 실측
+CANON_VISUAL_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "CHAR_HERO_001": ("chainsaw", "blue bodysuit", "d emblem"),
+    "CHAR_HERO_003": ("flame hair", "shirtless"),
+    "CHAR_VILLAIN_004": ("hydra", "five", "serpent"),
+}
+
+
+def _load_canon() -> dict:
+    """config/characters.yaml 로드 (실패 시 빈 dict — 각색은 계속 진행)."""
+    try:
+        import yaml
+
+        if not CANON_PATH.exists():
+            logger.warning("[shorts_pipeline] canon 파일 없음: %s", CANON_PATH)
+            return {}
+        return yaml.safe_load(CANON_PATH.read_text(encoding="utf-8")) or {}
+    except Exception as exc:
+        logger.warning("[shorts_pipeline] canon 로드 실패 (무시): %s", exc)
+        return {}
+
+
+def build_canon_visual_block(char_ids: list[str]) -> str:
+    """
+    Veo 프롬프트용 Canon 외형 지시문 생성.
+
+    Veo T2V 는 참조 이미지를 받지 못하므로(veo_client 실측), 캐릭터 일관성은
+    텍스트 프롬프트로만 강제할 수 있다. characters.yaml 의 forms description /
+    villain description / canon_prompts / style_lock 을 조합한다.
+    기존 이미지 트랙(prompt_builder._get_local_canon_designs)과 동일 데이터 소스.
+    """
+    canon = _load_canon()
+    if not canon:
+        return ""
+
+    heroes = canon.get("heroes", {}) or {}
+    villains = canon.get("villains", {}) or {}
+    blocks: list[str] = []
+
+    for cid in char_ids:
+        entry = heroes.get(cid) or villains.get(cid) or {}
+        if not entry:
+            logger.warning("[shorts_pipeline] canon 미등록 캐릭터: %s", cid)
+            continue
+        name = entry.get("name_en") or entry.get("name_ko") or cid
+        lines = [f"- {name} ({cid}):"]
+
+        if cid in heroes:
+            form_key = entry.get("default_form") or "form0"
+            form = (entry.get("forms") or {}).get(form_key) or {}
+            desc = form.get("description") or ""
+            if desc:
+                lines.append(f"    외형({form_key}): {desc}")
+        else:
+            if entry.get("description"):
+                lines.append(f"    외형: {entry['description']}")
+
+        keywords = CANON_VISUAL_KEYWORDS.get(cid)
+        if keywords:
+            lines.append(
+                "    video_prompt 필수 영어 키워드(축어 포함): " + ", ".join(keywords)
+            )
+        blocks.append("\n".join(lines))
+
+    if not blocks:
+        return ""
+
+    style = canon.get("style_lock", {}) or {}
+    style_line = ", ".join(f"{k}={v}" for k, v in style.items())
+    return (
+        "[CANON 캐릭터 외형 — 반드시 준수]\n"
+        + "\n".join(blocks)
+        + (f"\n[STYLE LOCK] {style_line}" if style_line else "")
+    )
+
+
+def enforce_canon_visuals(scenario: "ShortsScenario") -> None:
+    """
+    Canon Guard — 각 컷의 video_prompt 에 등장 캐릭터의 필수 시각 키워드가
+    포함되었는지 검사한다. 미포함 시 Veo 가 임의 캐릭터를 생성하므로 차단한다.
+    (2026-08-29 run #33229690192: 'battle armor' 만 기술되어 비Canon 히어로 생성)
+    """
+    all_prompts = " ".join(c.video_prompt for c in scenario.cuts).lower()
+    missing: list[str] = []
+
+    for cid in [*scenario.hero_ids, scenario.villain_id]:
+        keywords = CANON_VISUAL_KEYWORDS.get(cid)
+        if not keywords:
+            continue  # 키워드 미정의 캐릭터는 검사 제외 (오탐 방지)
+        if not any(kw in all_prompts for kw in keywords):
+            missing.append(f"{cid}(필요: {'/'.join(keywords)})")
+
+    if missing:
+        raise CanonGuardError(
+            "video_prompt 에 Canon 외형 키워드 누락: " + ", ".join(missing)
+        )
+
+    # ALLIANCE 는 히어로 전원이 최소 1컷에 등장해야 한다.
+    if scenario.scenario_type.upper() == "ALLIANCE" and len(scenario.hero_ids) > 1:
+        for cid in scenario.hero_ids:
+            keywords = CANON_VISUAL_KEYWORDS.get(cid)
+            if keywords and not any(kw in all_prompts for kw in keywords):
+                raise CanonGuardError(f"ALLIANCE 인데 {cid} 가 컷에 등장하지 않음")
 
 
 def _extract_json(text: str) -> str:
@@ -369,7 +506,7 @@ def extract_immutable_facts(gate: GateResult) -> dict:
 
 
 def _build_adaptation_prompt(facts: dict, script_json: dict) -> str:
-    """8패널 스크립트 → 쇼츠 각색 사용자 프롬프트 (Immutable Facts 강제 주입)."""
+    """8패널 스크립트 → 쇼츠 각색 사용자 프롬프트 (Immutable Facts + Canon 강제 주입)."""
     schema_hint = {
         "episode_id": facts["episode_id"],
         "episode_date": facts["episode_date"],
@@ -392,22 +529,31 @@ def _build_adaptation_prompt(facts: dict, script_json: dict) -> str:
         "youtube_title": "...",
         "youtube_description": "...",
     }
+    canon_block = build_canon_visual_block([*facts["hero_ids"], facts["villain_id"]])
     return (
         "당신은 투자 코믹 유니버스의 영상 각색 작가다. 아래 [원본 8패널 스크립트]를 "
         "약 30초 세로형 YouTube Shorts 시나리오(인트로 이미지 1 + 8초 영상 3컷 + 아웃트로 이미지 1)로 "
         "각색하라.\n\n"
         "[IMMUTABLE FACTS — 절대 변경 금지]\n"
         f"{json.dumps(facts, ensure_ascii=False, indent=2)}\n\n"
+        f"{canon_block}\n\n"
         "[각색 규칙]\n"
         "1. outcome / hero_ids / villain_id / scenario_type 은 위 값을 그대로 출력 JSON 에 복사한다.\n"
         "2. 승패·전개 방향을 원본과 다르게 창작하지 않는다. 시장 수치는 원본 스크립트에 있는 값만 사용한다.\n"
         "3. cuts 는 정확히 3개 (seq 1,2,3 / duration_sec 8 고정). video_prompt 는 영어, "
         "cinematic vertical 9:16, Manhwa style 로 작성한다.\n"
-        "4. caption / narration_tts 는 한국어. narration_tts 는 컷당 8초 내 발화 가능한 분량(약 60자 이내).\n"
-        "5. intro.image_prompt / outro.image_prompt 는 영어 정지 이미지 프롬프트 (vertical 9:16).\n"
-        "6. outro 의 narration_tts 말미에 '투자 참고 정보이며, 투자 권유가 아닙니다' 취지의 면책을 포함한다.\n"
-        "7. youtube_title 은 한국어 60자 이내 후킹형(과장 금지). youtube_description 은 면책 문구 포함.\n"
-        "8. 출력은 아래 구조의 JSON 하나만. 마크다운/설명/백틱 금지.\n\n"
+        "4. **[CANON 캐릭터 외형]의 필수 영어 키워드를 각 video_prompt 에 축어로 반드시 포함**한다. "
+        "영상 생성기는 참조 이미지를 받지 못하므로, 외형을 글로 쓰지 않으면 전혀 다른 캐릭터가 만들어진다. "
+        "hero_ids 가 2명 이상이면(ALLIANCE) 전원이 최소 1컷 이상에 등장해야 한다.\n"
+        "5. caption / narration_tts 는 한국어. **narration_tts 글자 수 상한을 절대 넘기지 마라: "
+        f"cuts 는 각 {CUT_NARRATION_MAX}자 이내, intro/outro 는 각 {BOOKEND_NARRATION_MAX}자 이내** "
+        "(초과하면 음성이 다음 장면과 겹친다). 공백·문장부호 포함으로 센다.\n"
+        "6. intro.image_prompt / outro.image_prompt 는 영어 정지 이미지 프롬프트 (vertical 9:16). "
+        "여기에도 등장 캐릭터의 Canon 외형 키워드를 포함한다.\n"
+        f"7. outro 의 narration_tts 에 '투자 참고, 투자 권유 아님' 취지를 "
+        f"{BOOKEND_NARRATION_MAX}자 이내로 압축해 넣는다.\n"
+        "8. youtube_title 은 한국어 60자 이내 후킹형(과장 금지). youtube_description 은 면책 문구 포함.\n"
+        "9. 출력은 아래 구조의 JSON 하나만. 마크다운/설명/백틱 금지.\n\n"
         "[출력 JSON 구조]\n"
         f"{json.dumps(schema_hint, ensure_ascii=False, indent=2)}\n\n"
         "[원본 8패널 스크립트]\n"
@@ -480,6 +626,7 @@ def generate_shorts_scenario(
                 hero_ids=facts["hero_ids"],
                 villain_id=facts["villain_id"],
             )
+            enforce_canon_visuals(scenario)
             # 생성당 비용 로그 — gemini/veo 클라이언트와 동일 스타일
             logger.info(
                 "[shorts_pipeline] 각색 완료: episode_id=%s attempt=%d "
@@ -492,7 +639,12 @@ def generate_shorts_scenario(
                 cost,
             )
             return scenario, cost
-        except (json.JSONDecodeError, ValueError, ConsistencyGuardError) as exc:
+        except (
+            json.JSONDecodeError,
+            ValueError,
+            ConsistencyGuardError,
+            CanonGuardError,
+        ) as exc:
             last_error = exc
             logger.warning(
                 "[shorts_pipeline] 각색 검증 실패 attempt=%d/%d cost=$%.4f: %s",

@@ -24,6 +24,7 @@ DRY_RUN 규약: os.environ.get("DRY_RUN", "true").lower() == "true"
 from __future__ import annotations
 
 import logging
+import math
 import os
 import subprocess
 from dataclasses import dataclass, field
@@ -32,16 +33,21 @@ from typing import Optional
 
 from engine.video.shorts_pipeline import (
     BOOKEND_DURATION_SEC,
+    BOOKEND_MAX_SEC,
+    BOOKEND_MIN_SEC,
+    CHARS_PER_SEC,
     ShortsScenario,
 )
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 logger = logging.getLogger(__name__)
 
 VEO_UNIT_PRICE_PER_SEC = 0.15  # veo_client.py 실측 단가 (8s = $1.20/cut)
 TARGET_W, TARGET_H, TARGET_FPS = 1080, 1920, 24
 BOOKEND_IDX_INTRO = 91  # generate_panel 파일명 P{idx}.png — 본편 패널(1~8)과 충돌 방지
 BOOKEND_IDX_OUTRO = 92
+MAX_NARRATION_SPEEDUP = 1.3  # atempo 상한 (그 이상은 청취성 급락)
+NARRATION_TAIL_GAP_SEC = 0.3  # 구간 사이 최소 무음 간격
 
 
 class ShortsMediaError(Exception):
@@ -110,21 +116,34 @@ class TimelineItem:
     caption: str
 
 
+def bookend_duration(narration: str) -> int:
+    """
+    북엔드(정지 이미지) 노출 시간을 나레이션 길이로 산출한다.
+
+    v1.1.0: 3초 고정이면 면책 문구가 포함된 아웃트로 음성이 잘리거나 다음 구간과
+    겹쳤다(2026-08-29 run #33229690192 실측: outro TTS 12.6s vs 슬롯 3s).
+    한국어 TTS 실측 속도 CHARS_PER_SEC 기준으로 BOOKEND_MIN~MAX 사이에서 결정.
+    """
+    needed = math.ceil(len(narration) / CHARS_PER_SEC)
+    return max(BOOKEND_MIN_SEC, min(BOOKEND_MAX_SEC, needed))
+
+
 def build_timeline(scenario: ShortsScenario) -> list[TimelineItem]:
     """인트로 → 3컷 → 아웃트로 시간축 산출 (자막·나레이션 배치의 단일 소스)."""
     items: list[TimelineItem] = []
     cursor = 0.0
 
+    intro_sec = bookend_duration(scenario.intro.narration_tts)
     items.append(
         TimelineItem(
             "intro",
             cursor,
-            cursor + BOOKEND_DURATION_SEC,
+            cursor + intro_sec,
             scenario.intro.narration_tts,
             scenario.intro.caption,
         )
     )
-    cursor += BOOKEND_DURATION_SEC
+    cursor += intro_sec
 
     for cut in scenario.cuts:
         items.append(
@@ -138,11 +157,12 @@ def build_timeline(scenario: ShortsScenario) -> list[TimelineItem]:
         )
         cursor += cut.duration_sec
 
+    outro_sec = bookend_duration(scenario.outro.narration_tts)
     items.append(
         TimelineItem(
             "outro",
             cursor,
-            cursor + BOOKEND_DURATION_SEC,
+            cursor + outro_sec,
             scenario.outro.narration_tts,
             scenario.outro.caption,
         )
@@ -356,6 +376,69 @@ def still_to_clip(
     return output_path
 
 
+def probe_duration(path: Path) -> float:
+    """ffprobe 로 미디어 길이(초) 측정."""
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        raise ShortsMediaError(f"ffprobe 실패: {path} — {result.stderr[-200:]}")
+    return float(result.stdout.strip())
+
+
+def fit_narration_to_slot(
+    wav_path: Path,
+    slot_sec: float,
+    output_path: Path,
+    max_speedup: float = MAX_NARRATION_SPEEDUP,
+) -> Path:
+    """
+    나레이션 길이를 슬롯 안에 맞춘다 (겹침 방지의 최종 방어선).
+
+    v1.1.0: 스키마에서 글자 수를 제한해도 TTS 발화 속도 편차로 초과할 수 있다.
+    1) 슬롯 이내면 그대로 사용
+    2) 초과분이 max_speedup 배 이내면 atempo 로 가속 (음정 유지)
+    3) 그래도 넘치면 가속 + 슬롯 경계에서 절단(끝 0.3s 페이드아웃)
+    """
+    duration = probe_duration(wav_path)
+    budget = max(slot_sec - NARRATION_TAIL_GAP_SEC, 0.5)
+    if duration <= budget:
+        return wav_path
+
+    tempo = min(max(duration / budget, 1.0), max_speedup)
+    filters = [f"atempo={tempo:.3f}"]
+    after_tempo = duration / tempo
+    truncated = after_tempo > budget
+    if truncated:
+        fade_start = max(budget - 0.3, 0.0)
+        filters.append(f"afade=t=out:st={fade_start:.2f}:d=0.3")
+
+    args = ["-i", str(wav_path), "-af", ",".join(filters)]
+    if truncated:
+        args += ["-t", f"{budget:.2f}"]
+    args.append(str(output_path))
+    _run_ffmpeg(args, context=f"fit_narration({wav_path.name})")
+
+    logger.info(
+        "[shorts_media] 나레이션 슬롯 보정: %s %.1fs -> %.1fs (slot=%.1fs "
+        "tempo=%.2f truncated=%s)",
+        wav_path.name,
+        duration,
+        min(after_tempo, budget),
+        slot_sec,
+        tempo,
+        truncated,
+    )
+    return output_path
+
+
 def build_subtitle_items(scenario: ShortsScenario) -> list[dict]:
     """subtitle_renderer.build_ass 입력 형식(start_sec/end_sec/text)으로 변환."""
     return [
@@ -387,11 +470,26 @@ def generate_narrations(
         wav_path = out_dir / f"narr_{t.label}.wav"
         try:
             generate_tts(text=t.narration, output_path=str(wav_path))
-            segments.append((t.start_sec, wav_path))
         except Exception as exc:
             logger.warning(
                 "[shorts_media] TTS 실패 (%s) — 무음 진행: %s", t.label, exc
             )
+            continue
+        try:
+            fitted = fit_narration_to_slot(
+                wav_path,
+                slot_sec=t.end_sec - t.start_sec,
+                output_path=out_dir / f"narr_{t.label}_fit.wav",
+            )
+        except Exception as exc:
+            # 보정 실패 시 원본을 쓰면 겹침이 발생하므로 해당 구간을 버린다.
+            logger.warning(
+                "[shorts_media] 나레이션 보정 실패 (%s) — 해당 구간 무음: %s",
+                t.label,
+                exc,
+            )
+            continue
+        segments.append((t.start_sec, fitted))
     return segments
 
 
@@ -456,8 +554,16 @@ def assemble_shorts(
     if len(media.cut_paths) != 3:
         raise ShortsMediaError(f"본편 컷 수 이상: {len(media.cut_paths)} (3 필요)")
 
-    intro_clip = still_to_clip(media.intro_image, out_dir / "intro_clip.mp4")
-    outro_clip = still_to_clip(media.outro_image, out_dir / "outro_clip.mp4")
+    # v1.1.0: 북엔드 길이는 타임라인(나레이션 길이 기반)과 반드시 동일해야 한다.
+    timeline = {t.label: t for t in build_timeline(scenario)}
+    intro_sec = int(round(timeline["intro"].end_sec - timeline["intro"].start_sec))
+    outro_sec = int(round(timeline["outro"].end_sec - timeline["outro"].start_sec))
+    intro_clip = still_to_clip(
+        media.intro_image, out_dir / "intro_clip.mp4", duration_sec=intro_sec
+    )
+    outro_clip = still_to_clip(
+        media.outro_image, out_dir / "outro_clip.mp4", duration_sec=outro_sec
+    )
 
     concat_path = str(out_dir / "concat.mp4")
     concat_cuts(
@@ -474,11 +580,12 @@ def assemble_shorts(
     mixed = mix_narrations(Path(current), narrations, out_dir / "with_audio.mp4")
 
     final_path = compose_final(str(mixed), str(out_dir / "final_shorts.mp4"))
+    total_sec = build_timeline(scenario)[-1].end_sec
     logger.info(
-        "[shorts_media] v%s 조립 완료: %s (총 %ds, media cost=$%.4f)",
+        "[shorts_media] v%s 조립 완료: %s (총 %.0fs, media cost=$%.4f)",
         VERSION,
         final_path,
-        scenario.total_duration_sec(),
+        total_sec,
         media.total_cost_usd,
     )
     return Path(final_path)

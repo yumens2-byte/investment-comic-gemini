@@ -156,7 +156,10 @@ def _scenario_dict(**overrides):
         "seq": 1,
         "caption": "금리 하락",
         "narration_tts": "국채금리가 내려가며 전선이 열립니다.",
-        "video_prompt": "Cinematic vertical full shot of tiger warrior, Manhwa style, 9:16.",
+        "video_prompt": (
+            "Cinematic vertical 9:16 Manhwa style. Tiger warrior with chainsaw, "
+            "blue bodysuit and glowing D emblem confronts a five-headed hydra serpent."
+        ),
         "duration_sec": 8,
     }
     base = {
@@ -190,8 +193,13 @@ def _scenario_dict(**overrides):
 
 
 def test_scenario_schema_valid():
+    """v1.1.0: 북엔드는 나레이션 길이 기반 가변(3~6초)."""
+    from engine.video.shorts_pipeline import BOOKEND_MAX_SEC, BOOKEND_MIN_SEC
+
     scenario = ShortsScenario(**_scenario_dict())
-    assert scenario.total_duration_sec() == 8 * 3 + 3 * 2  # 30초
+    total = scenario.total_duration_sec()
+    assert 8 * 3 + BOOKEND_MIN_SEC * 2 <= total <= 8 * 3 + BOOKEND_MAX_SEC * 2
+    assert total < 60  # Shorts 제한
 
 
 def test_scenario_rejects_wrong_seq_order():
@@ -303,3 +311,115 @@ def test_generate_uses_sdk_compat_kwargs_without_temperature(monkeypatch, tmp_pa
     assert captured["kwargs"]["model"] == "claude-sonnet-4-6"
     assert captured["kwargs"]["system"]
     assert cost > 0
+
+
+# ── v1.1.0 Canon Guard (2026-08-29 run #33229690192 회고) ────
+# 증상: video_prompt 가 "Male hero EDT in battle armor" 로만 기술되어
+#       Veo 가 ICG Canon 과 무관한 캐릭터를 생성함.
+
+
+def _canon_prompt(*extra: str) -> str:
+    base = (
+        "Cinematic vertical 9:16 Manhwa style. Tiger warrior with chainsaw, "
+        "blue bodysuit and glowing D emblem faces a five-headed hydra serpent."
+    )
+    return base + " " + " ".join(extra)
+
+
+def test_canon_block_includes_form_description():
+    from engine.video.shorts_pipeline import build_canon_visual_block
+
+    block = build_canon_visual_block(["CHAR_HERO_001", "CHAR_VILLAIN_004"])
+    if not block:
+        pytest.skip("config/characters.yaml 미존재 환경")
+    assert "CHAR_HERO_001" in block
+    assert "chainsaw" in block.lower()
+    assert "CHAR_VILLAIN_004" in block
+
+
+def test_canon_guard_passes_with_canon_keywords():
+    from engine.video.shorts_pipeline import enforce_canon_visuals
+
+    data = _scenario_dict()
+    for cut in data["cuts"]:
+        cut["video_prompt"] = _canon_prompt()
+    scenario = ShortsScenario(**data)
+    enforce_canon_visuals(scenario)  # 예외 없음
+
+
+def test_canon_guard_blocks_generic_prompt():
+    """실제 실패 사례 재현: 'battle armor' 만 기술된 프롬프트는 차단되어야 한다."""
+    from engine.video.shorts_pipeline import CanonGuardError, enforce_canon_visuals
+
+    data = _scenario_dict()
+    for cut in data["cuts"]:
+        cut["video_prompt"] = (
+            "Vertical 9:16 cinematic Manhwa style. Male hero EDT in battle armor "
+            "stands firm in a holographic war room with plunging charts."
+        )
+    scenario = ShortsScenario(**data)
+    with pytest.raises(CanonGuardError, match="CHAR_HERO_001"):
+        enforce_canon_visuals(scenario)
+
+
+def test_canon_guard_requires_all_alliance_heroes():
+    from engine.video.shorts_pipeline import CanonGuardError, enforce_canon_visuals
+
+    data = _scenario_dict()
+    data["scenario_type"] = "ALLIANCE"
+    data["hero_ids"] = ["CHAR_HERO_001", "CHAR_HERO_003"]
+    for cut in data["cuts"]:
+        cut["video_prompt"] = _canon_prompt()  # HERO_003(flame hair) 누락
+    scenario = ShortsScenario(**data)
+    with pytest.raises(CanonGuardError, match="CHAR_HERO_003"):
+        enforce_canon_visuals(scenario)
+
+    for cut in data["cuts"]:
+        cut["video_prompt"] = _canon_prompt("A shirtless muscle man with flame hair.")
+    enforce_canon_visuals(ShortsScenario(**data))  # 전원 등장 시 통과
+
+
+def test_adaptation_prompt_embeds_canon_and_limits():
+    from engine.video.shorts_pipeline import (
+        BOOKEND_NARRATION_MAX,
+        CUT_NARRATION_MAX,
+        _build_adaptation_prompt,
+    )
+
+    facts = extract_immutable_facts(_passed_gate())
+    prompt = _build_adaptation_prompt(facts, {"panels": []})
+    assert str(CUT_NARRATION_MAX) in prompt
+    assert str(BOOKEND_NARRATION_MAX) in prompt
+    assert "참조 이미지를 받지 못하므로" in prompt
+
+
+# ── 나레이션 길이 스키마 강제 ────────────────────────────────
+
+
+def test_schema_rejects_overlong_cut_narration():
+    from engine.video.shorts_pipeline import CUT_NARRATION_MAX
+
+    data = _scenario_dict()
+    data["cuts"][0]["narration_tts"] = "가" * (CUT_NARRATION_MAX + 1)
+    with pytest.raises(ValueError):
+        ShortsScenario(**data)
+
+
+def test_schema_rejects_overlong_bookend_narration():
+    from engine.video.shorts_pipeline import BOOKEND_NARRATION_MAX
+
+    data = _scenario_dict()
+    data["outro"]["narration_tts"] = "가" * (BOOKEND_NARRATION_MAX + 1)
+    with pytest.raises(ValueError):
+        ShortsScenario(**data)
+
+
+def test_schema_accepts_disclaimer_within_bookend_limit():
+    """면책 문구가 북엔드 상한 안에 들어가야 한다 (운영 필수 요건)."""
+    from engine.video.shorts_pipeline import BOOKEND_NARRATION_MAX
+
+    disclaimer = "투자 참고 정보이며 투자 권유가 아닙니다"
+    assert len(disclaimer) <= BOOKEND_NARRATION_MAX
+    data = _scenario_dict()
+    data["outro"]["narration_tts"] = disclaimer
+    ShortsScenario(**data)

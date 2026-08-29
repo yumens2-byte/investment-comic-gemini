@@ -25,7 +25,7 @@ import logging
 import os
 from pathlib import Path
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 logger = logging.getLogger(__name__)
 
 # Telegram sendVideo body limit (bot API, standard server)
@@ -113,16 +113,20 @@ def send_approval_request(
     import requests
 
     url = f"https://api.telegram.org/bot{bot_token}/sendVideo"
+    form = {
+        "chat_id": chat_id,
+        "caption": caption,
+        "parse_mode": "HTML",
+        "supports_streaming": "true",
+    }
+    # v1.2.0: 빈 키보드는 전송하지 않는다 (Telegram 이 빈 markup 을 거부할 수 있음).
+    if reply_markup.get("inline_keyboard"):
+        form["reply_markup"] = _json.dumps(reply_markup)
+
     with open(video_path, "rb") as f:
         response = requests.post(
             url,
-            data={
-                "chat_id": chat_id,
-                "caption": caption,
-                "parse_mode": "HTML",
-                "supports_streaming": "true",
-                "reply_markup": _json.dumps(reply_markup),
-            },
+            data=form,
             files={"video": (Path(video_path).name, f, "video/mp4")},
             timeout=120,
         )
@@ -162,7 +166,13 @@ def _build_caption(
         f"<b>Cost</b>: ${cost_usd:.4f}\n"
         f"<b>Time</b>: {generation_ms / 1000:.1f}s\n"
         f"<b>Size</b>: {size_mb:.2f} MB\n\n"
-        f"아래 버튼을 선택해주세요."
+        f"<b>승인 방법</b>\n"
+        f"GitHub Actions → Run Video Trailer → Run workflow\n"
+        f"  operation_mode=<code>publish</code>\n"
+        f"  dry_run=<code>false</code>\n"
+        f"  confirm=<code>YES</code>\n"
+        f"  target_date=<code>{episode_id[6:16]}</code>\n"
+        f"발행하지 않으려면 아무 것도 하지 않으면 됩니다."
     )
     if len(caption) > MAX_CAPTION_LEN:
         caption = caption[: MAX_CAPTION_LEN - 3] + "..."
@@ -170,18 +180,16 @@ def _build_caption(
 
 
 def _build_approval_keyboard(episode_id: str) -> dict:
-    """Build inline keyboard with 3 buttons: approve / regenerate / abort."""
-    return {
-        "inline_keyboard": [
-            [
-                {"text": "✅ 승인 → 발행", "callback_data": f"approve:{episode_id}"},
-            ],
-            [
-                {"text": "🔄 재생성", "callback_data": f"regenerate:{episode_id}"},
-                {"text": "🚫 폐기", "callback_data": f"abort:{episode_id}"},
-            ],
-        ]
-    }
+    """
+    v1.2.0: 인라인 버튼을 제공하지 않는다 (빈 keyboard).
+
+    근거: GitHub Actions 는 단발 실행이라 콜백을 수신할 상시 프로세스가 없다.
+    버튼을 노출하면 눌러도 아무 일이 일어나지 않아 오히려 혼란을 준다
+    (2026-08-29 마스터 리포트). 승인은 publish 모드 수동 실행으로 수행하며,
+    실행 방법은 캡션에 안내한다. episode_id 는 시그니처 호환을 위해 유지.
+    """
+    _ = episode_id
+    return {"inline_keyboard": []}
 
 
 def handle_callback(callback_data: str) -> dict:
