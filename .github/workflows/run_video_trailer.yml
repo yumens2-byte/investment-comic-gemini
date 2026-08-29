@@ -96,12 +96,29 @@ jobs:
       YOUTUBE_REFRESH_TOKEN:    ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
       # ── Runtime flags ───────────────────────────────────────────
       VIDEO_BUDGET_USD_MONTHLY: '80'
-      # DRY_RUN 통일 규약: schedule 실행 시 빈 값 → 반드시 'true' fallback
-      DRY_RUN:                  ${{ inputs.dry_run || 'true' }}
+      # DRY_RUN 은 job env 에서 정의하지 않는다.
+      # GitHub 표현식 `inputs.dry_run || 'true'` 는 문자열 'false' 의 truthy 판정에
+      # 의존해 취약하다(2026-08-29 run #33229224093: false 선택에도 true 로 해석).
+      # 아래 "Normalize run flags" step 에서 bash 로 결정해 GITHUB_ENV 로 주입한다.
       LOG_LEVEL:                ${{ inputs.log_level || 'INFO' }}
       OPERATION_MODE:           ${{ inputs.operation_mode || 'daily_shorts' }}
       TARGET_DATE:              ${{ inputs.target_date || '' }}
     steps:
+      - name: Normalize run flags (DRY_RUN fail-safe)
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          # 실생성/실발행은 workflow_dispatch 에서 dry_run=false 를 명시 선택한 경우에만.
+          # 그 외(schedule, 빈 값, 오타)는 전부 true 로 수렴 (fail-safe).
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$INPUT_DRY_RUN" = "false" ]; then
+            RESOLVED=false
+          else
+            RESOLVED=true
+          fi
+          echo "DRY_RUN=$RESOLVED" >> "$GITHUB_ENV"
+          echo "Resolved DRY_RUN=$RESOLVED (event=$EVENT_NAME, raw_input='$INPUT_DRY_RUN')"
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
