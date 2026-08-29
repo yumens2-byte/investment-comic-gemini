@@ -29,14 +29,17 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 logger = logging.getLogger(__name__)
 
 # claude_client._MODEL_PRIMARY 와 동일 값 (내부 상수 직접 import 는 결합도 회피)
 _MODEL = "claude-sonnet-4-6"
-_MAX_TOKENS = 4000
-_TEMPERATURE = 0.7
 _MAX_RETRIES = 2
+_SYSTEM_PROMPT = (
+    "당신은 투자 코믹 유니버스 'ICG'의 영상 각색 작가다. "
+    "주어진 원본 만화 스크립트의 사실관계·승패·등장인물을 절대 변경하지 않고, "
+    "세로형 숏폼 영상 시나리오로만 각색한다. 항상 유효한 JSON 하나만 출력한다."
+)
 
 # Veo 3.1 fast preview 제약: 컷당 4/6/8초 (engine/video/veo_client.py 실측)
 ALLOWED_CUT_DURATIONS = (4, 6, 8)
@@ -441,7 +444,10 @@ def generate_shorts_scenario(
 
     from anthropic import Anthropic
 
-    from engine.narrative.claude_client import estimate_cost  # public 함수 재사용
+    from engine.narrative.claude_client import (
+        _build_messages_create_kwargs,
+        estimate_cost,
+    )
 
     prompt = _build_adaptation_prompt(facts, script_json)
     client = Anthropic()
@@ -449,12 +455,15 @@ def generate_shorts_scenario(
     last_error: Exception | None = None
     for attempt in range(1, _MAX_RETRIES + 2):
         start = time.monotonic()
-        response = client.messages.create(
+        # SDK 호환: Anthropic Python SDK 1.0 은 top-level temperature 를 제거했다.
+        # 기존 이미지 트랙과 동일한 단일 소스 헬퍼를 재사용한다 (중복 구현 금지).
+        create_kwargs = _build_messages_create_kwargs(
+            client.messages.create,
             model=_MODEL,
-            max_tokens=_MAX_TOKENS,
-            temperature=_TEMPERATURE,
+            system_prompt=_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],
         )
+        response = client.messages.create(**create_kwargs)
         elapsed_ms = int((time.monotonic() - start) * 1000)
         raw_text = "".join(
             block.text for block in response.content if getattr(block, "type", "") == "text"
