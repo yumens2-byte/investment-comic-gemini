@@ -126,8 +126,19 @@ jobs:
           python-version: '3.11'
           cache: pip
 
-      - name: Install FFmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install FFmpeg + CJK fonts
+        # fonts-noto-cjk 는 자막 번인 필수. 미설치 시 한글이 두부(□)로 깨진다
+        # (2026-08-29 run #33229690192 회고). 이미지 트랙 run_market.yml 과 동일 패키지.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          sudo apt-get install -y fonts-noto-cjk --no-install-recommends -q
+          fc-cache -f
+          if ! fc-list | grep -qi "noto sans cjk"; then
+            echo "::error::Noto Sans CJK 폰트 미설치 — 자막이 깨지므로 중단"
+            exit 1
+          fi
+          echo "CJK 폰트 확인: $(fc-list | grep -ci 'noto sans cjk') faces"
 
       - name: Install Python deps
         run: pip install -r requirements-video.txt
