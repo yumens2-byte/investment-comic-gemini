@@ -43,7 +43,7 @@ def _ensure_repo_root_on_path() -> None:
 
 _ensure_repo_root_on_path()
 
-VERSION = "1.7.1"
+VERSION = "2.0.0"
 
 logger = logging.getLogger("run_video_trailer")
 
@@ -482,6 +482,12 @@ def stage_veo():
         )
         sys.exit(0)
 
+    # v1.8.0: 유료 호출 이전 사전 체크리스트 (예산/도구/폰트/발행자격) 1회 실행
+    from engine.video.shorts_media import preflight_check
+
+    report = preflight_check(scenario)
+    logger.info(f"[S3/S4] preflight: {report}")
+
     out_dir = Path(f"output/videos/{gate.episode_id}")
     media: MediaResult = generate_bookend_images(scenario, out_dir / "images")
     media = generate_cut_videos(scenario, out_dir / "cuts", media)
@@ -813,6 +819,177 @@ def stage_publish_shorts():
     )
 
 
+
+# ════════════════════════════════════════════════════════════
+# Weekly Digest (v2.0.0) — 월~금 누적 → 월요일 오전 18초 1편
+# 일일 생성 스테이지(stage_data/narrative/veo/assembly)는 유지하되,
+# 정규 운영 경로는 아래 weekly_* 스테이지다.
+# ════════════════════════════════════════════════════════════
+
+
+def _weekly_gate_or_exit():
+    """주간 게이트 통과 시 gate 반환, 미통과면 정상 종료(rc=0)."""
+    from engine.video.weekly_pipeline import run_weekly_gate
+
+    gate = run_weekly_gate()
+    if not gate.passed:
+        logger.info(f"[W] gate BLOCKED — reason={gate.reason} (정상 종료, 영상 미생성)")
+        sys.exit(0)
+    return gate
+
+
+def stage_weekly_gate():
+    """W1: 주간 게이트 — 지난주 월~금 에피소드 수집 및 판정."""
+    from engine.video.weekly_pipeline import persist_weekly_gate, run_weekly_gate
+
+    gate = run_weekly_gate()
+    status = persist_weekly_gate(gate)
+    if not gate.passed:
+        logger.info(f"[W1] gate BLOCKED — reason={gate.reason} status={status}")
+        sys.exit(0)
+    logger.info(
+        f"[W1] gate PASS: {gate.week_start}~{gate.week_end} "
+        f"episodes={gate.episode_count} battles={gate.battle_count} id={gate.episode_id}"
+    )
+
+
+def stage_weekly_narrative():
+    """W3: 주간 메인 스토리 각색 (Claude 1회, 2컷)."""
+    from engine.video.weekly_pipeline import (
+        generate_weekly_scenario,
+        persist_weekly_scenario,
+    )
+
+    gate = _weekly_gate_or_exit()
+    scenario, cost = generate_weekly_scenario(gate)
+    if scenario is None:
+        logger.info("[W3] DRY_RUN — 각색 스킵 (게이트 기록만 유지)")
+        return
+    persist_weekly_scenario(gate, scenario)
+    logger.info(f"[W3] 각색 저장 완료: {gate.episode_id} cost=${cost:.4f}")
+
+
+def stage_weekly_media():
+    """W4+W5: 북엔드 이미지 2장 + Veo 2컷(6초). preflight 통과 후에만 과금."""
+    from engine.video.shorts_media import (
+        MediaResult,
+        generate_bookend_images,
+        generate_cut_videos,
+        persist_media,
+        preflight_check,
+    )
+    from engine.video.weekly_pipeline import load_weekly_scenario
+
+    gate = _weekly_gate_or_exit()
+    scenario = load_weekly_scenario(gate.episode_id)
+    if scenario is None:
+        logger.warning("[W4/W5] shorts_scenario_json 없음 — W3 실발행 선행 필요 (정상 종료)")
+        sys.exit(0)
+
+    report = preflight_check(scenario)
+    logger.info(f"[W4/W5] preflight: {report}")
+
+    out_dir = Path(f"output/videos/{gate.episode_id}")
+    media: MediaResult = generate_bookend_images(scenario, out_dir / "images")
+    media = generate_cut_videos(scenario, out_dir / "cuts", media)
+
+    if os.environ.get("DRY_RUN", "true").lower() == "true":
+        logger.info("[W4/W5] DRY_RUN — Supabase 기록 스킵")
+        return
+    persist_media(gate.episode_id, media)
+    logger.info(f"[W4/W5] 미디어 완료: cost=${media.total_cost_usd:.4f}")
+
+
+def stage_weekly_assembly():
+    """W6: 18초 조립 (인트로3 + 6초×2 + 아웃트로3)."""
+    from engine.video.shorts_media import (
+        MediaResult,
+        assemble_shorts,
+        persist_assembled,
+    )
+    from engine.video.weekly_pipeline import WEEKLY_TOTAL_SEC, load_weekly_scenario
+
+    gate = _weekly_gate_or_exit()
+    scenario = load_weekly_scenario(gate.episode_id)
+    if scenario is None:
+        logger.warning("[W6] shorts_scenario_json 없음 — W3 선행 필요 (정상 종료)")
+        sys.exit(0)
+
+    out_dir = Path(f"output/videos/{gate.episode_id}")
+    media = MediaResult(
+        intro_image=out_dir / "images/P91.png",
+        outro_image=out_dir / "images/P92.png",
+        cut_paths=[out_dir / f"cuts/cut{i}.mp4" for i in range(1, len(scenario.cuts) + 1)],
+    )
+    missing = [
+        str(p)
+        for p in [media.intro_image, media.outro_image, *media.cut_paths]
+        if not Path(p).exists()
+    ]
+    if missing:
+        raise FileNotFoundError(f"[W6] 조립 입력 누락 (W4/W5 선행 필요): {missing}")
+
+    final_path = assemble_shorts(scenario, media, out_dir / "assembly")
+    logger.info(f"[W6] 조립 완료: {final_path} (규격 {WEEKLY_TOTAL_SEC}초)")
+
+    if os.environ.get("DRY_RUN", "true").lower() == "true":
+        logger.info("[W6] DRY_RUN — Supabase 기록 스킵")
+        return
+    persist_assembled(gate.episode_id, final_path)
+
+
+def stage_weekly_notify():
+    """W7: 텔레그램 검토본 발송 + release_at 기록 (hold-and-release)."""
+    from datetime import UTC, datetime, timedelta
+
+    from engine.video.weekly_pipeline import load_weekly_scenario
+
+    gate = _weekly_gate_or_exit()
+    scenario = load_weekly_scenario(gate.episode_id)
+    final_path = Path(f"output/videos/{gate.episode_id}/assembly/final_shorts.mp4")
+
+    if os.environ.get("DRY_RUN", "true").lower() == "true":
+        logger.info(
+            f"[W7] DRY_RUN — 승인 요청 스킵 (id={gate.episode_id}, "
+            f"final_exists={final_path.exists()})"
+        )
+        return
+
+    if scenario is None or not final_path.exists():
+        raise RuntimeError("[W7] 승인 요청 불가 — 시나리오/조립본 누락 (W3~W6 선행 필요)")
+
+    from engine.common.supabase_client import icg_table
+    from engine.publish.telegram_gate import send_approval_request
+
+    row = None
+    try:
+        from engine.video.weekly_pipeline import _load_video_asset_row
+
+        row = _load_video_asset_row(gate.episode_id)
+    except Exception as exc:
+        logger.warning(f"[W7] video_assets 조회 실패 (비용 0 표기로 진행): {exc}")
+
+    hold_hours = float(os.environ.get("PUBLISH_HOLD_HOURS", "6"))
+    release_at = datetime.now(UTC) + timedelta(hours=hold_hours)
+    release_kst = release_at.astimezone(ZoneInfo("Asia/Seoul")).strftime("%m/%d %H:%M")
+
+    send_approval_request(
+        video_path=str(final_path),
+        episode_id=gate.episode_id,
+        scenario_type="WEEKLY_DIGEST",
+        cost_usd=float((row or {}).get("veo_cost_usd") or 0.0),
+        generation_ms=0,
+        release_at_kst=release_kst,
+    )
+    icg_table("video_assets").update(
+        {"status": "pending_approval", "release_at": release_at.isoformat()}
+    ).eq("episode_id", gate.episode_id).execute()
+    logger.info(
+        f"[W7] 승인 요청 발송 + pending_approval: {gate.episode_id} "
+        f"(hold={hold_hours}h, release={release_at.isoformat()})"
+    )
+
+
 def stage_verify_auth():
     """YouTube 자격증명 사전 검증 (업로드/쿼터 소모 없음).
 
@@ -900,6 +1077,12 @@ STAGES = {
     "persist_final": stage_persist_final,
     "abort": stage_abort,
     "verify_auth": stage_verify_auth,
+    # Weekly Digest (v2.0.0 정규 경로)
+    "weekly_gate": stage_weekly_gate,
+    "weekly_narrative": stage_weekly_narrative,
+    "weekly_media": stage_weekly_media,
+    "weekly_assembly": stage_weekly_assembly,
+    "weekly_notify": stage_weekly_notify,
 }
 
 

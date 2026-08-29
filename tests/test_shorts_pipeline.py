@@ -47,7 +47,7 @@ def _battle_row(event_type="BATTLE", scenario_type="ONE_VS_ONE"):
         "event_type": event_type,
         "scenario_type": scenario_type,
         "script_json": {"panels": []},
-        "battle_json": {"outcome": "HERO_TACTICAL_VICTORY", "villain_id": "CHAR_VILLAIN_001"},
+        "battle_json": {"outcome": "HERO_TACTICAL_VICTORY", "villain_id": "CHAR_VILLAIN_004"},
         "heroes_json": ["CHAR_HERO_001"],
     }
 
@@ -128,7 +128,7 @@ def test_extract_facts_from_battle_json():
     facts = extract_immutable_facts(_passed_gate())
     assert facts["outcome"] == "HERO_TACTICAL_VICTORY"
     assert facts["hero_ids"] == ["CHAR_HERO_001"]
-    assert facts["villain_id"] == "CHAR_VILLAIN_001"
+    assert facts["villain_id"] == "CHAR_VILLAIN_004"
 
 
 def test_extract_facts_villain_fallback_to_analysis():
@@ -170,7 +170,7 @@ def _scenario_dict(**overrides):
         "scenario_type": "ONE_VS_ONE",
         "outcome": "HERO_TACTICAL_VICTORY",
         "hero_ids": ["CHAR_HERO_001"],
-        "villain_id": "CHAR_VILLAIN_001",
+        "villain_id": "CHAR_VILLAIN_004",
         "intro": {
             "caption": "오늘의 전투",
             "narration_tts": "시장의 수호자가 움직입니다.",
@@ -211,9 +211,16 @@ def test_scenario_rejects_wrong_seq_order():
         ShortsScenario(**data)
 
 
-def test_scenario_rejects_two_cuts():
+def test_scenario_accepts_two_cuts_for_weekly():
+    """v1.3.0: 주간 다이제스트(2컷) 지원."""
     data = _scenario_dict()
     data["cuts"] = data["cuts"][:2]
+    assert len(ShortsScenario(**data).cuts) == 2
+
+
+def test_scenario_rejects_single_cut():
+    data = _scenario_dict()
+    data["cuts"] = data["cuts"][:1]
     with pytest.raises(ValueError):
         ShortsScenario(**data)
 
@@ -225,7 +232,7 @@ def test_consistency_guard_outcome_mismatch():
             scenario,
             outcome="VILLAIN_VICTORY",
             hero_ids=["CHAR_HERO_001"],
-            villain_id="CHAR_VILLAIN_001",
+            villain_id="CHAR_VILLAIN_004",
         )
 
 
@@ -246,7 +253,7 @@ def test_consistency_guard_pass():
         scenario,
         outcome="HERO_TACTICAL_VICTORY",
         hero_ids=["CHAR_HERO_001"],
-        villain_id="CHAR_VILLAIN_001",
+        villain_id="CHAR_VILLAIN_004",
     )
 
 
@@ -489,3 +496,60 @@ def test_adaptation_prompt_carries_species_warning():
     prompt = _build_adaptation_prompt(facts, {"panels": []})
     assert "tiger" in prompt.lower()
     assert "종족 필수 단어" in prompt
+
+
+# ── v1.2.0 중복 과금 방지 (2026-08-29 파이프라인 점검) ───────
+# 배경: 게이트가 'published' 만 차단해, 이미 생성된 회차를 재실행하면
+#       Veo 비용($3.6)이 그대로 재발생했다.
+
+
+@pytest.mark.parametrize("spent", ["media_generated", "assembled", "pending_approval"])
+def test_gate_blocks_already_generated_episode(monkeypatch, spent):
+    monkeypatch.delenv("FORCE_REGENERATE", raising=False)
+    _patch_loaders(
+        monkeypatch,
+        _battle_row(),
+        video_row={"episode_id": build_shorts_episode_id(DATE), "status": spent},
+    )
+    result = run_gate(DATE)
+    assert result.passed is False
+    assert result.reason == f"already_generated:{spent}"
+
+
+def test_gate_allows_regeneration_with_force_flag(monkeypatch):
+    monkeypatch.setenv("FORCE_REGENERATE", "true")
+    _patch_loaders(
+        monkeypatch,
+        _battle_row(),
+        video_row={"episode_id": build_shorts_episode_id(DATE), "status": "assembled"},
+    )
+    assert run_gate(DATE).passed is True
+
+
+@pytest.mark.parametrize("retryable", ["gated", "scenario_ready", "skipped", "failed"])
+def test_gate_allows_retry_before_media_spend(monkeypatch, retryable):
+    """미디어 생성 전 상태는 재시도 가능해야 한다 (과금이 없었으므로)."""
+    monkeypatch.delenv("FORCE_REGENERATE", raising=False)
+    _patch_loaders(
+        monkeypatch,
+        _battle_row(),
+        video_row={"episode_id": build_shorts_episode_id(DATE), "status": retryable},
+    )
+    assert run_gate(DATE).passed is True
+
+
+def test_canon_spec_covers_every_character_in_yaml():
+    """주간 다이제스트는 어떤 캐릭터든 등장할 수 있으므로 Canon 전원이 정의되어야 한다.
+
+    (2026-08-29: 실데이터에 CHAR_HERO_002/VILLAIN_005 가 있었으나 사전 미정의였다.)
+    """
+    import yaml
+
+    from engine.video.shorts_pipeline import CANON_PATH, CANON_VISUAL_SPEC
+
+    if not CANON_PATH.exists():
+        pytest.skip("config/characters.yaml 미존재 환경")
+    data = yaml.safe_load(CANON_PATH.read_text(encoding="utf-8"))
+    canon_ids = set(data.get("heroes", {})) | set(data.get("villains", {}))
+    missing = canon_ids - set(CANON_VISUAL_SPEC)
+    assert not missing, f"시각 사전 미정의 캐릭터: {sorted(missing)}"

@@ -228,3 +228,72 @@ def test_fit_narration_truncates_when_speedup_insufficient(tmp_path):
     src.write_bytes(_pcm_to_wav_bytes(b"\x00\x01" * (24000 * 15)))  # 15초
     out = fit_narration_to_slot(src, slot_sec=5.0, output_path=tmp_path / "fit.wav")
     assert probe_duration(out) <= 5.0
+
+
+# ── v1.2.0 사전 체크리스트 (2026-08-29 파이프라인 점검) ──────
+# 배경: 예산 검사가 Veo 직전에만 있어 이미지 $0.0784 가 먼저 과금됐고,
+#       YouTube 토큰 무효는 $3.7 소진 후에야 드러났다(run #33240050576).
+
+
+def test_estimate_episode_cost_includes_side_costs():
+    from engine.video.shorts_media import (
+        SIDE_COST_USD,
+        estimate_episode_cost,
+        estimate_veo_cost,
+    )
+
+    sc = _scenario()
+    assert estimate_episode_cost(sc) == pytest.approx(estimate_veo_cost(sc) + SIDE_COST_USD)
+    assert estimate_episode_cost(sc) > estimate_veo_cost(sc)  # 부대비용 반영
+
+
+def test_preflight_dry_run_skips_without_cost():
+    from engine.video.shorts_media import preflight_check
+
+    report = preflight_check(_scenario(), dry_run=True)
+    assert report["skipped"] is True
+    assert report["estimated_cost_usd"] > 0
+
+
+def test_preflight_raises_when_budget_exceeded(monkeypatch):
+    """예산 초과 시 이미지 1장도 생성되기 전에 중단되어야 한다."""
+    import sys
+    import types
+
+    from engine.video.shorts_media import preflight_check
+
+    class _Exceeded(RuntimeError):
+        pass
+
+    def _check(estimated_cost_usd):
+        raise _Exceeded(f"budget exceeded for ${estimated_cost_usd}")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "engine.video.budget_checker",
+        types.SimpleNamespace(check_before_generation=_check),
+    )
+    with pytest.raises(_Exceeded):
+        preflight_check(_scenario(), dry_run=False)
+
+
+def test_preflight_blocks_when_ffmpeg_missing(monkeypatch):
+    import sys
+    import types
+
+    from engine.video import shorts_media as sm
+
+    monkeypatch.setitem(
+        sys.modules,
+        "engine.video.budget_checker",
+        types.SimpleNamespace(
+            check_before_generation=lambda estimated_cost_usd: {
+                "monthly_spent_usd": 0.0,
+                "budget_cap_usd": 80.0,
+                "remaining_usd": 80.0,
+            }
+        ),
+    )
+    monkeypatch.setattr(sm.shutil, "which", lambda name: None)
+    with pytest.raises(sm.ShortsMediaError, match="ffmpeg 없음"):
+        sm.preflight_check(_scenario(), dry_run=False)

@@ -226,3 +226,57 @@ def test_invalid_grant_guide_is_actionable():
 
     assert "테스트" in INVALID_GRANT_GUIDE  # 7일 만료 원인
     assert "issue_youtube_token.py" in INVALID_GRANT_GUIDE  # 재발급 경로
+
+
+# ── v1.3.0 OAuth 오류코드별 안내 (2026-08-29 오진 회고) ──────
+# 배경: 에러가 unauthorized_client 인데 안내문이 invalid_grant 고정이라
+#       "토큰 재발급"만 반복하게 만들었다. 실제 원인은 ID/SECRET 불일치.
+
+
+def test_guide_for_unauthorized_client_points_to_client_mismatch():
+    from engine.publish.youtube_shorts_publisher import oauth_error_guide
+
+    guide = oauth_error_guide("('unauthorized_client: Unauthorized', {})")
+    assert "unauthorized_client" in guide
+    assert "CLIENT_ID/CLIENT_SECRET" in guide
+    assert "한 세트" in guide
+
+
+def test_guide_for_invalid_grant_points_to_token():
+    from engine.publish.youtube_shorts_publisher import oauth_error_guide
+
+    guide = oauth_error_guide("invalid_grant: Bad Request")
+    assert "invalid_grant" in guide
+    assert "만료" in guide
+
+
+def test_guide_for_invalid_client():
+    from engine.publish.youtube_shorts_publisher import oauth_error_guide
+
+    guide = oauth_error_guide("invalid_client")
+    assert "CLIENT_ID 또는 CLIENT_SECRET" in guide
+
+
+def test_guide_falls_back_for_unknown_code():
+    from engine.publish.youtube_shorts_publisher import oauth_error_guide
+
+    guide = oauth_error_guide("something_unexpected")
+    assert "같은 클라이언트 한 세트" in guide
+
+
+def test_client_id_fingerprint_masks_value(monkeypatch):
+    from engine.publish.youtube_shorts_publisher import client_id_fingerprint
+
+    monkeypatch.setenv(
+        "YOUTUBE_CLIENT_ID", "123456789012-abcdefghijklmnop.apps.googleusercontent.com"
+    )
+    fp = client_id_fingerprint()
+    assert fp.startswith("123456789012-")
+    assert "abcdefghijklmnop" not in fp  # 전체 값은 노출하지 않는다
+
+
+def test_client_id_fingerprint_when_unset(monkeypatch):
+    from engine.publish.youtube_shorts_publisher import client_id_fingerprint
+
+    monkeypatch.delenv("YOUTUBE_CLIENT_ID", raising=False)
+    assert client_id_fingerprint() == "(미설정)"

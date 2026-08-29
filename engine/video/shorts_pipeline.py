@@ -30,7 +30,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
-VERSION = "1.1.0"
+VERSION = "1.4.0"
 logger = logging.getLogger(__name__)
 
 # claude_client._MODEL_PRIMARY 와 동일 값 (내부 상수 직접 import 는 결합도 회피)
@@ -192,6 +192,23 @@ def run_gate(episode_date: str) -> GateResult:
             episode_id=episode_id,
         )
 
+    # v1.2.0 중복 과금 방지: 이미 미디어가 생성된 회차를 다시 돌리면 Veo 비용이
+    # 그대로 재발생한다($3.6/회). 의도적 재생성은 FORCE_REGENERATE=true 로만 허용.
+    spent_states = {"media_generated", "assembled", "pending_approval"}
+    if existing and existing.get("status") in spent_states:
+        if os.environ.get("FORCE_REGENERATE", "false").lower() != "true":
+            return GateResult(
+                passed=False,
+                reason=f"already_generated:{existing['status']}",
+                episode_date=episode_date,
+                episode_id=episode_id,
+            )
+        logger.warning(
+            "[shorts_pipeline] FORCE_REGENERATE=true — status=%s 회차를 재생성한다 "
+            "(Veo 비용 재발생)",
+            existing.get("status"),
+        )
+
     row = _load_latest_episode_row(episode_date)
     if row is None:
         return GateResult(
@@ -288,7 +305,8 @@ class ShortsScenario(BaseModel):
     hero_ids: list[str] = Field(min_length=1)
     villain_id: str
     intro: ShortsBookend
-    cuts: list[ShortsCut] = Field(min_length=3, max_length=3)
+    # v1.3.0: 주간 다이제스트(2컷) 지원을 위해 2~3컷 허용
+    cuts: list[ShortsCut] = Field(min_length=2, max_length=3)
     outro: ShortsBookend
     youtube_title: str = Field(min_length=1, max_length=100)
     youtube_description: str = Field(min_length=1, max_length=4500)
@@ -296,8 +314,9 @@ class ShortsScenario(BaseModel):
     @model_validator(mode="after")
     def validate_cut_sequence(self) -> "ShortsScenario":
         seqs = [c.seq for c in self.cuts]
-        if seqs != [1, 2, 3]:
-            raise ValueError(f"cuts seq must be [1,2,3] in order. got={seqs}")
+        expected = list(range(1, len(self.cuts) + 1))
+        if seqs != expected:
+            raise ValueError(f"cuts seq must be {expected} in order. got={seqs}")
         return self
 
     def total_duration_sec(self) -> int:
@@ -374,6 +393,15 @@ CANON_VISUAL_SPEC: dict[str, dict[str, object]] = {
             "carries a chainsaw whose blade is wrapped in blue lightning and flames"
         ),
     },
+    "CHAR_HERO_002": {
+        "species": ("woman", "female"),
+        "features": ("red", "gold armor", "shield", "rifle", "cape"),
+        "full": (
+            "human WOMAN hero in red and gold plate armor with a flowing red cape; "
+            "an ETF shield in her left hand and a rifle in her right hand; "
+            "confident heroic stance"
+        ),
+    },
     "CHAR_HERO_003": {
         "species": ("human",),
         "features": ("flaming hair", "flame hair", "shirtless", "bodybuilder"),
@@ -383,6 +411,47 @@ CANON_VISUAL_SPEC: dict[str, dict[str, object]] = {
             "amber eyes, black cargo pants with a belt, black combat boots"
         ),
     },
+    "CHAR_HERO_004": {
+        "species": ("woman", "female"),
+        "features": ("short black hair", "tactical suit", "cyan", "hologram"),
+        "full": (
+            "human WOMAN hero with short black hair, wearing a black tactical suit "
+            "with glowing cyan accents, surrounded by floating holographic displays"
+        ),
+    },
+    "CHAR_HERO_005": {
+        "species": ("knight", "armored"),
+        "features": ("gold", "full plate", "shield", "helmet"),
+        "full": (
+            "fully armored KNIGHT in solid gold full-plate armor, face completely "
+            "hidden by the helmet, carrying a rectangular 'GOLD BOND' shield in the "
+            "left hand; stoic immovable stance"
+        ),
+    },
+    "CHAR_VILLAIN_001": {
+        "species": ("titan", "giant"),
+        "features": ("lava", "stone", "orange crack"),
+        "full": (
+            "colossal obsidian stone-and-lava TITAN, upper body split by glowing "
+            "orange lava cracks, a single fire point burning at its core, city-scale"
+        ),
+    },
+    "CHAR_VILLAIN_002": {
+        "species": ("titan", "creature"),
+        "features": ("flame", "lava", "orange eyes"),
+        "full": (
+            "burning lava-flame CREATURE engulfed in fire across its whole body, "
+            "glowing orange eyes, molten oil dripping, city-scale"
+        ),
+    },
+    "CHAR_VILLAIN_003": {
+        "species": ("leviathan", "hydra"),
+        "features": ("four", "banknote", "bond"),
+        "full": (
+            "colossal four-headed LEVIATHAN whose body is woven from dollar "
+            "banknotes and bond certificates, coiling over a flooded skyline"
+        ),
+    },
     "CHAR_VILLAIN_004": {
         "species": ("hydra",),
         "features": ("five", "serpent", "purple lightning"),
@@ -390,6 +459,23 @@ CANON_VISUAL_SPEC: dict[str, dict[str, object]] = {
             "colossal city-scale five-headed serpentine HYDRA made of black storm "
             "clouds, each head with glowing purple lightning eyes and white-hot jaws, "
             "purple lightning arcing across the body, towering over a ruined skyline"
+        ),
+    },
+    "CHAR_VILLAIN_005": {
+        "species": ("reaper",),
+        "features": ("hood", "red eyes", "binary", "digital"),
+        "full": (
+            "colossal hooded digital REAPER, face hidden except two glowing red eyes, "
+            "robe dissolving into falling binary code rain, red 'ERROR' holograms "
+            "flickering around it, city-scale"
+        ),
+    },
+    "CHAR_VILLAIN_006": {
+        "species": ("mecha", "war suit"),
+        "features": ("black", "missile launcher", "red eyes"),
+        "full": (
+            "towering black MECHA war suit with two shoulder-mounted missile "
+            "launchers and glowing red eyes, battle-scarred armor plating"
         ),
     },
 }

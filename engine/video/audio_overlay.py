@@ -14,10 +14,16 @@ import logging
 import os
 from pathlib import Path
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 logger = logging.getLogger(__name__)
 
 TARGET_LUFS = -14.0  # Social media standard (YouTube, TikTok, Instagram)
+
+# TTS 비용 계측 (v1.3.0) — 2026-08-29 점검에서 유일하게 미계측 항목이었다.
+# gemini-2.5-flash-preview-tts 는 텍스트 입력 + 오디오 출력 토큰으로 과금된다.
+# 실제 usage_metadata 를 읽어 산출하며, 단가는 상수로 분리해 갱신 가능하게 둔다.
+_TTS_COST_INPUT_PER_1M = 0.50   # USD / 1M text input tokens
+_TTS_COST_OUTPUT_PER_1M = 10.0  # USD / 1M audio output tokens
 
 
 def _pcm_to_wav_bytes(
@@ -105,8 +111,26 @@ def generate_tts(
 
     Path(output_path).write_bytes(_pcm_to_wav_bytes(pcm))
 
-    logger.info(f"[audio_overlay] TTS generated: {output_path} ({len(pcm)} bytes PCM)")
+    # 생성당 비용 로그 — gemini_client / veo_client 와 동일 스타일 (v1.3.0)
+    cost = estimate_tts_cost(getattr(response, "usage_metadata", None))
+    logger.info(
+        f"[audio_overlay] TTS generated: {output_path} "
+        f"({len(pcm)} bytes PCM) cost=${cost:.6f}"
+    )
     return output_path
+
+
+def estimate_tts_cost(usage) -> float:
+    """TTS 응답의 usage_metadata 로 비용을 산출한다 (없으면 0.0)."""
+    if usage is None:
+        return 0.0
+    prompt_tokens = getattr(usage, "prompt_token_count", 0) or 0
+    # 오디오 출력은 candidates_token_count 에 집계된다.
+    output_tokens = getattr(usage, "candidates_token_count", 0) or 0
+    return (
+        prompt_tokens * _TTS_COST_INPUT_PER_1M
+        + output_tokens * _TTS_COST_OUTPUT_PER_1M
+    ) / 1_000_000
 
 
 def mix_audio(

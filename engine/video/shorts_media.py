@@ -26,6 +26,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -39,7 +40,7 @@ from engine.video.shorts_pipeline import (
     ShortsScenario,
 )
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 logger = logging.getLogger(__name__)
 
 VEO_UNIT_PRICE_PER_SEC = 0.15  # veo_client.py 실측 단가 (8s = $1.20/cut)
@@ -47,6 +48,9 @@ TARGET_W, TARGET_H, TARGET_FPS = 1080, 1920, 24
 BOOKEND_IDX_INTRO = 91  # generate_panel 파일명 P{idx}.png — 본편 패널(1~8)과 충돌 방지
 BOOKEND_IDX_OUTRO = 92
 MAX_NARRATION_SPEEDUP = 1.3  # atempo 상한 (그 이상은 청취성 급락)
+# 실측 기반 부대비용 (2026-08-29 run #33229690192): 이미지 2장 $0.0784 + 각색 $0.0412
+# 예산 검사는 Veo 만이 아니라 회차 총비용으로 해야 실효가 있다 (v1.2.0).
+SIDE_COST_USD = 0.12
 NARRATION_TAIL_GAP_SEC = 0.3  # 구간 사이 최소 무음 간격
 
 
@@ -202,6 +206,91 @@ def _load_character_refs(scenario: ShortsScenario) -> list:
         return []
 
 
+def preflight_check(
+    scenario: ShortsScenario,
+    dry_run: Optional[bool] = None,
+) -> dict:
+    """
+    유료 호출 이전 사전 체크리스트 (v1.2.0 신설).
+
+    배경(2026-08-29 점검): 예산 검사가 Veo 직전에만 있어서, 그 전에 이미 이미지
+    2장($0.0784)이 과금되고 있었다. 또 YouTube 토큰이 죽어 있어도 $3.7 를 다
+    쓴 뒤 발행 단계에서야 실패했다(run #33240050576). 비용이 나가기 전에 한 번에
+    검사해 조기 중단한다.
+
+    검사 항목:
+      1) 총 예상비용이 월 예산 안에 들어가는가 (Veo + 부대비용)
+      2) 조립 도구(ffmpeg/ffprobe)가 존재하는가
+      3) 자막용 CJK 폰트가 설치되어 있는가 (없으면 한글이 깨진 영상이 나온다)
+      4) YouTube 자격증명이 유효한가 (발행 단계 실패 선차단)
+
+    1~3 은 실패 시 예외로 중단한다. 4 는 경고만 남긴다 — 영상 자체는 쓸 수 있고
+    토큰만 재발급하면 재생성 없이 발행할 수 있기 때문이다.
+    """
+    estimated = estimate_episode_cost(scenario)
+    report: dict = {"estimated_cost_usd": estimated}
+
+    if _is_dry_run(dry_run):
+        logger.info(
+            "[shorts_media] DRY_RUN — preflight 스킵 (실행 시 예상비용 $%.4f)", estimated
+        )
+        report["skipped"] = True
+        return report
+
+    # 1) 예산 (fail-closed)
+    from engine.video.budget_checker import check_before_generation
+
+    budget = check_before_generation(estimated_cost_usd=estimated)
+    report["budget"] = budget
+    logger.info(
+        "[shorts_media] preflight 예산 OK: spent=$%.4f + est=$%.4f <= cap=$%.2f",
+        budget["monthly_spent_usd"],
+        estimated,
+        budget["budget_cap_usd"],
+    )
+
+    # 2) 조립 도구
+    for tool in ("ffmpeg", "ffprobe"):
+        if shutil.which(tool) is None:
+            raise ShortsMediaError(
+                f"preflight 실패: {tool} 없음 — 조립 불가. 워크플로의 설치 step 확인"
+            )
+
+    # 3) CJK 폰트 (자막 깨짐 방지)
+    if shutil.which("fc-list"):
+        fonts = subprocess.run(
+            ["fc-list"], capture_output=True, text=True
+        ).stdout.lower()
+        if "cjk" not in fonts and "nanum" not in fonts:
+            raise ShortsMediaError(
+                "preflight 실패: 한글(CJK) 폰트 미설치 — 자막이 깨진 영상이 생성된다. "
+                "워크플로의 fonts-noto-cjk 설치 step 확인"
+            )
+        report["cjk_font"] = True
+    else:
+        logger.warning("[shorts_media] fc-list 없음 — 폰트 검사 생략")
+        report["cjk_font"] = None
+
+    # 4) YouTube 자격증명 (경고만)
+    try:
+        from engine.publish.youtube_shorts_publisher import verify_youtube_credentials
+
+        auth = verify_youtube_credentials()
+        report["youtube_auth"] = auth["valid"]
+        if not auth["valid"]:
+            logger.warning(
+                "[shorts_media] preflight 경고: YouTube 자격증명 무효 — "
+                "영상은 생성되나 발행은 토큰 재발급 후 가능하다 (%s)",
+                auth["detail"],
+            )
+    except Exception as exc:
+        report["youtube_auth"] = None
+        logger.warning("[shorts_media] YouTube 자격증명 검사 생략: %s", exc)
+
+    logger.info("[shorts_media] preflight 통과 — 예상비용 $%.4f 집행 시작", estimated)
+    return report
+
+
 def generate_bookend_images(
     scenario: ShortsScenario,
     out_dir: Path,
@@ -262,6 +351,11 @@ def estimate_veo_cost(scenario: ShortsScenario) -> float:
     return round(sum(c.duration_sec for c in scenario.cuts) * VEO_UNIT_PRICE_PER_SEC, 4)
 
 
+def estimate_episode_cost(scenario: ShortsScenario) -> float:
+    """회차 총 예상비용 = Veo + 부대비용(이미지·각색·TTS)."""
+    return round(estimate_veo_cost(scenario) + SIDE_COST_USD, 4)
+
+
 def generate_cut_videos(
     scenario: ShortsScenario,
     out_dir: Path,
@@ -285,17 +379,10 @@ def generate_cut_videos(
         )
         return result
 
-    from engine.video.budget_checker import check_before_generation
+    # 예산 검사는 preflight_check 로 일원화됨 (v1.2.0) — 여기서 중복 조회하지 않는다.
     from engine.video.veo_client import VeoClient
 
-    budget = check_before_generation(estimated_cost_usd=estimated)
-    logger.info(
-        "[shorts_media] budget OK: spent=$%.4f remaining=$%.4f estimated=$%.4f",
-        budget["monthly_spent_usd"],
-        budget["remaining_usd"],
-        estimated,
-    )
-
+    logger.info("[shorts_media] Veo 생성 시작: 예상 $%.4f", estimated)
     client = VeoClient()
     for cut in scenario.cuts:
         path = out_dir / f"cut{cut.seq}.mp4"
