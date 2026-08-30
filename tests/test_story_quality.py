@@ -101,6 +101,28 @@ def test_build_continuity_retry_feedback_describes_missing_strict_requirements()
     assert "unresolved_thread_resolution" in feedback
     assert "검은 문은 아직 닫히지 않았다" in feedback
     assert "철문 안쪽의 목소리" in feedback
-    assert "EXACT_OPENING_ANCHOR" in feedback
-    assert "EXACT_RESOLVED_THREAD" in feedback
-    assert "verbatim" in feedback
+    assert "paraphrase the safe prior hook" in feedback
+    assert "observable panel action" in feedback
+    assert "operational English placeholders" in feedback
+
+
+def test_retry_feedback_sanitizes_legacy_conflicting_continuity() -> None:
+    from engine.narrative.story_quality import build_continuity_retry_feedback
+
+    feedback = build_continuity_retry_feedback(
+        {"panels": [{"idx": 1, "narration": "새로운 하루다."}]},
+        {
+            "previous_episode": {
+                "source_episode_id": "ICG-2026-08-27-001",
+                "next_hook": "NASDAQ·SPY 하락: 알고리즘 압력 구간",
+                "unresolved_threads": [
+                    "Track continuing pressure from villain CHAR_VILLAIN_004"
+                ],
+            }
+        },
+    )
+
+    assert feedback is not None
+    assert "알고리즘 압력 구간" not in feedback
+    assert "Track continuing pressure" not in feedback
+    assert "이전 회차에서 묘사한 시장 압력 구간" in feedback

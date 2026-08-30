@@ -171,3 +171,43 @@ def test_quality_inputs_do_not_require_optional_story_enrichment(monkeypatch) ->
     )
 
     assert rebuilt["narrative_context_pack"]["top_evidence"][0]["id"] == "metric:SPY"
+
+
+def test_restored_context_is_sanitized_and_plan_is_rebuilt(monkeypatch) -> None:
+    monkeypatch.setenv("NARRATIVE_CONTEXT_ENABLED", "true")
+    monkeypatch.setenv("STORY_PLANNER_ENABLED", "true")
+    restored = {
+        "event_type": "INTEL",
+        "delta": {"SPY": {"curr": 0.5, "pct": 0.5}},
+        "battle_result": {"outcome": "PEACEFUL_GROWTH", "balance": 0},
+        "hero_id": "CHAR_HERO_001",
+        "villain_id": "CHAR_VILLAIN_004",
+        "villain_ids": [],
+        "scenario_type": "NO_BATTLE",
+        "heroes": ["CHAR_HERO_001"],
+        "narrative_context_pack": {
+            "top_evidence": [{"id": "metric:SPY", "value": "SPY +0.5%"}],
+            "previous_episode": {
+                "source_episode_id": "ICG-2026-08-27-001",
+                "next_hook": "NASDAQ·SPY 하락: 알고리즘 압력 구간",
+                "unresolved_threads": [
+                    "Track continuing pressure from villain CHAR_VILLAIN_004"
+                ],
+            },
+            "continuity_window": {
+                "thread_ledger": [{"thread_id": "bad", "summary": "PEACEFUL_GROWTH"}]
+            },
+        },
+        "story_beat_plan": {
+            "panel_beats": [{"panel_idx": idx} for idx in range(1, 9)],
+            "next_hook_seed": "알고리즘 압력 구간",
+        },
+    }
+
+    rebuilt = _ensure_narrative_quality_inputs(restored)
+    serialized = str(rebuilt["story_beat_plan"])
+
+    assert "알고리즘 압력 구간" not in serialized
+    assert "PEACEFUL_GROWTH" in serialized  # fixed battle outcome remains valid metadata
+    assert rebuilt["narrative_context_pack"]["continuity_window"]["thread_ledger"] == []
+    assert rebuilt["narrative_context_pack"]["previous_episode"]["unresolved_threads"] == []
