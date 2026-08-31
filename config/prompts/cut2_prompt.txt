@@ -1,0 +1,18 @@
+# ICG Video Track — Cut 2 Prompt v1.0
+# Total duration: 8 seconds, 9:16 vertical, 1080p
+
+===PROMPT===
+Breaking financial news continuation, vertical 9:16. The same Korean female news anchor (late 20s, navy business suit, long straight black hair) remains in the same dark blue modern studio to preserve continuity. Camera angle changes to a slight side 3/4 medium shot, then gently recenters over 8 seconds. Behind her, abstract market volatility visuals pulse in cool blue with subtle red warning accents, but NO visible text, NO letters, NO logos anywhere. The anchor keeps serious urgent composure and gestures lightly with one hand while explaining market tension. Broadcast lighting remains professional and cinematic, with shallow depth of field and stable skin detail. Korean prime-time financial news aesthetic, Seoul 2026.
+
+===CHARACTER_LOCK===
+ANCHOR IDENTITY: Korean female, late 20s
+HAIR: long straight black
+OUTFIT: navy blue business suit, white inner top
+EXPRESSION: serious, urgent, composed
+SETTING: same professional dark blue news studio as cut 1
+DO NOT change the anchor's gender, race, age, or outfit.
+DO NOT introduce extra characters.
+DO NOT break visual continuity with cut 1.
+
+===NEGATIVE_PROMPT===
+no Marvel, no DC, no Disney, no Pixar, no Nintendo, no copyrighted characters, no copyrighted logos, no brand names, no visible words, no visible letters, no subtitles, no captions, no lower-third text, no channel logo, no station logo, no random text overlays, no fake watermark, no anchor identity change, no outfit change, no anime style, no cartoon style, blurry, low quality, distorted face, deformed hands, extra fingers, flicker artifacts
