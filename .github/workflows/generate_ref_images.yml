@@ -59,7 +59,7 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install google-genai Pillow pyyaml
+        run: pip install google-genai Pillow pyyaml requests
 
       - name: Generate character REF images
         run: |
