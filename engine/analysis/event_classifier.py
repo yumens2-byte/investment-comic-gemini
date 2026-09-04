@@ -57,9 +57,14 @@ def classify(delta: dict, arc: dict) -> EpisodeType:
 
     분기 우선순위 (순서 보장):
     1. WTI 3일 변화율 >= 5% → BATTLE (Oil Shock Titan)
-    2. VIX > 28 AND VIX 전일 대비 > 20% → SHOCK
+    2. VIX 레벨 > 24 OR VIX 일간 +25% 이상 → SHOCK
+       (2026-09-03 개정: 기존 "레벨>28 AND +20%"의 AND 결합이 저변동 국면의
+        급등(14→17, +20%)을 걸러내 9/1 셀오프를 INTEL로 오판정)
     3. DGS10 현재값 > 4.8% → BATTLE (Debt Titan)
     4. SPY 일간 -3% 이하 → BATTLE (Algorithm Reaper 연계 가능)
+    4b. NASDAQ 일간 -2% 이하 → BATTLE
+        (2026-09-03 추가: nasdaq_change는 수집만 되고 판정 미사용이었음)
+    4c. BTC 일간 ±7% 이상 → BATTLE (2026-09-03 추가)
     5. 전일 BATTLE + tension > 40 → AFTERMATH
     6. days_since_last >= 2 (조용한 시장) → INTEL
     7. 기타 → NORMAL
@@ -70,6 +75,10 @@ def classify(delta: dict, arc: dict) -> EpisodeType:
     vix_pct = delta.get("VIX", {}).get("pct") or 0.0
     dgs10_curr = delta.get("DGS10", {}).get("curr") or 0.0
     spy_pct = delta.get("SPY", {}).get("pct") or 0.0
+    # NASDAQ semantic은 daily_return_pct — pct 필드가 곧 당일 수익률
+    nasdaq_pct = delta.get("NASDAQ", {}).get("pct") or 0.0
+    # BTC semantic은 level — pct는 전일 스냅샷 대비 변화율
+    btc_pct = delta.get("BTC", {}).get("pct") or 0.0
 
     yesterday_type = arc.get("yesterday_type", "")
     tension = arc.get("tension", 0)
@@ -82,22 +91,25 @@ def classify(delta: dict, arc: dict) -> EpisodeType:
         _bc = load_battle_constants()
         _thr = _bc.get("EVENT_CLASSIFIER_THRESHOLDS", {})
         _wti_shock = _thr.get("wti_shock_pct", 5.0)
-        _vix_level = _thr.get("vix_shock_level", 28)
-        _vix_pct = _thr.get("vix_shock_pct", 20)
+        _vix_level = _thr.get("vix_shock_level", 24)
+        _vix_pct = _thr.get("vix_shock_pct", 25)
         _dgs10 = _thr.get("dgs10_battle", 4.8)
         _spy_col = _thr.get("spy_collapse_pct", -3.0)
+        _ndx_col = _thr.get("nasdaq_collapse_pct", -2.0)
+        _btc_abs = _thr.get("btc_battle_abs_pct", 7.0)
         _aft_ten = _thr.get("aftermath_tension", 40)
         _intel_d = _thr.get("intel_days_since", 2)
     except Exception:
-        _wti_shock, _vix_level, _vix_pct = 5.0, 28, 20
+        _wti_shock, _vix_level, _vix_pct = 5.0, 24, 25
         _dgs10, _spy_col, _aft_ten, _intel_d = 4.8, -3.0, 40, 2
+        _ndx_col, _btc_abs = -2.0, 7.0
 
     # 1. 유가 쇼크 — Oil Shock Titan 소환
     if wti_pct >= _wti_shock:
         return "BATTLE"
 
-    # 2. VIX 급등 — Volatility Hydra 소환
-    if vix_curr > _vix_level and vix_pct > _vix_pct:
+    # 2. VIX 급등 — Volatility Hydra 소환 (레벨 OR 급등률)
+    if vix_curr > _vix_level or vix_pct >= _vix_pct:
         return "SHOCK"
 
     # 3. 금리 급등 — Debt Titan 소환
@@ -106,6 +118,14 @@ def classify(delta: dict, arc: dict) -> EpisodeType:
 
     # 4. 지수 급락 — Algorithm Reaper 연계
     if spy_pct <= _spy_col:
+        return "BATTLE"
+
+    # 4b. 나스닥 급락 — 기술주 주도 셀오프
+    if nasdaq_pct <= _ndx_col:
+        return "BATTLE"
+
+    # 4c. BTC 급변 — 크립토 쇼크 (급등·급락 양방향)
+    if abs(btc_pct) >= _btc_abs:
         return "BATTLE"
 
     # 5. 전일 전투 여파

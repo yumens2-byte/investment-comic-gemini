@@ -115,6 +115,25 @@ def _fetch_ticker_safe(ticker: str, period: str = "5d") -> dict:
         return {"close": None, "prev_close": None, "pct_change": None}
 
 
+def fetch_macro_overrides() -> dict[str, float | None]:
+    """당일 이벤트 반영용 실시간 매크로 오버라이드 (FRED 지연 보정).
+
+    2026-09-03: FRED VIXCLS/DCOILWTICO는 1~수영업일 지연 발표라 급변일 당일의
+    VIX 급등·유가 급등이 스냅샷에 반영되지 않아 major event 판정이 구조적으로
+    불가능했다 (oil_wti 5일 연속 동일값 정체가 물증). yfinance 실시간 종가를
+    1순위로 쓰고, 수집 실패(None) 시 호출부에서 FRED 값을 유지한다.
+    """
+    tickers = {"vix": "^VIX", "oil_wti": "CL=F"}
+    result: dict[str, float | None] = {}
+    for col, ticker in tickers.items():
+        info = _fetch_ticker_safe(ticker)
+        close = info.get("close")
+        result[col] = float(close) if close is not None else None
+        if close is not None:
+            logger.info("[yfinance] macro override %s(%s)=%.4f", col, ticker, close)
+    return result
+
+
 def fetch_all(target_date: str | None = None) -> dict[str, float | None]:
     """
     모든 시장 지표 병렬 수집.
