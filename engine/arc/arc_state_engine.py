@@ -275,6 +275,26 @@ def update_after_episode(
         new_villain is not None
         and new_villain != s.get("active_villain")
     )
+
+    # ── 동일 날짜 재실행 멱등 가드 ──────────────────────────────────────────
+    # 2026-09-04: 같은 날 3회 재실행으로 arc_day/villain_streak/tension이
+    # 실행마다 중복 진행되어 스토리 시계가 +2일 과진행됨. 갱신은 "발행일"
+    # 기준이어야 하므로, 오늘 이미 갱신된 상태면 시계·증분 필드는 건너뛰고
+    # 최신 에피소드 내용(hook/outcome/type)만 반영한다.
+    # 빌런 전환은 정당한 상태 변화이므로 가드 대상에서 제외.
+    _today_iso = datetime.now(tz=timezone.utc).date().isoformat()
+    if not villain_changed and s.get("last_episode_date") == _today_iso:
+        if open_hook:
+            s["open_hook"] = open_hook
+        s["last_outcome"] = outcome
+        s["last_episode_type"] = episode_type
+        logger.info(
+            "[ArcStateEngine] 동일 날짜 재실행 감지 — 시계 진행 skip, "
+            "hook/outcome/type만 갱신 (arc_day=%d 유지)",
+            s.get("arc_day", 0),
+        )
+        return s
+
     if villain_changed:
         logger.info(
             "[ArcStateEngine] 빌런 전환: %s → %s (arc_day 리셋)",
