@@ -54,8 +54,8 @@ def test_missing_new_axes_do_not_crash() -> None:
 
 
 def test_snapshot_2026_09_02_with_default_thresholds() -> None:
-    # 어제 실측 스냅샷: 기본 임계(dgs10 4.8)로는 여전히 INTEL —
-    # 이 케이스의 메이저 승격은 Notion 임계 조정(dgs10 4.7)이 담당한다는 계약 고정
+    # 2026-09-02 실측 스냅샷 재현: default 동기화(dgs10 4.7) 후에는
+    # us10y 4.75 > 4.7 → BATTLE — Notion 로드 실패 시에도 이런 날을 놓치지 않는다
     delta = _delta(
         VIX={"curr": 14.92, "pct": 3.4},
         DGS10={"curr": 4.75, "pct": 1.7},
@@ -63,4 +63,9 @@ def test_snapshot_2026_09_02_with_default_thresholds() -> None:
         NASDAQ={"curr": -1.0281, "pct": -1.0281},
         BTC={"curr": 77240.25, "pct": -2.29},
     )
-    assert classify(delta, _QUIET_ARC) == "INTEL"
+    assert classify(delta, _QUIET_ARC) == "BATTLE"
+
+
+def test_default_dgs10_threshold_matches_notion_policy() -> None:
+    # 2026-09-04: us10y 4.79가 default 4.8에 걸려 INTEL 오판정 → default를 정책값 4.7로 동기화
+    assert classify(_delta(DGS10={"curr": 4.79, "pct": 0.8}), _QUIET_ARC) == "BATTLE"

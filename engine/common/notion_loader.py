@@ -169,6 +169,10 @@ def load_battle_constants() -> dict:
                 result["OUTCOME_THRESHOLDS"] = data
             elif "form0" in keys:
                 result["FORM_BONUS_TABLE"] = data
+            elif "wti_shock_pct" in keys:
+                # 2026-09-04: 분기 부재로 이 블록이 파싱 후 버려져 classifier가
+                # 항상 하드코딩 default를 사용했음 (Notion 임계 조정이 무효였음)
+                result["EVENT_CLASSIFIER_THRESHOLDS"] = data
         except json.JSONDecodeError:
             continue
 

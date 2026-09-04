@@ -60,7 +60,7 @@ def classify(delta: dict, arc: dict) -> EpisodeType:
     2. VIX 레벨 > 24 OR VIX 일간 +25% 이상 → SHOCK
        (2026-09-03 개정: 기존 "레벨>28 AND +20%"의 AND 결합이 저변동 국면의
         급등(14→17, +20%)을 걸러내 9/1 셀오프를 INTEL로 오판정)
-    3. DGS10 현재값 > 4.8% → BATTLE (Debt Titan)
+    3. DGS10 현재값 > 4.7% → BATTLE (Debt Titan)
     4. SPY 일간 -3% 이하 → BATTLE (Algorithm Reaper 연계 가능)
     4b. NASDAQ 일간 -2% 이하 → BATTLE
         (2026-09-03 추가: nasdaq_change는 수집만 되고 판정 미사용이었음)
@@ -93,7 +93,7 @@ def classify(delta: dict, arc: dict) -> EpisodeType:
         _wti_shock = _thr.get("wti_shock_pct", 5.0)
         _vix_level = _thr.get("vix_shock_level", 24)
         _vix_pct = _thr.get("vix_shock_pct", 25)
-        _dgs10 = _thr.get("dgs10_battle", 4.8)
+        _dgs10 = _thr.get("dgs10_battle", 4.7)
         _spy_col = _thr.get("spy_collapse_pct", -3.0)
         _ndx_col = _thr.get("nasdaq_collapse_pct", -2.0)
         _btc_abs = _thr.get("btc_battle_abs_pct", 7.0)
@@ -101,7 +101,7 @@ def classify(delta: dict, arc: dict) -> EpisodeType:
         _intel_d = _thr.get("intel_days_since", 2)
     except Exception:
         _wti_shock, _vix_level, _vix_pct = 5.0, 24, 25
-        _dgs10, _spy_col, _aft_ten, _intel_d = 4.8, -3.0, 40, 2
+        _dgs10, _spy_col, _aft_ten, _intel_d = 4.7, -3.0, 40, 2
         _ndx_col, _btc_abs = -2.0, 7.0
 
     # 1. 유가 쇼크 — Oil Shock Titan 소환

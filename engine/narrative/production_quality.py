@@ -388,6 +388,51 @@ def build_serial_contract_instruction() -> str:
     )
 
 
+def collect_required_cast(story_beat_plan: dict[str, Any] | None) -> list[str]:
+    """Beat plan의 required_character를 중복 없이 순서 보존 수집."""
+    seen: list[str] = []
+    for beat in (story_beat_plan or {}).get("panel_beats") or []:
+        if not isinstance(beat, dict):
+            continue
+        for char_id in beat.get("required_character") or []:
+            cid = str(char_id).strip()
+            if cid and cid not in seen:
+                seen.append(cid)
+    return seen
+
+
+def _role_for_char(char_id: str) -> str:
+    if char_id.startswith("CHAR_HERO"):
+        return "hero"
+    if char_id.startswith("CHAR_VILLAIN"):
+        return "villain"
+    return "npc"
+
+
+def build_required_cast_instruction(required_ids: list[str]) -> str | None:
+    """Standing cast contract injected into EVERY attempt when guests/cast are required.
+
+    2026-09-03/09-04: REQUIRED_CAST_MISSING(SENTINEL_YIELD)로 3연속×2일 실패.
+    모델은 게스트를 넣으려 했으나(role='ally' 시도 → 스키마 거부) 정확한
+    char_id·role 계약을 몰랐고, 재시도 피드백에도 전용 지시가 없었다.
+    serial 계약과 동일하게 매 시도 상시 주입한다.
+    """
+    ids = [str(i).strip() for i in required_ids if str(i).strip()]
+    if not ids:
+        return None
+    shaped = ", ".join(
+        f'{{"char_id": "{cid}", "role": "{_role_for_char(cid)}"}}' for cid in ids
+    )
+    return (
+        "## REQUIRED CAST CONTRACT (required on every response)\n"
+        f"- These characters MUST each appear in at least one panel's characters "
+        f"array with the EXACT char_id shown: {shaped}\n"
+        "- characters[].role accepts ONLY 'hero', 'villain', or 'npc'. Guest/support/"
+        "sentinel characters use 'npc' — never 'ally', 'guest', or 'support'.\n"
+        "- Do not rename, translate, or abbreviate char_id values."
+    )
+
+
 def build_production_retry_feedback(
     violations: list[ProductionViolation],
     *,
@@ -423,6 +468,24 @@ def build_production_retry_feedback(
         lines.append(
             "- THREAD FIX: remove operational/template wording (Track continuing, CHAR_*, "
             "PEACEFUL_GROWTH). Write a concrete in-world character decision or unanswered clue."
+        )
+    if "REQUIRED_CAST_MISSING" in codes:
+        missing = sorted(
+            {
+                cid.strip()
+                for item in violations
+                if item.code == "REQUIRED_CAST_MISSING"
+                for cid in item.detail.split(",")
+                if cid.strip()
+            }
+        )
+        shaped = ", ".join(
+            f'{{"char_id": "{cid}", "role": "{_role_for_char(cid)}"}}' for cid in missing
+        )
+        lines.append(
+            "- CAST FIX: add each missing character to at least one panel's characters "
+            f"array EXACTLY as: {shaped}. role must be 'hero', 'villain', or 'npc' only "
+            "(never 'ally'); keep char_id verbatim."
         )
     if serial_required:
         lines.append(

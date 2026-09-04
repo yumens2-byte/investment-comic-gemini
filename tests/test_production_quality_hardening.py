@@ -427,3 +427,37 @@ def test_serial_fix_feedback_bans_object_shaped_threads() -> None:
     assert feedback is not None
     assert "PLAIN STRINGS" in feedback
     assert "thread_id" in feedback  # 금지 형태를 명시적으로 지목
+
+
+def test_required_cast_instruction_builds_exact_contract() -> None:
+    from engine.narrative.production_quality import (
+        build_required_cast_instruction,
+        collect_required_cast,
+    )
+
+    plan = {
+        "panel_beats": [
+            {"panel_idx": 1, "required_character": ["CHAR_HERO_001", "SENTINEL_YIELD"]},
+            {"panel_idx": 2, "required_character": ["SENTINEL_YIELD"]},
+        ]
+    }
+    ids = collect_required_cast(plan)
+    assert ids == ["CHAR_HERO_001", "SENTINEL_YIELD"]
+
+    instruction = build_required_cast_instruction(ids)
+    assert instruction is not None
+    assert '{"char_id": "CHAR_HERO_001", "role": "hero"}' in instruction
+    assert '{"char_id": "SENTINEL_YIELD", "role": "npc"}' in instruction
+    assert "'ally'" in instruction  # 금지 role 명시
+    assert build_required_cast_instruction([]) is None
+
+
+def test_cast_fix_feedback_names_missing_ids_with_roles() -> None:
+    feedback = build_production_retry_feedback(
+        [ProductionViolation("REQUIRED_CAST_MISSING", "SENTINEL_YIELD")],
+        serial_required=False,
+    )
+
+    assert feedback is not None
+    assert "CAST FIX" in feedback
+    assert '{"char_id": "SENTINEL_YIELD", "role": "npc"}' in feedback
