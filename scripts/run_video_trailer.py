@@ -43,7 +43,7 @@ def _ensure_repo_root_on_path() -> None:
 
 _ensure_repo_root_on_path()
 
-VERSION = "2.0.0"
+VERSION = "2.0.1"
 
 logger = logging.getLogger("run_video_trailer")
 
@@ -846,6 +846,22 @@ def stage_weekly_gate():
     status = persist_weekly_gate(gate)
     if not gate.passed:
         logger.info(f"[W1] gate BLOCKED — reason={gate.reason} status={status}")
+        # v2.0.1: 주 1회뿐인 발행이 조용히 빠지면 마스터가 인지할 수 없다.
+        # 일일 트랙과 달리 스팸이 아니므로 차단 사유를 알린다 (DRY_RUN 제외).
+        if os.environ.get("DRY_RUN", "true").lower() != "true":
+            chat_id = os.environ.get("MASTER_CHAT_ID", "")
+            if chat_id:
+                try:
+                    _send_telegram_text(
+                        chat_id,
+                        "⚠️ <b>주간 다이제스트 생성 안 함</b>\n"
+                        f"구간: {gate.week_start} ~ {gate.week_end}\n"
+                        f"사유: <code>{gate.reason}</code>\n"
+                        f"에피소드: {gate.episode_count}건\n"
+                        "(이미지 트랙 결손 여부를 확인하세요)",
+                    )
+                except Exception as exc:
+                    logger.warning(f"[W1] 차단 알림 발송 실패 (무시): {exc}")
         sys.exit(0)
     logger.info(
         f"[W1] gate PASS: {gate.week_start}~{gate.week_end} "

@@ -40,7 +40,7 @@ from engine.video.shorts_pipeline import (
     enforce_canon_visuals,
 )
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 logger = logging.getLogger(__name__)
 
 KST = ZoneInfo("Asia/Seoul")
@@ -84,16 +84,21 @@ def _is_dry_run(dry_run: Optional[bool] = None) -> bool:
 
 def resolve_week_window(run_date: Optional[date] = None) -> tuple[date, date]:
     """
-    실행일 기준 '직전 주 월~금' 구간을 계산한다.
+    실행일 기준 '직전 ISO 주(월~일)' 구간을 계산한다.
 
-    월요일 오전 실행이 정상 경로이므로, 그 주 월요일에서 7일을 빼 지난주 월요일을
-    구한다. 화요일 이후 수동 실행해도 같은 주의 지난주 구간이 나오도록 한다.
+    v1.1.0 (2026-09-05 5일 운영 점검 회고):
+      run_market 은 KST 새벽(화~일)에 전일 미국장을 처리하므로 episode_date 는
+      **화~토** 에 찍힌다 (토요일 = 금요일 미국장). 실측 6주 분포: Tue 2 / Wed 2 /
+      Thu 4 / Fri 4 / Sat 4 / Sun 1 / Mon 0. 기존 '월~금' 창은 토요일(금요일장)
+      에피소드를 누락시켜 게이트 미달을 유발했다. 지난주 월~일 전체를 잡는다.
+
+    월요일 오전 실행이 정상 경로이며, 화~일 수동 재실행해도 같은 구간이 나온다.
     """
     today = run_date or datetime.now(KST).date()
     this_monday = today - timedelta(days=today.weekday())
     last_monday = this_monday - timedelta(days=7)
-    last_friday = last_monday + timedelta(days=4)
-    return last_monday, last_friday
+    last_sunday = last_monday + timedelta(days=6)
+    return last_monday, last_sunday
 
 
 def build_weekly_episode_id(week_end: date) -> str:

@@ -14,12 +14,12 @@ from engine.video.shorts_pipeline import ShortsScenario
 # ── 주간 구간 계산 ───────────────────────────────────────────
 
 
-def test_window_from_monday_returns_previous_week():
-    """월요일 오전 실행 = 지난주 월~금 (정규 경로)."""
+def test_window_from_monday_returns_previous_iso_week():
+    """월요일 오전 실행 = 지난주 월~일 (정규 경로)."""
     start, end = wp.resolve_week_window(date(2026, 8, 31))  # 월
     assert start == date(2026, 8, 24)
-    assert end == date(2026, 8, 28)
-    assert start.weekday() == 0 and end.weekday() == 4
+    assert end == date(2026, 8, 30)
+    assert start.weekday() == 0 and end.weekday() == 6
 
 
 @pytest.mark.parametrize("day", [1, 2, 3, 4, 5, 6])
@@ -32,9 +32,20 @@ def test_window_stable_within_same_week(day):
     assert wp.resolve_week_window(monday + timedelta(days=day)) == base
 
 
-def test_window_spans_five_weekdays():
+def test_window_spans_full_week():
     start, end = wp.resolve_week_window(date(2026, 8, 31))
-    assert (end - start).days == 4  # 월~금
+    assert (end - start).days == 6  # 월~일
+
+
+def test_window_includes_saturday_episode():
+    """v1.1.0 회고: 토요일 episode_date = 금요일 미국장. 월~금 창은 이를 누락했다.
+
+    2026-09-05 실측: 이번 주 에피소드가 9/4(금), 9/5(토) 뿐이라 구 창(월~금)으론
+    1건 → 게이트 미달. 새 창(월~일)은 2건 → 통과.
+    """
+    start, end = wp.resolve_week_window(date(2026, 9, 7))  # 다음 월요일 실행
+    saturday = date(2026, 9, 5)
+    assert start <= saturday <= end
 
 
 def test_weekly_episode_id_format():
