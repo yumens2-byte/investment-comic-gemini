@@ -27,7 +27,7 @@ on:
       dry_run:
         description: 'true = 생성/발행 없음(안전). 실제 생성은 false 선택 필수'
         required: false
-        default: 'true'
+        default: 'false'
         type: choice
         options:
           - 'true'
