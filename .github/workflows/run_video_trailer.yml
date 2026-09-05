@@ -15,9 +15,13 @@ name: Run Video Trailer (ICG Video Track)
 #   → 조립 run 의 artifact 를 video_assets.artifact_run_id 로 복원 후 업로드
 # ─────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────
+# v2.0 (2026-09-05): 일일 자동 생성 cron 제거.
+# 정책 "월~금은 영상을 만들지 않는다" 에 따라 정규 생성 경로는
+# run_weekly_shorts.yml(월요일 07:13 KST) 로 이관되었다.
+# 본 워크플로는 수동 운영(abort / publish / verify_auth / 과거일 재생성)에만 쓴다.
+# ─────────────────────────────────────────────────────────────
 on:
-  schedule:
-    - cron: '17 18 * * 1-6'
   workflow_dispatch:
     inputs:
       target_date:
