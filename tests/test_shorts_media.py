@@ -297,3 +297,60 @@ def test_preflight_blocks_when_ffmpeg_missing(monkeypatch):
     monkeypatch.setattr(sm.shutil, "which", lambda name: None)
     with pytest.raises(sm.ShortsMediaError, match="ffmpeg 없음"):
         sm.preflight_check(_scenario(), dry_run=False)
+
+
+# ── v1.3.0 컷 수 하드코딩 제거 (2026-09-06 run #34004565648 회고) ──
+# 증상: 주간 2컷 시나리오 조립 시 "본편 컷 수 이상: 2 (3 필요)" 로 실패.
+#       미디어 비용($1.88)은 이미 지출된 뒤였다.
+
+
+@pytest.mark.skipif(not FFMPEG, reason="ffmpeg not available")
+def test_assemble_accepts_two_cut_weekly(tmp_path):
+    from engine.video.shorts_media import (
+        MediaResult,
+        _write_dummy_mp4,
+        _write_dummy_png,
+        assemble_shorts,
+    )
+
+    sc = _scenario()
+    sc.cuts = sc.cuts[:2]  # 주간 다이제스트 = 2컷
+    for c in sc.cuts:
+        c.duration_sec = 6
+
+    intro, outro = tmp_path / "P91.png", tmp_path / "P92.png"
+    _write_dummy_png(intro)
+    _write_dummy_png(outro)
+    cuts = []
+    for i in (1, 2):
+        p = tmp_path / f"cut{i}.mp4"
+        _write_dummy_mp4(p)
+        cuts.append(p)
+
+    media = MediaResult(intro_image=intro, outro_image=outro, cut_paths=cuts)
+    # 더미 mp4 는 실제 디코딩이 불가하므로 컷 수 검증 통과 여부만 본다.
+    try:
+        assemble_shorts(sc, media, tmp_path / "out")
+    except Exception as exc:
+        assert "컷 수 불일치" not in str(exc), f"2컷 조립이 컷 수 검증에서 막힘: {exc}"
+
+
+def test_assemble_rejects_cut_count_mismatch(tmp_path):
+    from engine.video.shorts_media import (
+        MediaResult,
+        ShortsMediaError,
+        _write_dummy_mp4,
+        _write_dummy_png,
+        assemble_shorts,
+    )
+
+    sc = _scenario()  # 3컷
+    intro, outro = tmp_path / "P91.png", tmp_path / "P92.png"
+    _write_dummy_png(intro)
+    _write_dummy_png(outro)
+    p = tmp_path / "cut1.mp4"
+    _write_dummy_mp4(p)
+
+    media = MediaResult(intro_image=intro, outro_image=outro, cut_paths=[p])
+    with pytest.raises(ShortsMediaError, match="컷 수 불일치"):
+        assemble_shorts(sc, media, tmp_path / "out")
