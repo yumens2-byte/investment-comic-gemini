@@ -40,7 +40,7 @@ from engine.video.shorts_pipeline import (
     ShortsScenario,
 )
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 logger = logging.getLogger(__name__)
 
 VEO_UNIT_PRICE_PER_SEC = 0.15  # veo_client.py 실측 단가 (8s = $1.20/cut)
@@ -417,7 +417,8 @@ def generate_cut_videos(
             ) from last_exc
 
     logger.info(
-        "[shorts_media] 3컷 완료: veo cost=$%.4f (누계 $%.4f)",
+        "[shorts_media] %d컷 완료: veo cost=$%.4f (누계 $%.4f)",
+        len(scenario.cuts),
         result.veo_cost_usd,
         result.total_cost_usd,
     )
@@ -638,8 +639,14 @@ def assemble_shorts(
 
     if media.intro_image is None or media.outro_image is None:
         raise ShortsMediaError("북엔드 이미지 누락 — assemble 불가")
-    if len(media.cut_paths) != 3:
-        raise ShortsMediaError(f"본편 컷 수 이상: {len(media.cut_paths)} (3 필요)")
+    # v1.3.0: 컷 수 3 하드코딩 제거. 주간 다이제스트는 2컷이다.
+    # (2026-09-06 run #34004565648: 시나리오 2컷인데 조립이 3컷을 요구해 실패)
+    expected_cuts = len(scenario.cuts)
+    if len(media.cut_paths) != expected_cuts:
+        raise ShortsMediaError(
+            f"본편 컷 수 불일치: 파일 {len(media.cut_paths)}개 / "
+            f"시나리오 {expected_cuts}컷"
+        )
 
     # v1.1.0: 북엔드 길이는 타임라인(나레이션 길이 기반)과 반드시 동일해야 한다.
     timeline = {t.label: t for t in build_timeline(scenario)}
