@@ -1,0 +1,83 @@
+# =============================================================================
+# Pipeline Watchdog (TG Internal 알림)  VERSION 1.0.0
+# 레포: yumens2-byte/investment-comic-gemini
+# 배치 경로: .github/workflows/notify_watchdog.yml
+#
+# 동작: 아래 workflows 목록의 워크플로우가 완료되면 발화.
+#       conclusion != success 인 경우에만 Telegram Internal 채널로 알림.
+#       기존 워크플로우/Python 코드는 일절 수정하지 않는다.
+#
+# 전제 Secrets (레포 Settings > Secrets and variables > Actions):
+#   TELEGRAM_BOT_TOKEN            (기존 보유 — 확인 완료)
+#   TELEGRAM_INTERNAL_CHANNEL_ID  (★ 신규 등록 필요 — 본 레포 미보유)
+#
+# 한계: cron 자체가 발화하지 않은 경우(GitHub schedule drop)는 감지 불가.
+#       workflow_run 은 "실행된 run"에만 반응한다.
+# =============================================================================
+name: Pipeline Watchdog
+
+"on":
+  workflow_run:
+    workflows:
+      - "📊 Run Market"
+      - "🚀 Publish SNS"
+      - "🔄 Resume Episode"
+      - "Publish Shorts (ICG Video Track)"
+      - "Weekly Digest Shorts (ICG Video Track)"
+    types:
+      - completed
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    # 성공은 무음. 실패/취소/타임아웃만 통지한다.
+    if: ${{ github.event.workflow_run.conclusion != 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Send Telegram (Internal)
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_INTERNAL_CHANNEL_ID }}
+          WF_NAME: ${{ github.event.workflow_run.name }}
+          WF_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          WF_EVENT: ${{ github.event.workflow_run.event }}
+          WF_URL: ${{ github.event.workflow_run.html_url }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${BOT_TOKEN}" ] || [ -z "${CHAT_ID}" ]; then
+            echo "::warning::TELEGRAM_BOT_TOKEN 또는 TELEGRAM_INTERNAL_CHANNEL_ID 미설정 — 알림 스킵"
+            exit 0
+          fi
+
+          case "${WF_CONCLUSION}" in
+            failure)    ICON="🚨" ;;
+            cancelled)  ICON="⛔" ;;
+            timed_out)  ICON="⏱️" ;;
+            *)          ICON="⚠️" ;;
+          esac
+
+          TS=$(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M KST')
+
+          # 개행은 printf 로 조립한다.
+          # YAML 블록 스칼라 안에서 여러 줄 문자열 리터럴을 쓰면
+          # 후속 줄의 들여쓰기가 0이 되어 블록이 조기 종료된다(실측 검출).
+          TEXT=$(printf '%s 파이프라인 실패\n레포: %s\n워크플로우: %s\n결과: %s\n트리거: %s\n시각: %s\n로그: %s' \
+            "${ICON}" "${REPO}" "${WF_NAME}" "${WF_CONCLUSION}" "${WF_EVENT}" "${TS}" "${WF_URL}")
+
+          HTTP=$(curl -sS -o /tmp/tg_resp.json -w '%{http_code}' \
+            -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            -d chat_id="${CHAT_ID}" \
+            -d disable_web_page_preview=true \
+            --data-urlencode text="${TEXT}")
+
+          echo "[watchdog] telegram http=${HTTP}"
+          if [ "${HTTP}" != "200" ]; then
+            echo "::error::Telegram 전송 실패 (http=${HTTP})"
+            cat /tmp/tg_resp.json
+            exit 1
+          fi
