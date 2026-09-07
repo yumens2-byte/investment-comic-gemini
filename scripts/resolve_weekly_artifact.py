@@ -27,10 +27,14 @@ import logging
 import os
 import sys
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 logger = logging.getLogger("resolve_weekly_artifact")
 
 RESTORABLE_STATES = {"media_generated", "assembled", "pending_approval"}
+
+
+class RestoreUnavailableError(RuntimeError):
+    """복원해야 하는 상태인데 복원 경로가 없음 — 조용히 넘기면 안 되는 상황."""
 
 
 def _emit(**kwargs) -> None:
@@ -41,6 +45,28 @@ def _emit(**kwargs) -> None:
             f.write("\n".join(lines) + "\n")
     for line in lines:
         print(line)
+
+
+def _setup_file_log() -> None:
+    """logs/{run_id}/resolve_artifact.log 로 남겨 artifact 에 포함시킨다.
+
+    v1.1.0 (2026-09-07 run #34116761360 회고): 복원 step 이 건너뛰어졌는데 그 판단
+    근거가 artifact 어디에도 남지 않아 원인 규명이 불가능했다.
+    """
+    from pathlib import Path
+
+    run_id = os.environ.get("GITHUB_RUN_ID", "local")
+    log_dir = Path("logs") / run_id
+    log_dir.mkdir(parents=True, exist_ok=True)
+    handler = logging.FileHandler(log_dir / "resolve_artifact.log", encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
+    handler.setLevel(logging.INFO)
+    root = logging.getLogger()
+    # basicConfig 는 root 에 핸들러가 이미 있으면 레벨을 바꾸지 않는다(기본 WARNING).
+    # 그 경우 INFO 진단 로그가 통째로 유실되므로 명시적으로 낮춘다.
+    if root.level > logging.INFO:
+        root.setLevel(logging.INFO)
+    root.addHandler(handler)
 
 
 def resolve() -> dict | None:
@@ -55,6 +81,8 @@ def resolve() -> dict | None:
     episode_id = build_weekly_episode_id(week_end)
 
     row = _load_video_asset_row(episode_id)
+    logger.info("[resolve] 대상 판정: episode_id=%s row=%s", episode_id, row)
+
     if not row:
         logger.info("[resolve] %s 기존 행 없음 — 신규 주차 (복원 불필요)", episode_id)
         return None
@@ -62,16 +90,16 @@ def resolve() -> dict | None:
     status = row.get("status")
     run_id = row.get("artifact_run_id")
     if status not in RESTORABLE_STATES:
-        logger.info("[resolve] status=%s — 복원 대상 아님", status)
+        logger.info("[resolve] status=%s — 복원 대상 아님 (신규 생성 경로)", status)
         return None
     if not run_id:
-        logger.warning(
-            "[resolve] %s status=%s 인데 artifact_run_id 없음 — 복원 불가 "
-            "(재조립하려면 force_regenerate 필요, 비용 재발생)",
-            episode_id,
-            status,
+        # v1.1.0: 조용히 넘기면 W6 이 "W4/W5 선행 필요" 로 실패해 원인을 오인하게 된다.
+        # 미디어는 있는데 복원 경로가 없다는 사실을 즉시 알린다.
+        raise RestoreUnavailableError(
+            f"{episode_id} status={status} 인데 artifact_run_id 가 없습니다. "
+            "이전 실행의 산출물을 찾을 수 없어 재조립이 불가능합니다. "
+            "force_regenerate=true 로 재생성하거나 artifact_run_id 를 보정하십시오."
         )
-        return None
 
     logger.info("[resolve] 복원 대상: %s (status=%s, run_id=%s)", episode_id, status, run_id)
     return {"episode_id": episode_id, "run_id": str(run_id)}
@@ -81,15 +109,21 @@ def main() -> int:
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s"
     )
+    _setup_file_log()
     logger.info("[resolve_weekly_artifact] v%s 시작", VERSION)
 
     try:
         target = resolve()
-    except Exception:
-        # 복원 해석 실패가 파이프라인 전체를 막아서는 안 된다 (신규 생성은 계속 가능).
-        logger.exception("[resolve] 조회 실패 — 복원 없이 진행")
+    except RestoreUnavailableError as exc:
+        logger.error("[resolve] %s", exc)
         _emit(found="false", run_id="", episode_id="")
-        return 0
+        return 1
+    except Exception:
+        # v1.1.0: 과거엔 조용히 found=false 로 넘겨 W6 실패 원인을 가렸다.
+        # DB 는 W1 게이트에서 이미 사용되므로, 여기서의 조회 실패는 비정상이다.
+        logger.exception("[resolve] 조회 실패 — 복원 여부를 판단할 수 없음")
+        _emit(found="false", run_id="", episode_id="")
+        return 1
 
     if target is None:
         _emit(found="false", run_id="", episode_id="")

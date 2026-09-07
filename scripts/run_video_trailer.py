@@ -43,7 +43,7 @@ def _ensure_repo_root_on_path() -> None:
 
 _ensure_repo_root_on_path()
 
-VERSION = "2.0.2"
+VERSION = "2.0.3"
 
 logger = logging.getLogger("run_video_trailer")
 
@@ -947,7 +947,23 @@ def stage_weekly_assembly():
         if not Path(p).exists()
     ]
     if missing:
-        raise FileNotFoundError(f"[W6] 조립 입력 누락 (W4/W5 선행 필요): {missing}")
+        # v2.0.3: DB 상태를 함께 보여 원인을 정확히 지목한다.
+        # (2026-09-07 run #34116761360: 실제 원인은 artifact 복원 실패였는데
+        #  "W4/W5 선행 필요" 로 보여 오인을 유발했다.)
+        hint = "W4/W5 선행 필요"
+        try:
+            from engine.video.weekly_pipeline import _load_video_asset_row
+
+            row = _load_video_asset_row(gate.episode_id) or {}
+            if row.get("status") in {"media_generated", "assembled", "pending_approval"}:
+                hint = (
+                    f"DB status={row.get('status')} 로 미디어는 이미 생성됨 → "
+                    f"artifact 복원 실패가 원인 (artifact_run_id={row.get('artifact_run_id')}). "
+                    "워크플로의 'Resolve/Restore prior artifact' step 로그를 확인하십시오"
+                )
+        except Exception as exc:
+            logger.warning(f"[W6] 상태 조회 실패 (기본 안내로 진행): {exc}")
+        raise FileNotFoundError(f"[W6] 조립 입력 누락 ({hint}): {missing}")
 
     final_path = assemble_shorts(scenario, media, out_dir / "assembly")
     logger.info(f"[W6] 조립 완료: {final_path} (규격 {WEEKLY_TOTAL_SEC}초)")

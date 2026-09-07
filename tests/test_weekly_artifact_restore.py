@@ -48,10 +48,34 @@ def test_no_restore_for_new_week(monkeypatch):
     assert rwa.resolve() is None
 
 
-def test_no_restore_when_run_id_missing(monkeypatch):
-    """artifact_run_id 가 없으면 복원 불가 — 조용히 건너뛰어야 한다."""
+def test_raises_when_media_exists_but_run_id_missing(monkeypatch):
+    """v1.1.0: 조용히 넘기면 W6 이 엉뚱한 사유로 실패한다 → 즉시 알린다."""
     _patch(monkeypatch, {"status": "media_generated", "artifact_run_id": None})
-    assert rwa.resolve() is None
+    with pytest.raises(rwa.RestoreUnavailableError, match="artifact_run_id"):
+        rwa.resolve()
+
+
+def test_main_fails_when_restore_unavailable(monkeypatch, tmp_path):
+    monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "o"))
+    monkeypatch.chdir(tmp_path)
+
+    def _boom():
+        raise rwa.RestoreUnavailableError("no run id")
+
+    monkeypatch.setattr(rwa, "resolve", _boom)
+    assert rwa.main() == 1  # 조용히 통과하지 않는다
+
+
+def test_main_writes_artifact_log(monkeypatch, tmp_path):
+    """판단 근거가 artifact(logs/)에 남아야 원인 규명이 가능하다."""
+    monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "o"))
+    monkeypatch.setenv("GITHUB_RUN_ID", "999")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(rwa, "resolve", lambda: None)
+    rwa.main()
+    log = tmp_path / "logs" / "999" / "resolve_artifact.log"
+    assert log.exists()
+    assert "resolve_weekly_artifact" in log.read_text(encoding="utf-8")
 
 
 def test_main_emits_found_true(monkeypatch, tmp_path):
@@ -74,17 +98,17 @@ def test_main_emits_found_false(monkeypatch, tmp_path):
     assert "found=false" in out.read_text()
 
 
-def test_main_survives_db_error(monkeypatch, tmp_path):
-    """복원 해석 실패가 파이프라인 전체를 막으면 안 된다 (신규 생성은 계속 가능)."""
+def test_main_fails_loudly_on_db_error(monkeypatch, tmp_path):
+    """v1.1.0: 조회 실패를 found=false 로 숨기면 W6 실패 원인이 가려진다."""
     out = tmp_path / "gh_out"
     monkeypatch.setenv("GITHUB_OUTPUT", str(out))
+    monkeypatch.chdir(tmp_path)
 
     def _boom():
         raise RuntimeError("db down")
 
     monkeypatch.setattr(rwa, "resolve", _boom)
-    assert rwa.main() == 0
-    assert "found=false" in out.read_text()
+    assert rwa.main() == 1
 
 
 def test_workflow_restores_before_assembly():
