@@ -40,7 +40,7 @@ from engine.video.shorts_pipeline import (
     ShortsScenario,
 )
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 logger = logging.getLogger(__name__)
 
 VEO_UNIT_PRICE_PER_SEC = 0.15  # veo_client.py 실측 단가 (8s = $1.20/cut)
@@ -704,6 +704,10 @@ def persist_media(episode_id: str, media: MediaResult) -> None:
             "cut2_video_uri": uris[1] if len(uris) > 1 else None,
             "cut3_video_uri": uris[2] if len(uris) > 2 else None,
             "veo_cost_usd": media.total_cost_usd,
+            # v1.4.0: 조립 단계에서 실패해도 미디어를 복원할 수 있어야 한다.
+            # (2026-09-07 run #34101547854: 조립 스킵으로 artifact_run_id 미기록 →
+            #  재조립 불가 → $1.88 재과금 위기)
+            "artifact_run_id": os.environ.get("GITHUB_RUN_ID"),
         }
     ).eq("episode_id", episode_id).execute()
     logger.info(

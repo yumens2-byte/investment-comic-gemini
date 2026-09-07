@@ -30,7 +30,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 logger = logging.getLogger(__name__)
 
 # claude_client._MODEL_PRIMARY 와 동일 값 (내부 상수 직접 import 는 결합도 회피)
@@ -165,7 +165,7 @@ class GateResult:
         return payload
 
 
-def run_gate(episode_date: str) -> GateResult:
+def run_gate(episode_date: str, *, for_generation: bool = True) -> GateResult:
     """
     영상 생성 게이트 3단 판정:
       1) episode_assets 행 + script_json 존재 (STEP 5 Persist 완료)
@@ -194,8 +194,10 @@ def run_gate(episode_date: str) -> GateResult:
 
     # v1.2.0 중복 과금 방지: 이미 미디어가 생성된 회차를 다시 돌리면 Veo 비용이
     # 그대로 재발생한다($3.6/회). 의도적 재생성은 FORCE_REGENERATE=true 로만 허용.
+    # v1.5.0: 후속 소비 단계(조립/알림/발행)는 과금이 없으므로 for_generation=False
+    # 로 이 가드를 건너뛴다 (2026-09-07 run #34101547854 회고).
     spent_states = {"media_generated", "assembled", "pending_approval"}
-    if existing and existing.get("status") in spent_states:
+    if for_generation and existing and existing.get("status") in spent_states:
         if os.environ.get("FORCE_REGENERATE", "false").lower() != "true":
             return GateResult(
                 passed=False,

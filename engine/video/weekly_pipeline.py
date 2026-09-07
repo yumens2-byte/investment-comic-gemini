@@ -40,7 +40,7 @@ from engine.video.shorts_pipeline import (
     enforce_canon_visuals,
 )
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 logger = logging.getLogger(__name__)
 
 KST = ZoneInfo("Asia/Seoul")
@@ -161,8 +161,25 @@ class WeeklyGateResult:
         return payload
 
 
-def run_weekly_gate(run_date: Optional[date] = None) -> WeeklyGateResult:
-    """주간 다이제스트 생성 여부 판정."""
+def run_weekly_gate(
+    run_date: Optional[date] = None,
+    *,
+    for_generation: bool = True,
+) -> WeeklyGateResult:
+    """
+    주간 다이제스트 생성 여부 판정.
+
+    Args:
+        for_generation:
+            True  — 신규 생성 진입점(W1/W3/W4·W5)에서 사용. 이미 미디어가 만들어진
+                    주차는 차단해 Veo 재과금을 막는다.
+            False — 이미 생성된 자산을 소비하는 후속 단계(W6 조립 / W7 알림)에서 사용.
+                    v1.2.0 (2026-09-07 run #34101547854 회고): 중복 과금 가드가
+                    같은 실행의 후속 스테이지까지 차단해, W4/W5 가 media_generated 를
+                    기록한 직후 W6·W7 이 'already_generated' 로 조기 종료됐다.
+                    비용은 이미 지출됐는데 조립·발행이 되지 않는 최악의 형태였다.
+                    후속 단계는 과금을 유발하지 않으므로 이 가드를 적용하지 않는다.
+    """
     start, end = resolve_week_window(run_date)
     episode_id = build_weekly_episode_id(end)
     logger.info(
@@ -180,8 +197,9 @@ def run_weekly_gate(run_date: Optional[date] = None) -> WeeklyGateResult:
             return WeeklyGateResult(
                 False, "already_published", episode_id, str(start), str(end)
             )
-        # 중복 과금 방지: 이미 미디어가 생성된 주차는 재생성하지 않는다.
-        if status in {"media_generated", "assembled", "pending_approval"}:
+        # 중복 과금 방지: 이미 미디어가 생성된 주차는 '재생성'하지 않는다.
+        # 후속 소비 단계(for_generation=False)는 과금이 없으므로 통과시킨다.
+        if for_generation and status in {"media_generated", "assembled", "pending_approval"}:
             if os.environ.get("FORCE_REGENERATE", "false").lower() != "true":
                 return WeeklyGateResult(
                     False, f"already_generated:{status}", episode_id, str(start), str(end)

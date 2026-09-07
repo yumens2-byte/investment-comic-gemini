@@ -307,3 +307,57 @@ def test_generate_uses_sdk_compat_and_validates(monkeypatch):
     assert scenario.total_duration_sec() == 18
     assert cost > 0
     assert captured["ok"]
+
+
+# ── v1.2.0 소비 단계 게이트 분리 (2026-09-07 run #34101547854 회고) ──
+# 증상: W4/W5 가 status='media_generated' 를 쓴 직후, 같은 실행의 W6(조립)·W7(알림)이
+#       중복 과금 가드에 걸려 'already_generated' 로 조기 종료. 비용($1.94)은 지출됐는데
+#       조립·발행이 되지 않아 영상이 유실되는 최악의 형태였다.
+
+
+@pytest.mark.parametrize("spent", ["media_generated", "assembled", "pending_approval"])
+def test_consumer_stage_passes_generated_states(monkeypatch, spent):
+    """조립·알림은 과금이 없으므로 생성 완료 상태에서도 통과해야 한다."""
+    monkeypatch.delenv("FORCE_REGENERATE", raising=False)
+    _patch(
+        monkeypatch,
+        [_ep("2026-08-24"), _ep("2026-08-25")],
+        video_row={"status": spent, "youtube_video_id": None},
+    )
+    gate = wp.run_weekly_gate(date(2026, 8, 31), for_generation=False)
+    assert gate.passed is True, f"소비 단계가 {spent} 상태에서 차단됨"
+
+
+@pytest.mark.parametrize("spent", ["media_generated", "assembled", "pending_approval"])
+def test_generation_stage_still_blocks_generated_states(monkeypatch, spent):
+    """반대로 생성 진입점은 여전히 차단되어야 한다 (Veo 재과금 방지)."""
+    monkeypatch.delenv("FORCE_REGENERATE", raising=False)
+    _patch(
+        monkeypatch,
+        [_ep("2026-08-24"), _ep("2026-08-25")],
+        video_row={"status": spent, "youtube_video_id": None},
+    )
+    assert wp.run_weekly_gate(date(2026, 8, 31), for_generation=True).passed is False
+
+
+def test_consumer_stage_still_blocks_published(monkeypatch):
+    """이미 발행된 건은 소비 단계에서도 차단 (중복 업로드 방지)."""
+    _patch(
+        monkeypatch,
+        [_ep("2026-08-24"), _ep("2026-08-25")],
+        video_row={"status": "published", "youtube_video_id": "abc123"},
+    )
+    gate = wp.run_weekly_gate(date(2026, 8, 31), for_generation=False)
+    assert gate.passed is False
+    assert gate.reason == "already_published"
+
+
+def test_default_is_generation_mode(monkeypatch):
+    """기본값은 생성 모드 — 실수로 가드가 풀리지 않도록."""
+    monkeypatch.delenv("FORCE_REGENERATE", raising=False)
+    _patch(
+        monkeypatch,
+        [_ep("2026-08-24"), _ep("2026-08-25")],
+        video_row={"status": "assembled", "youtube_video_id": None},
+    )
+    assert wp.run_weekly_gate(date(2026, 8, 31)).passed is False

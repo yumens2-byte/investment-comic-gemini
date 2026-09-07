@@ -43,7 +43,7 @@ def _ensure_repo_root_on_path() -> None:
 
 _ensure_repo_root_on_path()
 
-VERSION = "2.0.1"
+VERSION = "2.0.2"
 
 logger = logging.getLogger("run_video_trailer")
 
@@ -518,7 +518,7 @@ def stage_assembly():
     from engine.video.shorts_pipeline import load_scenario, run_gate
 
     target_date = _resolve_target_date()
-    gate = run_gate(target_date)
+    gate = run_gate(target_date, for_generation=False)  # 조립은 과금 없음
     if not gate.passed:
         logger.info(f"[S5] gate BLOCKED — reason={gate.reason} (정상 종료)")
         sys.exit(0)
@@ -566,7 +566,7 @@ def stage_gate_notify():
     from engine.video.shorts_pipeline import load_scenario, run_gate
 
     target_date = _resolve_target_date()
-    gate = run_gate(target_date)
+    gate = run_gate(target_date, for_generation=False)  # 알림은 과금 없음
     if not gate.passed:
         logger.info(f"[S6] gate BLOCKED — reason={gate.reason} (알림 미발송, 정상 종료)")
         sys.exit(0)
@@ -827,11 +827,15 @@ def stage_publish_shorts():
 # ════════════════════════════════════════════════════════════
 
 
-def _weekly_gate_or_exit():
-    """주간 게이트 통과 시 gate 반환, 미통과면 정상 종료(rc=0)."""
+def _weekly_gate_or_exit(for_generation: bool = True):
+    """주간 게이트 통과 시 gate 반환, 미통과면 정상 종료(rc=0).
+
+    for_generation=False 는 이미 생성된 자산을 소비하는 후속 단계(W6/W7)용으로,
+    중복 과금 가드를 적용하지 않는다 (2026-09-07 run #34101547854 회고).
+    """
     from engine.video.weekly_pipeline import run_weekly_gate
 
-    gate = run_weekly_gate()
+    gate = run_weekly_gate(for_generation=for_generation)
     if not gate.passed:
         logger.info(f"[W] gate BLOCKED — reason={gate.reason} (정상 종료, 영상 미생성)")
         sys.exit(0)
@@ -925,7 +929,7 @@ def stage_weekly_assembly():
     )
     from engine.video.weekly_pipeline import WEEKLY_TOTAL_SEC, load_weekly_scenario
 
-    gate = _weekly_gate_or_exit()
+    gate = _weekly_gate_or_exit(for_generation=False)
     scenario = load_weekly_scenario(gate.episode_id)
     if scenario is None:
         logger.warning("[W6] shorts_scenario_json 없음 — W3 선행 필요 (정상 종료)")
@@ -960,7 +964,7 @@ def stage_weekly_notify():
 
     from engine.video.weekly_pipeline import load_weekly_scenario
 
-    gate = _weekly_gate_or_exit()
+    gate = _weekly_gate_or_exit(for_generation=False)
     scenario = load_weekly_scenario(gate.episode_id)
     final_path = Path(f"output/videos/{gate.episode_id}/assembly/final_shorts.mp4")
 
