@@ -76,7 +76,11 @@ jobs:
       YOUTUBE_CLIENT_SECRET:    ${{ secrets.YOUTUBE_CLIENT_SECRET }}
       YOUTUBE_REFRESH_TOKEN:    ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
       # 주간 1편 기준 월 상한 (영상 트랙 전용 — 메인 파이프라인 예산 보호)
-      VIDEO_BUDGET_USD_MONTHLY: '8'
+      # 산정 근거 (2026-09-07 전수테스트): 회차 $1.92(Veo $1.80 + 부대 $0.12).
+      # 월요일이 5번인 달은 5회 발행 → $9.60. 각색 재시도가 붙으면 회차 ~$2.1 →
+      # 최악 $10.5. 상한 $8 이면 그 달 마지막 주가 예산 가드로 차단된다.
+      # 12 = 5회 + 재시도 여유. 메인 파이프라인 예산과는 별개로 관리된다.
+      VIDEO_BUDGET_USD_MONTHLY: '12'
       PUBLISH_HOLD_HOURS:       '6'
       LOG_LEVEL:                ${{ inputs.log_level || 'INFO' }}
       FORCE_REGENERATE:         ${{ inputs.force_regenerate || 'false' }}
