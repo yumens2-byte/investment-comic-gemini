@@ -120,8 +120,37 @@ jobs:
       - name: Install Python deps
         run: pip install -r requirements-video.txt
 
-      - name: W1 weekly gate (지난주 월~금 수집)
+      - name: W1 weekly gate (지난주 월~일 수집)
         run: python -m scripts.run_video_trailer --stage weekly_gate
+
+      # ── 선행 산출물 복원 (2026-09-07 run #34101547854 회고) ──────────
+      # W4/W5 로 미디어를 만든 뒤 조립이 실패하면, 새 러너에는 파일이 없어
+      # 재조립이 불가능했다(유일한 복구가 $1.88 재과금이었다).
+      # video_assets.artifact_run_id 로 이전 실행 artifact 를 복원해
+      # 추가 비용 0 으로 W6 부터 이어서 진행한다.
+      - name: Resolve prior artifact
+        id: prior
+        run: python -m scripts.resolve_weekly_artifact
+
+      - name: Restore prior media artifact
+        if: ${{ steps.prior.outputs.found == 'true' }}
+        uses: actions/download-artifact@v4
+        with:
+          pattern: video-*
+          path: .
+          merge-multiple: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ steps.prior.outputs.run_id }}
+
+      - name: Verify restored media
+        if: ${{ steps.prior.outputs.found == 'true' }}
+        run: |
+          EID="${{ steps.prior.outputs.episode_id }}"
+          echo "복원 확인: output/videos/${EID}"
+          ls -R "output/videos/${EID}" 2>/dev/null || {
+            echo "::error::artifact 복원 실패 (보존기간 만료 가능) — 재조립하려면 force_regenerate=true 필요"
+            exit 1
+          }
 
       - name: W3 weekly adaptation (메인 스토리 정리)
         run: python -m scripts.run_video_trailer --stage weekly_narrative
