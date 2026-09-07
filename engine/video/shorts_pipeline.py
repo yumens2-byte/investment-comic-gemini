@@ -30,7 +30,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
-VERSION = "1.5.0"
+VERSION = "1.6.0"
 logger = logging.getLogger(__name__)
 
 # claude_client._MODEL_PRIMARY 와 동일 값 (내부 상수 직접 import 는 결합도 회피)
@@ -129,7 +129,13 @@ def _load_video_asset_row(episode_id: str) -> dict | None:
 
     rows = (
         icg_table("video_assets")
-        .select("episode_id, status, youtube_video_id")
+        # v1.3.0/1.6.0 (2026-09-07 run #34117473966 회고): artifact_run_id 가
+        # SELECT 에 빠져 있어 항상 None 이었다 → 복원 불가 판정 → 재조립 실패.
+        # 소비처가 쓰는 컬럼을 모두 명시한다 (veo_cost_usd 는 승인 캡션 비용 표기용).
+        .select(
+            "episode_id, episode_date, status, youtube_video_id, "
+            "artifact_run_id, veo_cost_usd, release_at"
+        )
         .eq("episode_id", episode_id)
         .limit(1)
         .execute()

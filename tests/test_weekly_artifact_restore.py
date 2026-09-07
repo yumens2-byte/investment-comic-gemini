@@ -125,3 +125,26 @@ def test_workflow_restores_before_assembly():
     restore_idx = next(i for i, n in enumerate(names) if "Restore prior media" in n)
     assembly_idx = next(i for i, n in enumerate(names) if "W6 assembly" in n)
     assert restore_idx < assembly_idx
+
+
+# ── v1.3.0 SELECT 컬럼 누락 회귀 (2026-09-07 run #34117473966) ──
+# 증상: _load_video_asset_row 가 episode_id/status/youtube_video_id 만 SELECT 해
+#       artifact_run_id 가 항상 None → "복원 불가" 오판 → 재조립 실패.
+
+
+@pytest.mark.parametrize(
+    "module_path",
+    ["engine/video/weekly_pipeline.py", "engine/video/shorts_pipeline.py"],
+)
+def test_video_asset_select_includes_consumed_columns(module_path):
+    """소비처가 읽는 컬럼이 SELECT 에 모두 포함되어야 한다."""
+    from pathlib import Path
+
+    src = Path(module_path)
+    if not src.exists():
+        pytest.skip(f"{module_path} 없음")
+    text = src.read_text(encoding="utf-8")
+    start = text.index("def _load_video_asset_row")
+    body = text[start : start + 900]
+    for col in ("artifact_run_id", "veo_cost_usd", "status", "youtube_video_id"):
+        assert col in body, f"{module_path}: SELECT 에 {col} 누락"
