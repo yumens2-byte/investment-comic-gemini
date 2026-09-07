@@ -196,13 +196,19 @@ def _weekly_scenario_dict(**over):
         "intro": {
             "caption": "이번 주 시장",
             "narration_tts": "한 주의 전장입니다",  # 10자
-            "image_prompt": "Vertical 9:16 Manhwa weekly digest title card, tiger hero.",
+            "image_prompt": (
+                "Vertical 9:16 Manhwa style. A tiger-headed hero stands over a neon "
+                "city skyline at dawn, dramatic rim lighting, pure visual scene."
+            ),
         },
         "cuts": [{**cut, "seq": 1}, {**cut, "seq": 2}],
         "outro": {
             "caption": "다음 주 예고",
             "narration_tts": "투자 참고, 권유 아님",  # 12자
-            "image_prompt": "Vertical 9:16 Manhwa outro card with sunrise city.",
+            "image_prompt": (
+                "Vertical 9:16 Manhwa style. Sunrise over a calm city skyline, "
+                "glowing circular emblem motif in cyan and amber, pure visual scene."
+            ),
         },
         "youtube_title": "이번 주 시장 다이제스트",
         "youtube_description": "투자 참고 정보이며, 투자 권유가 아닙니다.",
@@ -361,3 +367,74 @@ def test_default_is_generation_mode(monkeypatch):
         video_row={"status": "assembled", "youtube_video_id": None},
     )
     assert wp.run_weekly_gate(date(2026, 8, 31)).passed is False
+
+
+# ── v1.4.0 이미지 내 텍스트 금지 (2026-09-07 W36 실측 회고) ──
+# 증상: 아웃트로 이미지의 한글 면책 문구가 "본 서비스는 군왞 듀슈| 대와..." 로 깨짐.
+# 원인: 각색이 "Legal disclaimer text overlay in Korean" 을 요구 → 이미지 모델은
+#       한글을 렌더링하지 못한다. 이미지 트랙에는 있던 NO TEXT 규칙이 영상 트랙에 없었다.
+
+
+def _bookend_scenario(intro_prompt: str, outro_prompt: str) -> ShortsScenario:
+    data = _weekly_scenario_dict()
+    data["intro"]["image_prompt"] = intro_prompt
+    data["outro"]["image_prompt"] = outro_prompt
+    return ShortsScenario(**data)
+
+
+CLEAN_PROMPT = (
+    "Cinematic vertical 9:16 Manhwa style. Two heroes face a storm hydra "
+    "over a neon city skyline at dawn, dramatic lighting."
+)
+
+
+def test_no_text_guard_allows_pure_visual_prompt():
+    wp.enforce_no_text_in_images(_bookend_scenario(CLEAN_PROMPT, CLEAN_PROMPT))
+
+
+def test_no_text_guard_blocks_real_w36_intro():
+    """실제 실패 사례 재현: title card overlay 요구."""
+    bad = CLEAN_PROMPT + " Title card overlay: 'W36 WEEKLY DIGEST'."
+    with pytest.raises(ValueError, match="텍스트 렌더링 요청"):
+        wp.enforce_no_text_in_images(_bookend_scenario(bad, CLEAN_PROMPT))
+
+
+def test_no_text_guard_blocks_real_w36_outro():
+    """실제 실패 사례 재현: Legal disclaimer text overlay in Korean."""
+    bad = CLEAN_PROMPT + " Legal disclaimer text overlay in Korean."
+    with pytest.raises(ValueError, match="텍스트 렌더링 요청"):
+        wp.enforce_no_text_in_images(_bookend_scenario(CLEAN_PROMPT, bad))
+
+
+def test_no_text_guard_blocks_hangul_in_prompt():
+    """프롬프트에 한글이 있으면 렌더링 요구로 간주한다."""
+    with pytest.raises(ValueError, match="한글 문자 포함"):
+        wp.enforce_no_text_in_images(
+            _bookend_scenario(CLEAN_PROMPT, CLEAN_PROMPT + " 투자 참고 문구")
+        )
+
+
+@pytest.mark.parametrize(
+    "marker", ["text overlay", "caption", "subtitle", "watermark", "typography"]
+)
+def test_no_text_guard_covers_markers(marker):
+    with pytest.raises(ValueError):
+        wp.enforce_no_text_in_images(
+            _bookend_scenario(CLEAN_PROMPT, f"{CLEAN_PROMPT} Add {marker} here.")
+        )
+
+
+def test_weekly_prompt_forbids_text_in_images():
+    facts = wp.extract_weekly_facts(_passed_gate())
+    prompt = wp._build_weekly_prompt(facts, _passed_gate().episodes)
+    assert "글자를 넣으라는 지시를 절대 쓰지 마라" in prompt
+    assert "한글을 쓰지 마라" in prompt
+
+
+def test_bookend_generation_forces_no_text_and_vertical():
+    """생성 호출 자체가 NO TEXT 규칙과 9:16 을 강제해야 한다 (각색이 실수해도 방어)."""
+    from engine.video.shorts_media import BOOKEND_ASPECT_RATIO, NO_TEXT_RULE
+
+    assert BOOKEND_ASPECT_RATIO == "9:16"
+    assert "NO TEXT" in NO_TEXT_RULE
+    assert "KOREAN" in NO_TEXT_RULE

@@ -40,13 +40,25 @@ from engine.video.shorts_pipeline import (
     ShortsScenario,
 )
 
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 logger = logging.getLogger(__name__)
 
 VEO_UNIT_PRICE_PER_SEC = 0.15  # veo_client.py 실측 단가 (8s = $1.20/cut)
 TARGET_W, TARGET_H, TARGET_FPS = 1080, 1920, 24
 BOOKEND_IDX_INTRO = 91  # generate_panel 파일명 P{idx}.png — 본편 패널(1~8)과 충돌 방지
 BOOKEND_IDX_OUTRO = 92
+BOOKEND_ASPECT_RATIO = "9:16"
+
+# 이미지 생성 모델은 한글을 제대로 렌더링하지 못한다. 2026-09-07 W36 실측에서
+# 아웃트로 면책 문구가 "본 서비스는 군왞 듀슈| 대와 조뎐하지 샀늡다" 로 깨졌다.
+# 이미지 트랙(prompt_builder)의 텍스트 금지 규칙과 동일한 문구를 강제 주입한다.
+# 면책·제목은 자막(ffmpeg ASS)과 유튜브 설명으로 전달한다.
+NO_TEXT_RULE = (
+    "CRITICAL RULE: PURE VISUAL SCENE ONLY. "
+    "ABSOLUTELY NO TEXT, LETTERS, KOREAN, JAPANESE, CHINESE, LATIN, NUMBERS, "
+    "SPEECH BUBBLES, CAPTION BOXES, TITLE CARDS, WATERMARKS, LOGOS WITH WORDS, "
+    "or any TYPOGRAPHY in the image."
+)
 MAX_NARRATION_SPEEDUP = 1.3  # atempo 상한 (그 이상은 청취성 급락)
 # 실측 기반 부대비용 (2026-08-29 run #33229690192): 이미지 2장 $0.0784 + 각색 $0.0412
 # 예산 검사는 Veo 만이 아니라 회차 총비용으로 해야 실효가 있다 (v1.2.0).
@@ -321,10 +333,11 @@ def generate_bookend_images(
     ):
         path, cost = generate_panel(
             panel_idx=idx,
-            prompt_text=prompt,
+            prompt_text=f"{NO_TEXT_RULE}\n\n{prompt}",
             ref_paths=refs,
             output_dir=out_dir,
             log_path=log_path,
+            aspect_ratio=BOOKEND_ASPECT_RATIO,
         )
         result.image_cost_usd = round(result.image_cost_usd + cost, 4)
         if idx == BOOKEND_IDX_INTRO:

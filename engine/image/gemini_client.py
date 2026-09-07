@@ -136,6 +136,7 @@ def _generate_one(
     client,
     prompt_text: str,
     ref_paths: list[Path],
+    aspect_ratio: str | None = None,
 ) -> tuple[bytes, int, int]:
     """
     Gemini API 단일 패널 이미지 생성.
@@ -144,6 +145,8 @@ def _generate_one(
         client: genai.Client 인스턴스.
         prompt_text: 패널 프롬프트.
         ref_paths: 캐릭터 REF 이미지 경로 목록.
+        aspect_ratio: "9:16" 등. None(기본)이면 모델 기본값(정사각) — 이미지 트랙
+            만화 패널의 기존 동작을 그대로 유지한다. 영상 트랙 북엔드만 지정한다.
 
     Returns:
         이미지 바이너리 (PNG), prompt token count, output token count.
@@ -166,9 +169,18 @@ def _generate_one(
         else:
             logger.warning("[gemini] REF 이미지 없음: %s", ref_path)
 
+    config = None
+    if aspect_ratio:
+        # 정사각 이미지를 9:16 영상에 넣으면 상하 44% 가 검은 여백이 된다
+        # (2026-09-07 W36 실측). 생성 단계에서 비율을 맞춘다.
+        config = types.GenerateContentConfig(
+            image_config=types.ImageConfig(aspect_ratio=aspect_ratio)
+        )
+
     response = client.models.generate_content(
         model=_MODEL,
         contents=contents,
+        config=config,
     )
 
     prompt_tokens, output_tokens = _extract_usage_tokens(response)
@@ -193,6 +205,7 @@ def generate_panel(
     ref_paths: list[Path],
     output_dir: Path,
     log_path: Path,
+    aspect_ratio: str | None = None,
 ) -> tuple[Path | None, float]:
     """
     패널 이미지 생성 + P{N}.png 저장 + gemini_run.log 기록.
@@ -249,7 +262,7 @@ def generate_panel(
                 + prompt_text
             )
         image_bytes, prompt_tokens, output_tokens = _generate_one(
-            client, adjusted_prompt, adjusted_refs
+            client, adjusted_prompt, adjusted_refs, aspect_ratio=aspect_ratio
         )
 
         latency = round(time.monotonic() - start_ts, 2)

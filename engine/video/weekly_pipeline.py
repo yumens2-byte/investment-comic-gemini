@@ -40,7 +40,7 @@ from engine.video.shorts_pipeline import (
     enforce_canon_visuals,
 )
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 logger = logging.getLogger(__name__)
 
 KST = ZoneInfo("Asia/Seoul")
@@ -297,6 +297,46 @@ def extract_weekly_facts(gate: WeeklyGateResult) -> dict:
     }
 
 
+# 이미지 프롬프트에서 금지할 "텍스트 렌더링 요청" 신호어 (2026-09-07 W36 회고)
+_TEXT_REQUEST_MARKERS = (
+    "text overlay",
+    "title card",
+    "disclaimer text",
+    "text in korean",
+    "korean text",
+    "caption",
+    "subtitle",
+    "typography",
+    "lettering",
+    "watermark",
+)
+
+
+def enforce_no_text_in_images(scenario: ShortsScenario) -> None:
+    """
+    북엔드 image_prompt 가 이미지 안에 글자를 넣으라고 요구하면 차단한다.
+
+    근거: 이미지 생성 모델은 한글을 제대로 렌더링하지 못한다. W36 실측에서
+    "Legal disclaimer text overlay in Korean" 지시가 그대로 반영되어 아웃트로
+    면책 문구가 깨진 글자로 나왔다. 면책·제목은 자막과 유튜브 설명이 담당한다.
+    """
+    problems: list[str] = []
+    for label, bookend in (("intro", scenario.intro), ("outro", scenario.outro)):
+        lowered = bookend.image_prompt.lower()
+        hits = [m for m in _TEXT_REQUEST_MARKERS if m in lowered]
+        # 한글이 프롬프트에 직접 들어가면 그 자체가 렌더링 요구일 가능성이 높다.
+        if any("\uac00" <= ch <= "\ud7a3" for ch in bookend.image_prompt):
+            hits.append("한글 문자 포함")
+        if hits:
+            problems.append(f"{label}: {', '.join(hits)}")
+
+    if problems:
+        raise ValueError(
+            "image_prompt 에 텍스트 렌더링 요청이 있습니다 (이미지에 글자를 넣으면 깨진다): "
+            + " | ".join(problems)
+        )
+
+
 def enforce_weekly_limits(scenario: ShortsScenario) -> None:
     """18초 규격 준수 검증 (컷 수·길이·나레이션 상한)."""
     if len(scenario.cuts) != WEEKLY_CUT_COUNT:
@@ -369,7 +409,12 @@ def _build_weekly_prompt(facts: dict, episodes: list[dict]) -> str:
         "최대한 짧게 압축한다. 상세 면책은 youtube_description 에 넣는다.\n"
         "7. youtube_title 은 한 주 요약이 드러나는 한국어 60자 이내(과장 금지). "
         "youtube_description 에 면책 문구를 포함한다.\n"
-        "8. 출력은 아래 구조의 JSON 하나만. 마크다운/설명/백틱 금지.\n\n"
+        "8. **image_prompt 에는 이미지 안에 글자를 넣으라는 지시를 절대 쓰지 마라.** "
+        "'title card overlay', 'disclaimer text', 'text in Korean', 자막/캡션/워터마크 "
+        "요구는 금지이며, 프롬프트에 한글을 쓰지 마라(영어로만 작성). "
+        "이미지 생성기는 한글을 깨진 글자로 렌더링한다. 제목·면책은 자막과 "
+        "youtube_description 이 담당하므로 이미지는 순수 비주얼만 묘사한다.\n"
+        "9. 출력은 아래 구조의 JSON 하나만. 마크다운/설명/백틱 금지.\n\n"
         "[출력 JSON 구조]\n"
         f"{json.dumps(schema_hint, ensure_ascii=False, indent=2)}\n\n"
         "[원본 주간 스크립트]\n"
@@ -429,6 +474,7 @@ def generate_weekly_scenario(
                     f"hero_ids mismatch: expected={facts['hero_ids']} got={scenario.hero_ids}"
                 )
             enforce_weekly_limits(scenario)
+            enforce_no_text_in_images(scenario)
             enforce_canon_visuals(scenario)
             logger.info(
                 "[weekly_pipeline] 각색 완료: %s attempt=%d elapsed=%dms "
