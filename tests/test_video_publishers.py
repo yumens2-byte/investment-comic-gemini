@@ -4,7 +4,12 @@ from unittest.mock import MagicMock
 import pytest
 
 from engine.publish.telegram_video_publisher import _send_video
-from engine.publish.x_video_publisher import publish_video_to_x
+from engine.publish.x_video_publisher import (
+    WEEKLY_HASHTAGS,
+    WEEKLY_CAPTION_SAFE_LEN,
+    build_weekly_x_caption,
+    publish_video_to_x,
+)
 
 
 def test_telegram_send_video_uses_bot_api(monkeypatch, tmp_path):
@@ -65,3 +70,23 @@ def test_x_video_publish_requires_credentials(monkeypatch, tmp_path):
 
     with pytest.raises(Exception, match="X_API_KEY"):
         publish_video_to_x(str(video), "caption", "EP1")
+
+
+def test_weekly_x_caption_contains_story_summary_and_hashtags():
+    caption = build_weekly_x_caption(
+        "금리 충격에서 기술주 반등까지",
+        ["주초 금리 경계감이 시장을 눌렀다", "주후반 기술주가 반등했다"],
+    )
+
+    assert "주초 금리 경계감이 시장을 눌렀다 → 주후반 기술주가 반등했다" in caption
+    assert "투자 권유가 아닙니다" in caption
+    assert all(tag in caption for tag in WEEKLY_HASHTAGS)
+    assert len(caption) <= WEEKLY_CAPTION_SAFE_LEN
+
+
+def test_weekly_x_caption_truncates_summary_but_preserves_hashtags():
+    caption = build_weekly_x_caption("긴 주간 이야기", ["시장 변동 " * 100])
+
+    assert len(caption) <= WEEKLY_CAPTION_SAFE_LEN
+    assert "…" in caption
+    assert caption.endswith(" ".join(WEEKLY_HASHTAGS))

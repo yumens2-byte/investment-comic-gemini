@@ -16,6 +16,7 @@ name: 🔄  Weekly Digest Shorts (ICG Video Track)
 #
 # 발행: W7 에서 텔레그램 검토본 발송 + release_at(+6h) 기록 →
 #       publish_shorts.yml 이 홀드 경과 후 자동 업로드.
+#       X도 publish_shorts.yml 에서 같은 홀드 경과 후 게시한다.
 #       중단은 Run Video Trailer > operation_mode=abort.
 # ─────────────────────────────────────────────────────────────
 

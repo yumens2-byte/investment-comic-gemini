@@ -28,7 +28,7 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Optional
 
 VERSION = "1.0.0"
 logger = logging.getLogger(__name__)
@@ -37,10 +37,45 @@ MAX_VIDEO_SIZE_MB = 512
 MAX_DURATION_SEC = 140
 MAX_CAPTION_LEN = 280  # X post limit
 CHUNK_SIZE_BYTES = 5 * 1024 * 1024  # 5MB
+WEEKLY_HASHTAGS = ("#주간스토리", "#미국주식", "#투자코믹", "#ICG")
+WEEKLY_DISCLAIMER = "투자 참고용이며 투자 권유가 아닙니다."
+# X는 일부 CJK 문자를 2자로 가중 계산한다. 외부 twitter-text 의존성 없이도
+# API 거절을 막을 수 있도록 주간 한국어 캡션은 보수적으로 140 code points로 제한한다.
+WEEKLY_CAPTION_SAFE_LEN = 140
 
 
 class XVideoPublishError(Exception):
     """Raised when X video publish fails."""
+
+
+def build_weekly_x_caption(
+    title: str,
+    story_parts: Iterable[str],
+    hashtags: Iterable[str] = WEEKLY_HASHTAGS,
+) -> str:
+    """Build an X-safe weekly story summary while always retaining hashtags.
+
+    The generated scenario already contains the fact-checked weekly title and two
+    chronological cut captions.  Reusing those fields avoids a second LLM call and
+    keeps the social post aligned with the rendered video.
+    """
+    normalized_tags = []
+    for tag in hashtags:
+        cleaned = str(tag).strip()
+        if cleaned:
+            normalized_tags.append(cleaned if cleaned.startswith("#") else f"#{cleaned}")
+    footer = "\n\n".join((WEEKLY_DISCLAIMER, " ".join(normalized_tags)))
+    parts = [str(part).strip() for part in story_parts if str(part).strip()]
+    summary = " → ".join(parts)
+    body = "\n\n".join(part for part in (str(title).strip(), summary) if part)
+
+    body_limit = WEEKLY_CAPTION_SAFE_LEN - len(footer) - 2
+    if body_limit < 1:
+        raise ValueError("Weekly X footer exceeds the X caption limit")
+    if len(body) > body_limit:
+        body = body[: max(1, body_limit - 1)].rstrip() + "…"
+
+    return f"{body}\n\n{footer}" if body else footer
 
 
 def publish_video_to_x(
