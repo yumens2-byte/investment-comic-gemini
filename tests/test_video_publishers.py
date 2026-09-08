@@ -5,8 +5,8 @@ import pytest
 
 from engine.publish.telegram_video_publisher import _send_video
 from engine.publish.x_video_publisher import (
-    WEEKLY_HASHTAGS,
     WEEKLY_CAPTION_SAFE_LEN,
+    WEEKLY_HASHTAGS,
     build_weekly_x_caption,
     publish_video_to_x,
 )
