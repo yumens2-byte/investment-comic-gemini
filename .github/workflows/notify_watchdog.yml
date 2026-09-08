@@ -1,5 +1,5 @@
 # =============================================================================
-# Pipeline Watchdog (TG Internal 알림)  VERSION 1.0.0
+# Pipeline Watchdog (TG Internal 알림)  VERSION 1.1.0
 # 레포: yumens2-byte/investment-comic-gemini
 # 배치 경로: .github/workflows/notify_watchdog.yml
 #
@@ -11,6 +11,8 @@
 #   TELEGRAM_BOT_TOKEN            (기존 보유 — 확인 완료)
 #   TELEGRAM_INTERNAL_CHANNEL_ID  (★ 신규 등록 필요 — 본 레포 미보유)
 #
+# 보안: workflow_run은 상위 워크플로보다 강한 권한/Secret을 가질 수 있으므로
+#       이벤트가 가리키는 ref를 checkout하거나 실행하지 않는다.
 # 한계: cron 자체가 발화하지 않은 경우(GitHub schedule drop)는 감지 불가.
 #       workflow_run 은 "실행된 run"에만 반응한다.
 # =============================================================================
@@ -22,18 +24,21 @@ name: Pipeline Watchdog
       - "📊 Run Market"
       - "🚀 Publish SNS"
       - "🔄 Resume Episode"
-      - "Publish Shorts (ICG Video Track)"
-      - "Weekly Digest Shorts (ICG Video Track)"
+      # workflow_run 필터는 표시 이름을 공백/이모지까지 정확히 비교한다.
+      - "🚀  Publish Shorts (ICG Video Track)"
+      - "🔄  Weekly Digest Shorts (ICG Video Track)"
     types:
       - completed
+  # 운영 Secret/채널을 실제 장애 없이 검증하기 위한 수동 smoke test.
+  workflow_dispatch:
 
-permissions:
-  contents: read
+# 알림에는 GitHub API나 저장소 내용 접근이 필요하지 않다.
+permissions: {}
 
 jobs:
   notify:
     # 성공은 무음. 실패/취소/타임아웃만 통지한다.
-    if: ${{ github.event.workflow_run.conclusion != 'success' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion != 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -41,23 +46,24 @@ jobs:
         env:
           BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           CHAT_ID: ${{ secrets.TELEGRAM_INTERNAL_CHANNEL_ID }}
-          WF_NAME: ${{ github.event.workflow_run.name }}
-          WF_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
-          WF_EVENT: ${{ github.event.workflow_run.event }}
-          WF_URL: ${{ github.event.workflow_run.html_url }}
+          WF_NAME: ${{ github.event.workflow_run.name || 'Pipeline Watchdog smoke test' }}
+          WF_CONCLUSION: ${{ github.event.workflow_run.conclusion || 'test' }}
+          WF_EVENT: ${{ github.event.workflow_run.event || 'workflow_dispatch' }}
+          WF_URL: ${{ github.event.workflow_run.html_url || format('{0}/{1}/actions/runs/{2}', github.server_url, github.repository, github.run_id) }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
 
           if [ -z "${BOT_TOKEN}" ] || [ -z "${CHAT_ID}" ]; then
-            echo "::warning::TELEGRAM_BOT_TOKEN 또는 TELEGRAM_INTERNAL_CHANNEL_ID 미설정 — 알림 스킵"
-            exit 0
+            echo "::error::TELEGRAM_BOT_TOKEN 또는 TELEGRAM_INTERNAL_CHANNEL_ID 미설정"
+            exit 1
           fi
 
           case "${WF_CONCLUSION}" in
             failure)    ICON="🚨" ;;
             cancelled)  ICON="⛔" ;;
             timed_out)  ICON="⏱️" ;;
+            test)       ICON="🧪" ;;
             *)          ICON="⚠️" ;;
           esac
 
@@ -66,13 +72,16 @@ jobs:
           # 개행은 printf 로 조립한다.
           # YAML 블록 스칼라 안에서 여러 줄 문자열 리터럴을 쓰면
           # 후속 줄의 들여쓰기가 0이 되어 블록이 조기 종료된다(실측 검출).
-          TEXT=$(printf '%s 파이프라인 실패\n레포: %s\n워크플로우: %s\n결과: %s\n트리거: %s\n시각: %s\n로그: %s' \
+          TEXT=$(printf '%s 파이프라인 Watchdog 알림\n레포: %s\n워크플로우: %s\n결과: %s\n트리거: %s\n시각: %s\n로그: %s' \
             "${ICON}" "${REPO}" "${WF_NAME}" "${WF_CONCLUSION}" "${WF_EVENT}" "${TS}" "${WF_URL}")
 
-          HTTP=$(curl -sS -o /tmp/tg_resp.json -w '%{http_code}' \
+          HTTP=$(curl --silent --show-error --fail-with-body \
+            --retry 3 --retry-all-errors --retry-delay 2 \
+            --connect-timeout 5 --max-time 20 \
+            -o /tmp/tg_resp.json -w '%{http_code}' \
             -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-            -d chat_id="${CHAT_ID}" \
-            -d disable_web_page_preview=true \
+            --data-urlencode chat_id="${CHAT_ID}" \
+            --data-urlencode disable_web_page_preview=true \
             --data-urlencode text="${TEXT}")
 
           echo "[watchdog] telegram http=${HTTP}"
@@ -81,3 +90,14 @@ jobs:
             cat /tmp/tg_resp.json
             exit 1
           fi
+
+          # Telegram은 성공 시 JSON 본문에 ok=true를 반환한다. HTTP 코드뿐 아니라
+          # API 수준 성공도 확인해 watchdog 자체의 오작동을 green으로 숨기지 않는다.
+          python - <<'PY'
+          import json
+
+          with open("/tmp/tg_resp.json", encoding="utf-8") as response_file:
+              response = json.load(response_file)
+          if response.get("ok") is not True:
+              raise SystemExit("Telegram API response did not contain ok=true")
+          PY
