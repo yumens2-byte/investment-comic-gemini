@@ -1026,6 +1026,77 @@ def stage_weekly_notify():
     )
 
 
+def stage_weekly_publish_x():
+    """홀드 경과 후 주간 영상을 X에 게시하고 발행 이력을 즉시 기록한다."""
+    from engine.publish.x_video_publisher import (
+        build_weekly_x_caption,
+        publish_video_to_x,
+    )
+    from engine.video.weekly_pipeline import load_weekly_scenario
+
+    episode_id = os.environ.get("TARGET_EPISODE_ID", "").strip()
+    if not episode_id:
+        episode_id = _weekly_gate_or_exit(for_generation=False).episode_id
+    if not episode_id.startswith("icg-vw-"):
+        raise RuntimeError(f"[X-WEEKLY] 주간 episode_id 형식이 아님: {episode_id}")
+
+    scenario = load_weekly_scenario(episode_id)
+    final_path = Path(f"output/videos/{episode_id}/assembly/final_shorts.mp4")
+    if os.environ.get("DRY_RUN", "true").lower() == "true" and scenario is None:
+        logger.info(
+            "[W8] DRY_RUN — X 게시 스킵 (id=%s, scenario 없음, final_exists=%s)",
+            episode_id,
+            final_path.exists(),
+        )
+        return
+    if scenario is None or not final_path.exists():
+        raise RuntimeError("[W8] X 게시 불가 — 시나리오/조립본 누락 (W3~W6 선행 필요)")
+
+    caption = build_weekly_x_caption(
+        scenario.youtube_title,
+        [scenario.intro.caption, *(cut.caption for cut in scenario.cuts)],
+    )
+    if os.environ.get("DRY_RUN", "true").lower() == "true":
+        logger.info("[W8] DRY_RUN — X 게시 스킵: %s\n%s", final_path, caption)
+        return
+
+    # 기존 웹툰 발행과 같은 published_comics 이력으로 재실행 중복 게시를 차단한다.
+    from engine.common.supabase_client import icg_table
+
+    episode_no = int(episode_id.rsplit("-", 1)[-1])
+    existing = (
+        icg_table("published_comics")
+        .select("tweet_id")
+        .eq("publish_date", scenario.episode_date)
+        .eq("episode_no", episode_no)
+        .eq("comic_type", "WEEKLY_DIGEST")
+        .limit(1)
+        .execute()
+    )
+    if existing.data and existing.data[0].get("tweet_id"):
+        logger.info(
+            "[W8] X 중복 게시 스킵: episode=%s tweet_id=%s",
+            episode_id,
+            existing.data[0]["tweet_id"],
+        )
+        return
+
+    result = publish_video_to_x(str(final_path), caption, episode_id)
+    icg_table("published_comics").insert(
+        {
+            "publish_date": scenario.episode_date,
+            "comic_type": "WEEKLY_DIGEST",
+            "episode_no": episode_no,
+            "risk_level": "MEDIUM",
+            "tweet_id": result["tweet_id"],
+            "cut_count": len(scenario.cuts),
+            "cost_usd": 0,
+            "status": "published",
+        }
+    ).execute()
+    logger.info("[W8] X 게시 완료: episode=%s tweet_id=%s", episode_id, result["tweet_id"])
+
+
 def stage_verify_auth():
     """YouTube 자격증명 사전 검증 (업로드/쿼터 소모 없음).
 
@@ -1119,6 +1190,7 @@ STAGES = {
     "weekly_media": stage_weekly_media,
     "weekly_assembly": stage_weekly_assembly,
     "weekly_notify": stage_weekly_notify,
+    "weekly_publish_x": stage_weekly_publish_x,
 }
 
 
