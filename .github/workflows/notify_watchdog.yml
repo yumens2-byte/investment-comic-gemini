@@ -16,7 +16,7 @@
 # 한계: cron 자체가 발화하지 않은 경우(GitHub schedule drop)는 감지 불가.
 #       workflow_run 은 "실행된 run"에만 반응한다.
 # =============================================================================
-name: Pipeline Watchdog
+name: "🐕‍🦺 Watchdog"
 
 "on":
   workflow_run:
