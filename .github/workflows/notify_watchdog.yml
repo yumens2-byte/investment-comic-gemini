@@ -9,7 +9,7 @@
 #
 # 전제 Secrets (레포 Settings > Secrets and variables > Actions):
 #   TELEGRAM_BOT_TOKEN            (기존 보유 — 확인 완료)
-#   TELEGRAM_INTERNAL_CHANNEL_ID  (★ 신규 등록 필요 — 본 레포 미보유)
+#   TELEGRAM_PAID_CHANNEL_ID  (★ 신규 등록 필요 — 본 레포 미보유)
 #
 # 보안: workflow_run은 상위 워크플로보다 강한 권한/Secret을 가질 수 있으므로
 #       이벤트가 가리키는 ref를 checkout하거나 실행하지 않는다.
@@ -45,7 +45,7 @@ jobs:
       - name: Send Telegram (Internal)
         env:
           BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          CHAT_ID: ${{ secrets.TELEGRAM_INTERNAL_CHANNEL_ID }}
+          CHAT_ID: ${{ secrets.TELEGRAM_PAID_CHANNEL_ID }}
           WF_NAME: ${{ github.event.workflow_run.name || 'Pipeline Watchdog smoke test' }}
           WF_CONCLUSION: ${{ github.event.workflow_run.conclusion || 'test' }}
           WF_EVENT: ${{ github.event.workflow_run.event || 'workflow_dispatch' }}
@@ -55,7 +55,7 @@ jobs:
           set -euo pipefail
 
           if [ -z "${BOT_TOKEN}" ] || [ -z "${CHAT_ID}" ]; then
-            echo "::error::TELEGRAM_BOT_TOKEN 또는 TELEGRAM_INTERNAL_CHANNEL_ID 미설정"
+            echo "::error::TELEGRAM_BOT_TOKEN 또는 TELEGRAM_PAID_CHANNEL_ID 미설정"
             exit 1
           fi
 
