@@ -189,6 +189,9 @@ def build_narrative_context_pack(
     sector_heatmap: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a compact context packet for richer, better-grounded narrative generation."""
+    from engine.narrative.continuity import sanitize_continuity_bundle
+
+    previous_episode = sanitize_continuity_bundle(previous_episode)
     metric_evidence = _top_delta_evidence(delta)
     news_evidence = _select_news_evidence(news_items)
     if news_evidence:
