@@ -272,6 +272,19 @@ def _get_episode_id(today: str) -> str:
     return f"icg-v-{today}-001"
 
 
+def _resolve_publish_episode_id(target_date: str) -> str:
+    """Return the exact release target selected by the publish workflow.
+
+    Weekly IDs cannot be reconstructed from ``episode_date`` because they use the
+    ``icg-vw-YYYY-Www-NNN`` format.  The hold-and-release workflow therefore
+    supplies TARGET_EPISODE_ID; retain the date-derived ID only for legacy/manual
+    daily publishing.
+    """
+    return os.environ.get("TARGET_EPISODE_ID", "").strip() or _get_episode_id(
+        target_date
+    )
+
+
 def _load_cut1_prompt() -> tuple[str, str]:
     """
     Load cut1 prompt from config/prompts/cut1_prompt.txt.
@@ -776,7 +789,7 @@ def stage_publish_shorts():
     from engine.video.shorts_pipeline import load_scenario
 
     target_date = _resolve_target_date()
-    episode_id = _get_episode_id(target_date)
+    episode_id = _resolve_publish_episode_id(target_date)
     logger.info(f"[S7] YouTube Shorts publish start: episode_id={episode_id}")
 
     scenario = load_scenario(episode_id)
@@ -1121,7 +1134,7 @@ def stage_abort():
     from engine.video.shorts_pipeline import _load_video_asset_row
 
     target_date = _resolve_target_date()
-    episode_id = _get_episode_id(target_date)
+    episode_id = _resolve_publish_episode_id(target_date)
     reason = os.environ.get("ABORT_REASON", "master_abort")
 
     row = _load_video_asset_row(episode_id)
@@ -1150,7 +1163,7 @@ def stage_persist_final():
     from engine.video.shorts_pipeline import _load_video_asset_row
 
     target_date = _resolve_target_date()
-    episode_id = _get_episode_id(target_date)
+    episode_id = _resolve_publish_episode_id(target_date)
 
     dry_run = os.environ.get("DRY_RUN", "true").lower() == "true"
     if dry_run:
