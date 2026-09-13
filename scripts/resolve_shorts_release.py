@@ -17,7 +17,7 @@ scripts/resolve_shorts_release.py
   대상이 없으면 found=false 로 정상 종료(rc=0) — 스케줄 실행의 정상 케이스다.
 
 VERSION 이력:
-  1.0.0  최초 (hold-and-release)
+  1.1.0  release_at 서버 필터/인덱스 대응 및 일시적 PostgREST 장애 재시도
 """
 
 from __future__ import annotations
@@ -26,9 +26,79 @@ import argparse
 import logging
 import os
 import sys
+import time
+from datetime import UTC, datetime
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 logger = logging.getLogger("resolve_shorts_release")
+
+MAX_QUERY_ATTEMPTS = 3
+RETRY_BASE_DELAY_SECONDS = 2.0
+
+
+def _is_transient_query_error(exc: Exception) -> bool:
+    """PostgREST/프록시가 반환한 재시도 가능한 HTTP 오류인지 판별한다.
+
+    504 응답 본문은 표준 PostgREST 오류 필드를 포함하지 않아 supabase-py가
+    새 APIError로 변환한다. 라이브러리 버전에 따라 code가 속성 또는 문자열
+    표현에만 있으므로 양쪽을 모두 확인한다.
+    """
+    code = getattr(exc, "code", None)
+    if code is not None and str(code) in {"408", "429", "500", "502", "503", "504"}:
+        return True
+    message = str(exc).lower()
+    return any(
+        marker in message
+        for marker in (
+            "gateway timeout",
+            "timed out",
+            "timeout",
+            "'code': 408",
+            "'code': 429",
+            "'code': 500",
+            "'code': 502",
+            "'code': 503",
+            "'code': 504",
+        )
+    )
+
+
+def _query_rows(episode_id: str, now: datetime) -> list[dict]:
+    """선택 쿼리를 새로 만들어 일시 장애 시 지수 백오프로 재시도한다."""
+    from engine.common.supabase_client import icg_table
+
+    for attempt in range(1, MAX_QUERY_ATTEMPTS + 1):
+        query = (
+            icg_table("video_assets")
+            .select(
+                "episode_id, episode_date, status, release_at, artifact_run_id, youtube_video_id"
+            )
+            .eq("status", "pending_approval")
+            .is_("youtube_video_id", "null")
+            # 만료되지 않은 hold 행을 DB에서 제외해 스캔/응답량을 줄인다.
+            .lte("release_at", now.isoformat())
+            .order("release_at", desc=True)
+            .limit(5)
+        )
+        if episode_id:
+            query = query.eq("episode_id", episode_id)
+
+        try:
+            return query.execute().data or []
+        except Exception as exc:
+            if attempt == MAX_QUERY_ATTEMPTS or not _is_transient_query_error(exc):
+                raise
+            delay = RETRY_BASE_DELAY_SECONDS * (2 ** (attempt - 1))
+            logger.warning(
+                "[resolve] 일시적 조회 장애 (%d/%d): %s — %.0f초 후 재시도",
+                attempt,
+                MAX_QUERY_ATTEMPTS,
+                exc,
+                delay,
+            )
+            time.sleep(delay)
+
+    return []  # pragma: no cover - 반복문은 성공 반환 또는 예외로 종료한다.
 
 
 def _emit(**kwargs) -> None:
@@ -44,27 +114,12 @@ def _emit(**kwargs) -> None:
 
 def resolve(episode_id: str = "") -> dict | None:
     """발행 대상 1건을 선택한다 (없으면 None)."""
-    from engine.common.supabase_client import icg_table
-
-    query = (
-        icg_table("video_assets")
-        .select("episode_id, episode_date, status, release_at, artifact_run_id, youtube_video_id")
-        .eq("status", "pending_approval")
-        .is_("youtube_video_id", "null")
-        .order("episode_date", desc=True)
-        .limit(5)
-    )
-    if episode_id:
-        query = query.eq("episode_id", episode_id)
-
-    rows = query.execute().data or []
+    now = datetime.now(UTC)
+    rows = _query_rows(episode_id, now)
     if not rows:
         logger.info("[resolve] pending_approval 대상 없음")
         return None
 
-    from datetime import UTC, datetime
-
-    now = datetime.now(UTC)
     for row in rows:
         eid = row["episode_id"]
         release_at = row.get("release_at")
@@ -91,9 +146,7 @@ def resolve(episode_id: str = "") -> dict | None:
 
 
 def main() -> int:
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s"
-    )
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
     logger.info("[resolve_shorts_release] v%s 시작", VERSION)
 
     parser = argparse.ArgumentParser()
