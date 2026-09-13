@@ -392,6 +392,26 @@ def test_no_text_guard_allows_pure_visual_prompt():
     wp.enforce_no_text_in_images(_bookend_scenario(CLEAN_PROMPT, CLEAN_PROMPT))
 
 
+@pytest.mark.parametrize(
+    "safeguard",
+    [
+        "No caption, subtitle, lettering, or watermark.",
+        "Without text overlays or watermarks.",
+        "Avoid typography and captions.",
+    ],
+)
+def test_no_text_guard_allows_explicit_negative_safeguards(safeguard):
+    """NO TEXT 준수 문구를 렌더링 요청으로 오인해 W3를 실패시키면 안 된다."""
+    prompt = f"{CLEAN_PROMPT} {safeguard}"
+    wp.enforce_no_text_in_images(_bookend_scenario(prompt, prompt))
+
+
+def test_no_text_guard_still_blocks_positive_request_after_negative_sentence():
+    bad = CLEAN_PROMPT + " No logo. Add a caption here."
+    with pytest.raises(ValueError, match="caption"):
+        wp.enforce_no_text_in_images(_bookend_scenario(bad, CLEAN_PROMPT))
+
+
 def test_no_text_guard_blocks_real_w36_intro():
     """실제 실패 사례 재현: title card overlay 요구."""
     bad = CLEAN_PROMPT + " Title card overlay: 'W36 WEEKLY DIGEST'."

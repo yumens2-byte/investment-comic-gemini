@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta
@@ -40,7 +41,7 @@ from engine.video.shorts_pipeline import (
     enforce_canon_visuals,
 )
 
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 logger = logging.getLogger(__name__)
 
 KST = ZoneInfo("Asia/Seoul")
@@ -311,6 +312,34 @@ _TEXT_REQUEST_MARKERS = (
     "watermark",
 )
 
+_TEXT_NEGATION_RE = re.compile(
+    r"\b(?:no|without|avoid|avoiding|exclude|excluding|omit|omitting|never)\b"
+    r"|\bdo\s+not\b|\bdon't\b|\bfree\s+of\b",
+    re.IGNORECASE,
+)
+
+
+def _requested_text_markers(prompt: str) -> list[str]:
+    """Return text markers that are requested rather than explicitly prohibited.
+
+    Image prompts commonly end with safeguards such as ``no captions or
+    watermarks``. Treating those words as positive rendering instructions caused
+    all three W3 narrative attempts to fail even though the model complied with
+    the no-text rule. Negation is evaluated within the same sentence/clause so a
+    later positive instruction (``No logo. Add a caption``) is still rejected.
+    """
+    hits: list[str] = []
+    clauses = re.split(r"[.;\n]+", prompt.lower())
+    for clause in clauses:
+        for marker in _TEXT_REQUEST_MARKERS:
+            marker_match = re.search(rf"\b{re.escape(marker)}s?\b", clause)
+            if not marker_match:
+                continue
+            prefix = clause[: marker_match.start()]
+            if not _TEXT_NEGATION_RE.search(prefix):
+                hits.append(marker)
+    return hits
+
 
 def enforce_no_text_in_images(scenario: ShortsScenario) -> None:
     """
@@ -322,8 +351,7 @@ def enforce_no_text_in_images(scenario: ShortsScenario) -> None:
     """
     problems: list[str] = []
     for label, bookend in (("intro", scenario.intro), ("outro", scenario.outro)):
-        lowered = bookend.image_prompt.lower()
-        hits = [m for m in _TEXT_REQUEST_MARKERS if m in lowered]
+        hits = _requested_text_markers(bookend.image_prompt)
         # 한글이 프롬프트에 직접 들어가면 그 자체가 렌더링 요구일 가능성이 높다.
         if any("\uac00" <= ch <= "\ud7a3" for ch in bookend.image_prompt):
             hits.append("한글 문자 포함")
@@ -499,7 +527,9 @@ def generate_weekly_scenario(
             )
             prompt = (
                 f"{prompt}\n\n[재시도 피드백]\n이전 응답이 검증에 실패했다: {exc}\n"
-                "IMMUTABLE FACTS 를 그대로 복사하고 글자 수 상한을 반드시 지켜 다시 생성하라."
+                "IMMUTABLE FACTS 를 그대로 복사하고 글자 수 상한을 반드시 지켜 다시 생성하라. "
+                "image_prompt 검증 실패라면 금지어를 부정문으로도 반복하지 말고, "
+                "글자와 관련된 표현을 완전히 제거한 순수 장면 묘사만 출력하라."
             )
 
     raise WeeklyPipelineError(
