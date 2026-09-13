@@ -28,6 +28,10 @@ class _FakeQuery:
         self.filters[f"is_{key}"] = value
         return self
 
+    def lte(self, key, value):
+        self.filters[f"lte_{key}"] = value
+        return self
+
     def order(self, *_a, **_k):
         return self
 
@@ -121,6 +125,44 @@ def test_query_filters_exclude_published(monkeypatch):
     rsr.resolve()
     assert captured["status"] == "pending_approval"
     assert captured["is_youtube_video_id"] == "null"
+    assert "lte_release_at" in captured
+
+
+def test_transient_gateway_timeout_is_retried(monkeypatch):
+    attempts = 0
+
+    class _Flaky(_FakeQuery):
+        def execute(self):
+            nonlocal attempts
+            attempts += 1
+            if attempts < 3:
+                raise RuntimeError(
+                    "{'message': 'JSON could not be generated', 'code': 504, "
+                    "'details': 'Gateway Timeout'}"
+                )
+            return super().execute()
+
+    monkeypatch.setattr(rsr.time, "sleep", lambda _seconds: None)
+    _patch_table(monkeypatch, lambda _n: _Flaky([_row()]))
+
+    assert rsr.resolve()["episode_id"] == EID
+    assert attempts == 3
+
+
+def test_non_transient_query_error_is_not_retried(monkeypatch):
+    attempts = 0
+
+    class _Broken(_FakeQuery):
+        def execute(self):
+            nonlocal attempts
+            attempts += 1
+            raise RuntimeError("{'code': 400, 'message': 'bad request'}")
+
+    _patch_table(monkeypatch, lambda _n: _Broken([]))
+
+    with pytest.raises(RuntimeError, match="bad request"):
+        rsr.resolve()
+    assert attempts == 1
 
 
 def test_emit_writes_github_output(monkeypatch, tmp_path):
@@ -179,6 +221,4 @@ def test_release_at_respects_hold_env(monkeypatch, hold):
     monkeypatch.setenv("PUBLISH_HOLD_HOURS", hold)
     hours = float(__import__("os").environ["PUBLISH_HOLD_HOURS"])
     release = datetime.now(UTC) + timedelta(hours=hours)
-    assert (release - datetime.now(UTC)).total_seconds() == pytest.approx(
-        hours * 3600, abs=5
-    )
+    assert (release - datetime.now(UTC)).total_seconds() == pytest.approx(hours * 3600, abs=5)
