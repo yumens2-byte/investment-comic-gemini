@@ -36,6 +36,8 @@ logger = logging.getLogger(__name__)
 # claude_client._MODEL_PRIMARY 와 동일 값 (내부 상수 직접 import 는 결합도 회피)
 _MODEL = "claude-sonnet-4-6"
 _MAX_RETRIES = 2
+_DB_READ_MAX_ATTEMPTS = 3
+_DB_READ_RETRY_BASE_SECONDS = 2.0
 _SYSTEM_PROMPT = (
     "당신은 투자 코믹 유니버스 'ICG'의 영상 각색 작가다. "
     "주어진 원본 만화 스크립트의 사실관계·승패·등장인물을 절대 변경하지 않고, "
@@ -856,17 +858,62 @@ def persist_gate_result(gate: GateResult) -> str:
     return status
 
 
+def _is_transient_db_read_error(exc: Exception) -> bool:
+    """Return whether a PostgREST read failed with a temporary HTTP condition.
+
+    A proxy 504 can be re-raised by postgrest-py as a synthetic ``APIError``
+    because its body has only ``message`` and not the normal error schema.  Some
+    client versions expose the status via ``code`` while others only retain it
+    in the rendered exception, so inspect both forms.
+    """
+    code = getattr(exc, "code", None)
+    if code is not None and str(code) in {"408", "429", "500", "502", "503", "504"}:
+        return True
+    message = str(exc).lower()
+    return any(
+        marker in message
+        for marker in (
+            "gateway timeout",
+            "timed out",
+            "timeout",
+            "'code': 408",
+            "'code': 429",
+            "'code': 500",
+            "'code': 502",
+            "'code': 503",
+            "'code': 504",
+        )
+    )
+
+
 def load_scenario(episode_id: str) -> Optional[ShortsScenario]:
-    """video_assets.shorts_scenario_json 에서 각색 결과 복원 (S3~S5 stage 독립 실행용)."""
+    """video_assets.shorts_scenario_json 에서 각색 결과를 일시 장애 재시도와 함께 복원."""
     from engine.common.supabase_client import icg_table
 
-    rows = (
-        icg_table("video_assets")
-        .select("shorts_scenario_json")
-        .eq("episode_id", episode_id)
-        .limit(1)
-        .execute()
-    )
+    for attempt in range(1, _DB_READ_MAX_ATTEMPTS + 1):
+        try:
+            # A PostgREST request builder is single-use; rebuild it for every attempt.
+            rows = (
+                icg_table("video_assets")
+                .select("shorts_scenario_json")
+                .eq("episode_id", episode_id)
+                .limit(1)
+                .execute()
+            )
+            break
+        except Exception as exc:
+            if attempt == _DB_READ_MAX_ATTEMPTS or not _is_transient_db_read_error(exc):
+                raise
+            delay = _DB_READ_RETRY_BASE_SECONDS * (2 ** (attempt - 1))
+            logger.warning(
+                "[shorts_pipeline] scenario 조회 일시 장애 (%d/%d): %s — %.0f초 후 재시도",
+                attempt,
+                _DB_READ_MAX_ATTEMPTS,
+                exc,
+                delay,
+            )
+            time.sleep(delay)
+
     if not rows.data:
         return None
     payload = rows.data[0].get("shorts_scenario_json")

@@ -538,6 +538,69 @@ def test_gate_allows_retry_before_media_spend(monkeypatch, retryable):
     assert run_gate(DATE).passed is True
 
 
+def test_load_scenario_retries_transient_gateway_timeout(monkeypatch):
+    """발행 직전 Supabase 504는 새 쿼리로 재시도해 일시 장애를 흡수한다."""
+    attempts = 0
+    scenario = _scenario_dict()
+
+    class _Response:
+        data = [{"shorts_scenario_json": scenario}]
+
+    class _Query:
+        def select(self, *_args):
+            return self
+
+        def eq(self, *_args):
+            return self
+
+        def limit(self, *_args):
+            return self
+
+        def execute(self):
+            nonlocal attempts
+            attempts += 1
+            if attempts < 3:
+                raise RuntimeError(
+                    "{'message': 'JSON could not be generated', 'code': 504, "
+                    "'details': 'Gateway Timeout'}"
+                )
+            return _Response()
+
+    monkeypatch.setattr("engine.common.supabase_client.icg_table", lambda _name: _Query())
+    monkeypatch.setattr(sp.time, "sleep", lambda _seconds: None)
+
+    loaded = sp.load_scenario(build_shorts_episode_id(DATE))
+
+    assert loaded is not None
+    assert loaded.episode_id == build_shorts_episode_id(DATE)
+    assert attempts == 3
+
+
+def test_load_scenario_does_not_retry_non_transient_error(monkeypatch):
+    attempts = 0
+
+    class _Query:
+        def select(self, *_args):
+            return self
+
+        def eq(self, *_args):
+            return self
+
+        def limit(self, *_args):
+            return self
+
+        def execute(self):
+            nonlocal attempts
+            attempts += 1
+            raise RuntimeError("{'code': 400, 'message': 'bad request'}")
+
+    monkeypatch.setattr("engine.common.supabase_client.icg_table", lambda _name: _Query())
+
+    with pytest.raises(RuntimeError, match="bad request"):
+        sp.load_scenario(build_shorts_episode_id(DATE))
+    assert attempts == 1
+
+
 def test_canon_spec_covers_every_character_in_yaml():
     """주간 다이제스트는 어떤 캐릭터든 등장할 수 있으므로 Canon 전원이 정의되어야 한다.
 
