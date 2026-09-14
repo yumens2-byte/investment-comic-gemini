@@ -55,6 +55,7 @@ def test_run_market_workflow_has_single_pilot_flag_definitions() -> None:
     assert _count_job_env_key(text, "SERIAL_NARRATIVE_P0_ENABLED") == 1
     assert env["SERIAL_NARRATIVE_P0_ENABLED"] == "${{ vars.SERIAL_NARRATIVE_P0_ENABLED || 'false' }}"
     assert "SERIAL_NARRATIVE_P0_ENABLED     =" in text
+    assert "PRODUCTION_QUALITY_EFFECTIVE_STRICT = ON" in text
 
 
 def test_run_market_workflow_wires_arc_state_v3_flag() -> None:

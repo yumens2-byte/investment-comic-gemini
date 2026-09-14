@@ -43,6 +43,51 @@ def test_bundle_from_episode_row_prefers_embedded_continuity() -> None:
     assert bundle_from_episode_row(row) == embedded
 
 
+def test_legacy_continuity_is_sanitized_at_read_boundary() -> None:
+    from engine.narrative.continuity import sanitize_continuity_bundle
+
+    cleaned = sanitize_continuity_bundle(
+        {
+            "source_episode_id": "ICG-2026-08-27-001",
+            "next_hook": "NASDAQ·SPY 하락: 알고리즘 압력 구간, 다음 관문",
+            "must_continue_from": "알고리즘 압력 구간을 확인한다",
+            "unresolved_threads": [
+                "Track continuing pressure from villain CHAR_VILLAIN_004",
+                "실제 독자용 단서",
+            ],
+            "resolved_threads": [
+                "Previous battle outcome remains unresolved emotionally: PEACEFUL_GROWTH."
+            ],
+        }
+    )
+
+    assert cleaned is not None
+    assert "알고리즘 압력 구간" not in cleaned["next_hook"]
+    assert cleaned["unresolved_threads"] == ["실제 독자용 단서"]
+    assert cleaned["resolved_threads"] == []
+
+
+def test_legacy_continuity_window_drops_placeholder_ledger_entries() -> None:
+    from engine.narrative.continuity import sanitize_continuity_window
+
+    cleaned = sanitize_continuity_window(
+        {
+            "recent_threads": [
+                "Track continuing pressure from villain CHAR_VILLAIN_004",
+                "실제 단서",
+            ],
+            "thread_ledger": [
+                {"thread_id": "bad", "summary": "PEACEFUL_GROWTH"},
+                {"thread_id": "good", "summary": "실제 단서"},
+            ],
+        }
+    )
+
+    assert cleaned is not None
+    assert cleaned["recent_threads"] == ["실제 단서"]
+    assert cleaned["thread_ledger"] == [{"thread_id": "good", "summary": "실제 단서"}]
+
+
 def test_load_previous_continuity_prefers_published_rows(monkeypatch) -> None:
     import sys
 
