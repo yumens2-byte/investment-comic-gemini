@@ -58,3 +58,13 @@ X/YouTube 발행 스테이지는 파일럿 ID 를 거부한다.
 - 단위/통합 테스트: `tests/test_weekly_v2.py`, `tests/test_weekly_v2_media_render.py`
 - E2E(외부 API 가짜, 코드·ffmpeg·DB 전이 실제): gate→narrative→media→assembly→notify 통과,
   최종 15.70초 · 1080×1920 · 정지 0 · -14 LUFS, 파일럿 release_at 미기록, 발행 리졸버 미선택.
+
+## 8. 후속 수정 이력
+
+| 버전 | 근거 | 내용 |
+|---|---|---|
+| weekly_v2 v2.1.0 | 파일럿 run #36086353216 — W3 3회 실패 (`camera_move` 'low_angle'/'dolly_in', 나레이션 26자) | 허용값 철자 명시(F1), 허용값 내 표기 정규화(F2), 수정 모드 재시도(F3), 필드 단위 피드백(F4), 글자 수 예시(F5) |
+| weekly_v2 v2.1.1 | 독립 코드 리뷰 3건 | JSONDecodeError 안내 누락 수정, 재시도 프롬프트에 넣는 모델 출력 `<` 이스케이프, 피드백 인용값 80자 제한 |
+
+- 검증: ruff·pytest 956건 2회 연속 통과, 전 경로 E2E(v1 정규 / v2 파일럿 / v2 정규 발행) 통과.
+- 실패 비용 기록 확인: 파일럿 실패 3회 $0.1204 가 `W38-P01` 원장에 누적됨.
