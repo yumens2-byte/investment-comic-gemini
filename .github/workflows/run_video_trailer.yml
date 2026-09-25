@@ -63,6 +63,10 @@ on:
         description: 'abort 모드 중단 사유 (기록용)'
         required: false
         default: ''
+      episode_id:
+        description: '대상 episode_id 직접 지정 (주간은 필수: icg-vw-YYYY-Www-NNN). 입력 시 target_date 보다 우선'
+        required: false
+        default: ''
       force_regenerate:
         description: '이미 생성된 회차를 재생성 (Veo 비용 재발생 — 주의)'
         required: false
@@ -126,6 +130,9 @@ jobs:
       LOG_LEVEL:                ${{ inputs.log_level || 'INFO' }}
       OPERATION_MODE:           ${{ inputs.operation_mode || 'daily_shorts' }}
       TARGET_DATE:              ${{ inputs.target_date || '' }}
+      # v2.1 (2026-09-25): 주간 ID 는 날짜로 역산할 수 없다 → abort/publish 는 episode_id 로 지정.
+      # run_video_trailer._resolve_publish_episode_id 가 TARGET_EPISODE_ID 를 우선 사용한다.
+      TARGET_EPISODE_ID:        ${{ inputs.episode_id || '' }}
     steps:
       - name: Normalize run flags (DRY_RUN fail-safe)
         env:
@@ -206,7 +213,7 @@ jobs:
           from datetime import datetime
           from zoneinfo import ZoneInfo
           date = os.environ.get("TARGET_DATE") or str(datetime.now(ZoneInfo("Asia/Seoul")).date())
-          eid = build_shorts_episode_id(date)
+          eid = os.environ.get("TARGET_EPISODE_ID", "").strip() or build_shorts_episode_id(date)
           rows = icg_table("video_assets").select("artifact_run_id").eq("episode_id", eid).limit(1).execute()
           rid = (rows.data[0].get("artifact_run_id") if rows.data else "") or ""
           print(rid)

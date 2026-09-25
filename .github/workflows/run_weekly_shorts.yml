@@ -1,7 +1,10 @@
 name: 🔄  Weekly Digest Shorts (ICG Video Track)
 
 # ─────────────────────────────────────────────────────────────
-# 주간 다이제스트 (v1.0.0 / 2026-08-29 마스터 확정)
+# 주간 다이제스트 (v1.0.0 / 2026-08-29 마스터 확정, v2.0.0 / 2026-09-25 B안)
+#
+# v2 (WEEKLY_FORMAT=v2): 정지 없음·빠름·움직임 많음 — 4초 × 4샷 = 16초,
+#   키프레임(REF) → Veo I2V, Motion QA, 단일 패스 렌더. v1 은 아래 규격(18초) 유지.
 #
 # 정책: 월~금은 영상을 만들지 않는다(비용 0). 평일 episode_assets 를 누적하고,
 #       월요일 오전에 지난주 월~금 메인 스토리를 18초 1편으로 정리해 발행한다.
@@ -50,6 +53,18 @@ on:
         options:
           - 'false'
           - 'true'
+      pilot:
+        description: 'v2 파일럿 렌더 (발행 없음, episode_id 에 -Pnn 접미사). dry_run=false 와 함께 사용'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+      pilot_tag:
+        description: '파일럿 태그 (P01~P99). 같은 태그 재실행은 force_regenerate 필요'
+        required: false
+        default: 'P01'
 
 permissions:
   contents: read
@@ -62,7 +77,7 @@ concurrency:
 jobs:
   weekly_digest:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       TZ: Asia/Seoul
       ANTHROPIC_API_KEY:        ${{ secrets.ANTHROPIC_API_KEY }}
@@ -81,8 +96,23 @@ jobs:
       # 월요일이 5번인 달은 5회 발행 → $9.60. 각색 재시도가 붙으면 회차 ~$2.1 →
       # 최악 $10.5. 상한 $8 이면 그 달 마지막 주가 예산 가드로 차단된다.
       # 12 = 5회 + 재시도 여유. 메인 파이프라인 예산과는 별개로 관리된다.
-      VIDEO_BUDGET_USD_MONTHLY: '12'
+      #
+      # v2 (2026-09-25 B안 4초×4샷): 회차 Veo 16초. 단가 $0.15 기준 회차 ≈$2.66,
+      # 월요일 5회 달 ≈$13.3 → 상한 $12 초과. 재생성(샷당 1회) 여유 포함 16 으로 상향.
+      VIDEO_BUDGET_USD_MONTHLY: '16'
       PUBLISH_HOLD_HOURS:       '6'
+      # ── Weekly Digest v2 (2026-09-25) ───────────────────────────
+      # 포맷: 파일럿이면 v2 강제, 정규 실행은 repo Variable WEEKLY_FORMAT (미설정 시 v1).
+      #       파일럿 확인 후 Settings > Variables 에서 WEEKLY_FORMAT=v2 로 전환한다.
+      WEEKLY_FORMAT:            ${{ inputs.pilot == 'true' && 'v2' || vars.WEEKLY_FORMAT || 'v1' }}
+      WEEKLY_PILOT_TAG:         ${{ inputs.pilot == 'true' && (inputs.pilot_tag || 'P01') || '' }}
+      # Veo 초당 단가 — 청구 단가 확인 후 Variable 로 정정 (원장·예산 가드 공용)
+      VEO_UNIT_PRICE_USD:       ${{ vars.VEO_UNIT_PRICE_USD || '0.15' }}
+      # Veo 효과음 활용 (false = 무음 베드 + 나레이션만)
+      WEEKLY_USE_VEO_AUDIO:     ${{ vars.WEEKLY_USE_VEO_AUDIO || 'true' }}
+      # Motion QA: 정지 비율 상한 / 샷당 재생성 횟수
+      WEEKLY_FREEZE_MAX:        '0.25'
+      WEEKLY_MOTION_REGEN_MAX:  '1'
       LOG_LEVEL:                ${{ inputs.log_level || 'INFO' }}
       FORCE_REGENERATE:         ${{ inputs.force_regenerate || 'false' }}
     steps:
@@ -160,10 +190,10 @@ jobs:
       - name: W3 weekly adaptation (메인 스토리 정리)
         run: python -m scripts.run_video_trailer --stage weekly_narrative
 
-      - name: W4+W5 bookend images + Veo 2 cuts
+      - name: W4+W5 media (v1 북엔드+2컷 / v2 키프레임+I2V 4샷)
         run: python -m scripts.run_video_trailer --stage weekly_media
 
-      - name: W6 assembly (18s)
+      - name: W6 assembly (v1 18s / v2 16s 단일 패스)
         run: python -m scripts.run_video_trailer --stage weekly_assembly
 
       - name: W7 telegram review + hold
