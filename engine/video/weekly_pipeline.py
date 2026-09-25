@@ -41,7 +41,7 @@ from engine.video.shorts_pipeline import (
     enforce_canon_visuals,
 )
 
-VERSION = "1.4.1"
+VERSION = "1.5.0"
 logger = logging.getLogger(__name__)
 
 KST = ZoneInfo("Asia/Seoul")
@@ -102,10 +102,33 @@ def resolve_week_window(run_date: Optional[date] = None) -> tuple[date, date]:
     return last_monday, last_sunday
 
 
+_PILOT_TAG_RE = re.compile(r"^P\d{2}$")
+
+
+def pilot_tag() -> str:
+    """
+    파일럿 태그 (env WEEKLY_PILOT_TAG, 형식 P01~P99). 없으면 빈 문자열.
+
+    v1.5.0 (2026-09-25 v2 파일럿): 파일럿은 정규 주차와 다른 episode_id 를 써서
+    정규 행/발행 이력과 섞이지 않게 한다. 형식이 틀리면 즉시 실패한다.
+    """
+    tag = os.environ.get("WEEKLY_PILOT_TAG", "").strip().upper()
+    if not tag:
+        return ""
+    if not _PILOT_TAG_RE.match(tag):
+        raise WeeklyPipelineError(f"WEEKLY_PILOT_TAG 형식 오류: {tag!r} (P01~P99)")
+    return tag
+
+
+def is_pilot_episode(episode_id: str) -> bool:
+    return bool(re.search(r"-P\d{2}$", episode_id or ""))
+
+
 def build_weekly_episode_id(week_end: date) -> str:
-    """주간 식별자 — 일일 트랙('icg-v-')과 접두사로 구분한다."""
+    """주간 식별자 — 일일 트랙('icg-v-')과 접두사로 구분한다. 파일럿은 -Pnn 접미사."""
     iso = week_end.isocalendar()
-    return f"icg-vw-{iso.year}-W{iso.week:02d}-001"
+    suffix = pilot_tag() or "001"
+    return f"icg-vw-{iso.year}-W{iso.week:02d}-{suffix}"
 
 
 # ────────────────────────────────────────────────────────

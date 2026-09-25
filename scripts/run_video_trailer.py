@@ -43,7 +43,7 @@ def _ensure_repo_root_on_path() -> None:
 
 _ensure_repo_root_on_path()
 
-VERSION = "2.0.3"
+VERSION = "2.1.0"
 
 logger = logging.getLogger("run_video_trailer")
 
@@ -792,7 +792,16 @@ def stage_publish_shorts():
     episode_id = _resolve_publish_episode_id(target_date)
     logger.info(f"[S7] YouTube Shorts publish start: episode_id={episode_id}")
 
-    scenario = load_scenario(episode_id)
+    if episode_id.startswith("icg-vw-"):
+        # v2.1.0: 주간은 v1(ShortsScenario)/v2(WeeklyScenarioV2) 스키마가 공존한다.
+        from engine.video.weekly_pipeline import is_pilot_episode
+        from engine.video.weekly_v2 import load_weekly_any, publish_fields
+
+        if is_pilot_episode(episode_id):
+            raise RuntimeError(f"[S7] 파일럿 에피소드는 발행 대상이 아니다: {episode_id}")
+        scenario = load_weekly_any(episode_id)
+    else:
+        scenario = load_scenario(episode_id)
     if scenario is None:
         raise RuntimeError(f"[S7] shorts_scenario_json 없음: {episode_id} — S2 선행 필요")
 
@@ -803,10 +812,16 @@ def stage_publish_shorts():
             f"artifact 복원 step(Restore assembled artifact)이 선행되어야 한다"
         )
 
+    if episode_id.startswith("icg-vw-"):
+        fields = publish_fields(scenario)
+        title, description = fields["title"], fields["description"]
+    else:
+        title, description = scenario.youtube_title, scenario.youtube_description
+
     result = publish_to_youtube_shorts(
         video_path=str(final_path),
-        title=scenario.youtube_title,
-        description=scenario.youtube_description,
+        title=title,
+        description=description,
         episode_id=episode_id,
         tags=["미국주식", "시장분석", "투자코믹", "EDT"],
     )
@@ -887,13 +902,42 @@ def stage_weekly_gate():
 
 
 def stage_weekly_narrative():
-    """W3: 주간 메인 스토리 각색 (Claude 1회, 2컷)."""
+    """W3: 주간 각색. WEEKLY_FORMAT=v2 이면 4샷 액션 시나리오(v2), 아니면 v1(2컷)."""
+    from engine.video.weekly_v2 import weekly_format
+
+    gate = _weekly_gate_or_exit()
+
+    if weekly_format() == "v2":
+        from engine.video.weekly_media import record_spend
+        from engine.video.weekly_v2 import generate_v2_scenario, persist_v2_scenario
+
+        try:
+            scenario, cost = generate_v2_scenario(gate)
+        except Exception as exc:
+            spent = float(getattr(exc, "cost_usd", 0.0) or 0.0)
+            if spent > 0 and os.environ.get("DRY_RUN", "true").lower() != "true":
+                try:
+                    record_spend(gate.episode_id, spent, note="weekly_v2_narrative_failed")
+                except Exception as rec_exc:
+                    logger.error(f"[W3v2] 실패 각색 비용 기록 실패: {rec_exc}")
+            raise
+        if scenario is None:
+            logger.info("[W3v2] DRY_RUN — 각색 스킵 (게이트 기록만 유지)")
+            return
+        persist_v2_scenario(gate, scenario)
+        # 각색 비용도 회차 원장에 누적한다 (예산 가드가 실지출을 보도록)
+        record_spend(gate.episode_id, cost, note="weekly_v2_narrative")
+        logger.info(
+            f"[W3v2] 각색 저장 완료: {gate.episode_id} shots={len(scenario.shots)} "
+            f"heroes={scenario.hero_ids} villain={scenario.villain_id} cost=${cost:.4f}"
+        )
+        return
+
     from engine.video.weekly_pipeline import (
         generate_weekly_scenario,
         persist_weekly_scenario,
     )
 
-    gate = _weekly_gate_or_exit()
     scenario, cost = generate_weekly_scenario(gate)
     if scenario is None:
         logger.info("[W3] DRY_RUN — 각색 스킵 (게이트 기록만 유지)")
@@ -902,8 +946,87 @@ def stage_weekly_narrative():
     logger.info(f"[W3] 각색 저장 완료: {gate.episode_id} cost=${cost:.4f}")
 
 
+def _load_v2_or_exit(episode_id: str, stage: str):
+    """v2 시나리오 로드. 없으면 정상 종료, v1 행이면 포맷 불일치로 실패."""
+    from engine.video.weekly_v2 import WeeklyScenarioV2, load_weekly_any
+
+    scenario = load_weekly_any(episode_id)
+    if scenario is None:
+        logger.warning(f"[{stage}] shorts_scenario_json 없음 — W3 선행 필요 (정상 종료)")
+        sys.exit(0)
+    if not isinstance(scenario, WeeklyScenarioV2):
+        raise RuntimeError(
+            f"[{stage}] {episode_id} 시나리오가 v1 형식인데 WEEKLY_FORMAT=v2 로 실행됨 — "
+            "force_regenerate=true 로 v2 각색부터 다시 수행하거나 WEEKLY_FORMAT=v1 로 실행하라"
+        )
+    return scenario
+
+
 def stage_weekly_media():
-    """W4+W5: 북엔드 이미지 2장 + Veo 2컷(6초). preflight 통과 후에만 과금."""
+    """W4+W5. v2: 키프레임 4장(REF) + Veo I2V 4샷 + Motion QA. v1: 북엔드 2장 + T2V 2컷."""
+    from engine.video.weekly_v2 import weekly_format
+
+    gate = _weekly_gate_or_exit()
+
+    if weekly_format() == "v2":
+        from engine.video.weekly_media import (
+            V2MediaResult,
+            generate_keyframes,
+            generate_shots,
+            persist_v2_media,
+            preflight_v2,
+            record_spend,
+        )
+
+        scenario = _load_v2_or_exit(gate.episode_id, "W4/W5v2")
+        report = preflight_v2(scenario)
+        logger.info(f"[W4/W5v2] preflight: {report}")
+
+        out_dir = Path(f"output/videos/{gate.episode_id}")
+        media = V2MediaResult()
+        dry_run = os.environ.get("DRY_RUN", "true").lower() == "true"
+        try:
+            generate_keyframes(scenario, out_dir, media)
+            generate_shots(scenario, out_dir, media)
+        except Exception:
+            # 중단돼도 이미 지출된 비용은 원장에 남긴다 (덮어쓰기 금지, 누적)
+            if not dry_run and media.total_cost_usd > 0:
+                try:
+                    record_spend(
+                        gate.episode_id,
+                        media.total_cost_usd,
+                        note="weekly_v2_media_partial_failure",
+                        manifest=media.manifest(),
+                    )
+                except Exception as exc:
+                    logger.error(f"[W4/W5v2] 부분 지출 기록 실패: {exc}")
+            raise
+
+        if dry_run:
+            logger.info("[W4/W5v2] DRY_RUN — Supabase 기록 스킵")
+            return
+        try:
+            persist_v2_media(gate.episode_id, media)
+        except Exception:
+            # 미디어($)는 이미 만들어졌다. 최소한 지출·manifest 는 남기고 실패를 알린다
+            # (artifact 는 upload-artifact if: always() 로 보존된다).
+            logger.exception("[W4/W5v2] persist 실패 — 지출만 누적 기록 후 실패 처리")
+            try:
+                record_spend(
+                    gate.episode_id,
+                    media.total_cost_usd,
+                    note="weekly_v2_media_persist_failed",
+                    manifest={**media.manifest(), "artifact_run_id": os.environ.get("GITHUB_RUN_ID")},
+                )
+            except Exception as rec_exc:
+                logger.error(f"[W4/W5v2] 지출 기록도 실패: {rec_exc}")
+            raise
+        logger.info(
+            f"[W4/W5v2] 미디어 완료: cost=${media.total_cost_usd:.4f} "
+            f"regen={media.regenerations} motion={media.motion}"
+        )
+        return
+
     from engine.video.shorts_media import (
         MediaResult,
         generate_bookend_images,
@@ -913,7 +1036,6 @@ def stage_weekly_media():
     )
     from engine.video.weekly_pipeline import load_weekly_scenario
 
-    gate = _weekly_gate_or_exit()
     scenario = load_weekly_scenario(gate.episode_id)
     if scenario is None:
         logger.warning("[W4/W5] shorts_scenario_json 없음 — W3 실발행 선행 필요 (정상 종료)")
@@ -933,22 +1055,61 @@ def stage_weekly_media():
     logger.info(f"[W4/W5] 미디어 완료: cost=${media.total_cost_usd:.4f}")
 
 
+def _restore_failure_hint(episode_id: str) -> str:
+    hint = "W4/W5 선행 필요"
+    try:
+        from engine.video.weekly_pipeline import _load_video_asset_row
+
+        row = _load_video_asset_row(episode_id) or {}
+        if row.get("status") in {"media_generated", "assembled", "pending_approval"}:
+            hint = (
+                f"DB status={row.get('status')} 로 미디어는 이미 생성됨 → "
+                f"artifact 복원 실패가 원인 (artifact_run_id={row.get('artifact_run_id')}). "
+                "워크플로의 'Resolve/Restore prior artifact' step 로그를 확인하십시오"
+            )
+    except Exception as exc:
+        logger.warning(f"[W6] 상태 조회 실패 (기본 안내로 진행): {exc}")
+    return hint
+
+
 def stage_weekly_assembly():
-    """W6: 18초 조립 (인트로3 + 6초×2 + 아웃트로3)."""
-    from engine.video.shorts_media import (
-        MediaResult,
-        assemble_shorts,
-        persist_assembled,
-    )
-    from engine.video.weekly_pipeline import WEEKLY_TOTAL_SEC, load_weekly_scenario
+    """W6. v2: 4샷 단일 패스 렌더(정지 0초). v1: 18초 조립 (인트로3 + 6초×2 + 아웃트로3)."""
+    from engine.video.shorts_media import persist_assembled
+    from engine.video.weekly_v2 import WeeklyScenarioV2, load_weekly_any
 
     gate = _weekly_gate_or_exit(for_generation=False)
+    out_dir = Path(f"output/videos/{gate.episode_id}")
+
+    # 조립은 이미 생성된 자산을 소비하므로 env 가 아니라 저장된 시나리오 형식으로 분기한다
+    # (주중에 WEEKLY_FORMAT 을 바꿔도 해당 주차 재조립이 깨지지 않게).
+    saved = load_weekly_any(gate.episode_id)
+    if isinstance(saved, WeeklyScenarioV2):
+        from engine.video.weekly_media import expected_paths
+        from engine.video.weekly_render import render_weekly_v2
+
+        scenario = saved
+        _, shot_paths = expected_paths(out_dir)
+        missing = [str(p) for p in shot_paths if not p.exists()]
+        if missing:
+            raise FileNotFoundError(
+                f"[W6v2] 렌더 입력 누락 ({_restore_failure_hint(gate.episode_id)}): {missing}"
+            )
+        final_path, report = render_weekly_v2(scenario, shot_paths, out_dir / "assembly")
+        logger.info(f"[W6v2] 렌더 완료: {final_path} report={report}")
+        if os.environ.get("DRY_RUN", "true").lower() == "true":
+            logger.info("[W6v2] DRY_RUN — Supabase 기록 스킵")
+            return
+        persist_assembled(gate.episode_id, final_path)
+        return
+
+    from engine.video.shorts_media import MediaResult, assemble_shorts
+    from engine.video.weekly_pipeline import WEEKLY_TOTAL_SEC, load_weekly_scenario
+
     scenario = load_weekly_scenario(gate.episode_id)
     if scenario is None:
         logger.warning("[W6] shorts_scenario_json 없음 — W3 선행 필요 (정상 종료)")
         sys.exit(0)
 
-    out_dir = Path(f"output/videos/{gate.episode_id}")
     media = MediaResult(
         intro_image=out_dir / "images/P91.png",
         outro_image=out_dir / "images/P92.png",
@@ -960,23 +1121,9 @@ def stage_weekly_assembly():
         if not Path(p).exists()
     ]
     if missing:
-        # v2.0.3: DB 상태를 함께 보여 원인을 정확히 지목한다.
-        # (2026-09-07 run #34116761360: 실제 원인은 artifact 복원 실패였는데
-        #  "W4/W5 선행 필요" 로 보여 오인을 유발했다.)
-        hint = "W4/W5 선행 필요"
-        try:
-            from engine.video.weekly_pipeline import _load_video_asset_row
-
-            row = _load_video_asset_row(gate.episode_id) or {}
-            if row.get("status") in {"media_generated", "assembled", "pending_approval"}:
-                hint = (
-                    f"DB status={row.get('status')} 로 미디어는 이미 생성됨 → "
-                    f"artifact 복원 실패가 원인 (artifact_run_id={row.get('artifact_run_id')}). "
-                    "워크플로의 'Resolve/Restore prior artifact' step 로그를 확인하십시오"
-                )
-        except Exception as exc:
-            logger.warning(f"[W6] 상태 조회 실패 (기본 안내로 진행): {exc}")
-        raise FileNotFoundError(f"[W6] 조립 입력 누락 ({hint}): {missing}")
+        raise FileNotFoundError(
+            f"[W6] 조립 입력 누락 ({_restore_failure_hint(gate.episode_id)}): {missing}"
+        )
 
     final_path = assemble_shorts(scenario, media, out_dir / "assembly")
     logger.info(f"[W6] 조립 완료: {final_path} (규격 {WEEKLY_TOTAL_SEC}초)")
@@ -988,13 +1135,13 @@ def stage_weekly_assembly():
 
 
 def stage_weekly_notify():
-    """W7: 텔레그램 검토본 발송 + release_at 기록 (hold-and-release)."""
+    """W7: 텔레그램 검토본 발송 + release_at 기록 (hold-and-release). 파일럿은 발행 경로 미기록."""
     from datetime import UTC, datetime, timedelta
 
-    from engine.video.weekly_pipeline import load_weekly_scenario
+    from engine.video.weekly_pipeline import is_pilot_episode
+    from engine.video.weekly_v2 import WeeklyScenarioV2, load_weekly_any
 
     gate = _weekly_gate_or_exit(for_generation=False)
-    scenario = load_weekly_scenario(gate.episode_id)
     final_path = Path(f"output/videos/{gate.episode_id}/assembly/final_shorts.mp4")
 
     if os.environ.get("DRY_RUN", "true").lower() == "true":
@@ -1004,6 +1151,7 @@ def stage_weekly_notify():
         )
         return
 
+    scenario = load_weekly_any(gate.episode_id)
     if scenario is None or not final_path.exists():
         raise RuntimeError("[W7] 승인 요청 불가 — 시나리오/조립본 누락 (W3~W6 선행 필요)")
 
@@ -1018,6 +1166,23 @@ def stage_weekly_notify():
     except Exception as exc:
         logger.warning(f"[W7] video_assets 조회 실패 (비용 0 표기로 진행): {exc}")
 
+    scenario_label = (
+        "WEEKLY_DIGEST_V2" if isinstance(scenario, WeeklyScenarioV2) else "WEEKLY_DIGEST"
+    )
+    cost = float((row or {}).get("veo_cost_usd") or 0.0)
+
+    if is_pilot_episode(gate.episode_id):
+        send_approval_request(
+            video_path=str(final_path),
+            episode_id=gate.episode_id,
+            scenario_type=f"{scenario_label}_PILOT",
+            cost_usd=cost,
+            generation_ms=0,
+            release_at_kst=None,
+        )
+        logger.info(f"[W7] 파일럿 검토본 발송 — release_at 미기록 (발행 대상 아님): {gate.episode_id}")
+        return
+
     hold_hours = float(os.environ.get("PUBLISH_HOLD_HOURS", "6"))
     release_at = datetime.now(UTC) + timedelta(hours=hold_hours)
     release_kst = release_at.astimezone(ZoneInfo("Asia/Seoul")).strftime("%m/%d %H:%M")
@@ -1025,8 +1190,8 @@ def stage_weekly_notify():
     send_approval_request(
         video_path=str(final_path),
         episode_id=gate.episode_id,
-        scenario_type="WEEKLY_DIGEST",
-        cost_usd=float((row or {}).get("veo_cost_usd") or 0.0),
+        scenario_type=scenario_label,
+        cost_usd=cost,
         generation_ms=0,
         release_at_kst=release_kst,
     )
@@ -1040,20 +1205,23 @@ def stage_weekly_notify():
 
 
 def stage_weekly_publish_x():
-    """홀드 경과 후 주간 영상을 X에 게시하고 발행 이력을 즉시 기록한다."""
+    """홀드 경과 후 주간 영상을 X에 게시하고 발행 이력을 즉시 기록한다 (v1/v2 공용)."""
     from engine.publish.x_video_publisher import (
         build_weekly_x_caption,
         publish_video_to_x,
     )
-    from engine.video.weekly_pipeline import load_weekly_scenario
+    from engine.video.weekly_pipeline import is_pilot_episode
+    from engine.video.weekly_v2 import load_weekly_any, publish_fields
 
     episode_id = os.environ.get("TARGET_EPISODE_ID", "").strip()
     if not episode_id:
         episode_id = _weekly_gate_or_exit(for_generation=False).episode_id
     if not episode_id.startswith("icg-vw-"):
         raise RuntimeError(f"[X-WEEKLY] 주간 episode_id 형식이 아님: {episode_id}")
+    if is_pilot_episode(episode_id):
+        raise RuntimeError(f"[X-WEEKLY] 파일럿 에피소드는 게시 대상이 아니다: {episode_id}")
 
-    scenario = load_weekly_scenario(episode_id)
+    scenario = load_weekly_any(episode_id)
     final_path = Path(f"output/videos/{episode_id}/assembly/final_shorts.mp4")
     if os.environ.get("DRY_RUN", "true").lower() == "true" and scenario is None:
         logger.info(
@@ -1065,10 +1233,8 @@ def stage_weekly_publish_x():
     if scenario is None or not final_path.exists():
         raise RuntimeError("[W8] X 게시 불가 — 시나리오/조립본 누락 (W3~W6 선행 필요)")
 
-    caption = build_weekly_x_caption(
-        scenario.youtube_title,
-        [scenario.intro.caption, *(cut.caption for cut in scenario.cuts)],
-    )
+    fields = publish_fields(scenario)
+    caption = build_weekly_x_caption(fields["title"], fields["story_parts"])
     if os.environ.get("DRY_RUN", "true").lower() == "true":
         logger.info("[W8] DRY_RUN — X 게시 스킵: %s\n%s", final_path, caption)
         return
@@ -1080,7 +1246,7 @@ def stage_weekly_publish_x():
     existing = (
         icg_table("published_comics")
         .select("tweet_id")
-        .eq("publish_date", scenario.episode_date)
+        .eq("publish_date", fields["episode_date"])
         .eq("episode_no", episode_no)
         .eq("comic_type", "WEEKLY_DIGEST")
         .limit(1)
@@ -1097,12 +1263,12 @@ def stage_weekly_publish_x():
     result = publish_video_to_x(str(final_path), caption, episode_id)
     icg_table("published_comics").insert(
         {
-            "publish_date": scenario.episode_date,
+            "publish_date": fields["episode_date"],
             "comic_type": "WEEKLY_DIGEST",
             "episode_no": episode_no,
             "risk_level": "MEDIUM",
             "tweet_id": result["tweet_id"],
-            "cut_count": len(scenario.cuts),
+            "cut_count": fields["cut_count"],
             "cost_usd": 0,
             "status": "published",
         }

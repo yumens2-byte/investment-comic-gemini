@@ -25,7 +25,7 @@ import logging
 import os
 from pathlib import Path
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 logger = logging.getLogger(__name__)
 
 # Telegram sendVideo body limit (bot API, standard server)
@@ -175,6 +175,11 @@ def _build_caption(
         f"<b>Time</b>: {generation_ms / 1000:.1f}s\n"
         f"<b>Size</b>: {size_mb:.2f} MB\n\n"
     )
+    # v1.4.0 (2026-09-25): 주간 ID(icg-vw-YYYY-Www-NNN)는 날짜 슬라이스가 성립하지 않는다
+    # (구 로직은 '-2026-W38-' 를 안내해 abort 가 불가능했다). 주간은 episode_id 로 안내한다.
+    if episode_id.startswith("icg-vw-"):
+        return _build_weekly_caption(caption, episode_id, release_at_kst)
+
     target_date = episode_id[6:16]
     if release_at_kst:
         # hold-and-release: 기본 발행. 마스터가 개입해야 중단된다.
@@ -196,6 +201,37 @@ def _build_caption(
             f"  confirm=<code>YES</code>\n"
             f"  target_date=<code>{target_date}</code>\n"
             f"발행하지 않으려면 아무 것도 하지 않으면 됩니다."
+        )
+    if len(caption) > MAX_CAPTION_LEN:
+        caption = caption[: MAX_CAPTION_LEN - 3] + "..."
+    return caption
+
+
+def _build_weekly_caption(caption: str, episode_id: str, release_at_kst: str | None) -> str:
+    """주간 다이제스트 안내 — 파일럿은 발행 없음, 정규는 episode_id 기준 중단 안내."""
+    import re as _re
+
+    if _re.search(r"-P\d{2}$", episode_id):
+        caption += (
+            "\n🧪 <b>파일럿 렌더 — 자동 발행 대상 아님</b>\n"
+            "품질 확인용 검토본입니다. 발행 경로(release_at)는 기록되지 않습니다."
+        )
+    elif release_at_kst:
+        caption += (
+            f"\n⏰ <b>{release_at_kst} KST 자동 발행</b>\n"
+            "그대로 두면 유튜브·X에 발행됩니다.\n\n"
+            "<b>중단하려면</b>\n"
+            "Actions → Run Video Trailer → Run workflow\n"
+            "  operation_mode=<code>abort</code>\n"
+            "  dry_run=<code>false</code>\n"
+            f"  episode_id=<code>{episode_id}</code>"
+        )
+    else:
+        caption += (
+            "\n<b>발행 방법</b> (YouTube + X)\n"
+            "Actions → Publish Shorts → Run workflow\n"
+            f"  episode_id=<code>{episode_id}</code>\n"
+            "  dry_run=<code>false</code>"
         )
     if len(caption) > MAX_CAPTION_LEN:
         caption = caption[: MAX_CAPTION_LEN - 3] + "..."
