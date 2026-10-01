@@ -56,8 +56,7 @@ def main() -> int:
             "scope", identity["p_scope"]
         ).execute().data
         assert isinstance(ledger, list) and all(isinstance(r["revision"], int) for r in ledger)
-        report["paid_ledger"] = {"rows": len(ledger),
-                                 "cost_usd": sum(float(r["cost"]) for r in ledger)}
+        report["checks"].append("live_paid_ledger_revision_column")
         system = load_narrative_system()
         template = load_narrative_user_template()
         assert "Continuity contract v2" in system and "thread_transitions" in system
@@ -68,7 +67,6 @@ def main() -> int:
         after = database_fingerprint(icg_table, target)
         assert before == after, "production state changed during beta"
         report["checks"].append("episode_analysis_history_arc_paid_ledger_unchanged")
-        report["unchanged_database_hash"] = after
         report["status"] = "pass"
     except Exception as exc:
         report["error_type"] = type(exc).__name__
