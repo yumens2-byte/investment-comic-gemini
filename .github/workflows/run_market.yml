@@ -29,7 +29,7 @@ on:
         required: false
         default: 'false'
       stage:
-        description: '실행 단계 (all/data/analysis/narrative/persist/image)'
+        description: '실행 단계 (all/data/analysis/narrative/persist/image/recovery). recovery는 새 회차로 대본부터 복구'
         required: false
         default: 'all'
       scenario_v2:
@@ -189,6 +189,21 @@ jobs:
       - name: Install CJK fonts (PIL 한국어 렌더링)
         run: sudo apt-get install -y fonts-noto-cjk --no-install-recommends -q
 
+      - name: Validate recovery request
+        if: ${{ env.RUN_STAGE == 'recovery' && env.DRY_RUN == 'false' }}
+        env:
+          SOURCE_RUN_ID: ${{ inputs.source_artifact_run_id }}
+        run: |
+          python - <<'PY'
+          import os
+          from engine.image.generation_guard import generation_revision
+          if generation_revision() < 2:
+              raise SystemExit("recovery requires explicit generation_revision >= 2")
+          source = os.environ["SOURCE_RUN_ID"]
+          if not source.isascii() or not source.isdigit():
+              raise SystemExit("recovery requires original source_artifact_run_id")
+          PY
+
       - name: Execution preflight (read only)
         id: preflight
         run: |
@@ -200,6 +215,9 @@ jobs:
           from pathlib import Path
           report = json.loads(Path("output/run-market-preflight.json").read_text())
           allowed = report["allowed"] and report["mode"] != "dry_run"
+          # Pin every subsequent stage and artifact restore to the preflight date.
+          with open(os.environ["GITHUB_ENV"], "a") as env:
+              env.write(f"TARGET_DATE={report['episode_date']}\n")
           with open(os.environ["GITHUB_OUTPUT"], "a") as out:
               out.write(f"allowed={str(allowed).lower()}\n")
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as out:
@@ -246,7 +264,7 @@ jobs:
           fi
 
       - name: STEP 4 — Narrative (Claude)
-        if: ${{ steps.preflight.outputs.allowed == 'true' && (env.RUN_STAGE == 'narrative' || env.RUN_STAGE == 'all' && (github.event_name != 'schedule' || steps.major_gate.outputs.should_run_expensive == 'true')) }}
+        if: ${{ steps.preflight.outputs.allowed == 'true' && (env.RUN_STAGE == 'narrative' || env.RUN_STAGE == 'recovery' || env.RUN_STAGE == 'all' && (github.event_name != 'schedule' || steps.major_gate.outputs.should_run_expensive == 'true')) }}
         run: |
           flag_label() {
             case "${1,,}" in
@@ -277,14 +295,14 @@ jobs:
           python -m scripts.run_market --stage narrative "${DATE_ARG[@]}"
 
       - name: STEP 5 — Persist
-        if: ${{ steps.preflight.outputs.allowed == 'true' && (env.RUN_STAGE == 'persist' || env.RUN_STAGE == 'all' && (github.event_name != 'schedule' || steps.major_gate.outputs.should_run_expensive == 'true')) }}
+        if: ${{ steps.preflight.outputs.allowed == 'true' && (env.RUN_STAGE == 'persist' || env.RUN_STAGE == 'recovery' || env.RUN_STAGE == 'all' && (github.event_name != 'schedule' || steps.major_gate.outputs.should_run_expensive == 'true')) }}
         run: |
           DATE_ARG=()
           if [ -n "${TARGET_DATE}" ]; then DATE_ARG=(--date "${TARGET_DATE}"); fi
           python -m scripts.run_market --stage persist "${DATE_ARG[@]}"
 
       - name: Restore original panel artifact
-        if: ${{ inputs.source_artifact_run_id != '' && env.DRY_RUN == 'false' }}
+        if: ${{ steps.preflight.outputs.allowed == 'true' && inputs.source_artifact_run_id != '' && env.DRY_RUN == 'false' && (env.RUN_STAGE == 'image' || env.RUN_STAGE == 'all' || env.RUN_STAGE == 'recovery') }}
         uses: actions/download-artifact@v4
         with:
           name: episode-${{ inputs.source_artifact_run_id }}
@@ -293,11 +311,11 @@ jobs:
           path: output/recovery-source
 
       - name: Restore selected date panels only
-        if: ${{ inputs.source_artifact_run_id != '' && env.DRY_RUN == 'false' }}
+        if: ${{ steps.preflight.outputs.allowed == 'true' && inputs.source_artifact_run_id != '' && env.DRY_RUN == 'false' && (env.RUN_STAGE == 'image' || env.RUN_STAGE == 'all' || env.RUN_STAGE == 'recovery') }}
         run: python -m scripts.restore_generation_artifact --date "$TARGET_DATE"
 
       - name: STEP 6 — Image Generation (Gemini)
-        if: ${{ steps.preflight.outputs.allowed == 'true' && (env.RUN_STAGE == 'image' || env.RUN_STAGE == 'all' && (github.event_name != 'schedule' || steps.major_gate.outputs.should_run_expensive == 'true')) }}
+        if: ${{ steps.preflight.outputs.allowed == 'true' && (env.RUN_STAGE == 'image' || env.RUN_STAGE == 'recovery' || env.RUN_STAGE == 'all' && (github.event_name != 'schedule' || steps.major_gate.outputs.should_run_expensive == 'true')) }}
         run: |
           DATE_ARG=()
           if [ -n "${TARGET_DATE}" ]; then DATE_ARG=(--date "${TARGET_DATE}"); fi

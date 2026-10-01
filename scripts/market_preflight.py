@@ -6,13 +6,40 @@ from datetime import date
 from pathlib import Path
 
 
+def assert_image_ledger_allowed(episode_date: str, episode_id: str, stage: str) -> None:
+    """Block narrative overwrites before spending against an existing image revision."""
+    from engine.common.supabase_client import icg_table
+    from engine.image.generation_guard import generation_revision
+    from scripts.run_market import GenerationBlocked
+
+    revision = generation_revision()
+    if stage == 'recovery' and revision < 2:
+        raise GenerationBlocked(episode_id, 'recovery_requires_explicit_generation_revision_2_or_later')
+    calls = icg_table('image_generation_calls').select('state,revision').eq(
+        'scope', f'output/episodes/{episode_date}/panels'
+    ).limit(31).execute().data
+    if not isinstance(calls, list) or any(
+        not isinstance(row, dict) or row.get('state') not in
+        {'reserved', 'success', 'failed', 'unknown', 'terminal'}
+        or type(row.get('revision', 1)) is not int or not 1 <= row.get('revision', 1) <= 100
+        for row in calls
+    ):
+        raise RuntimeError('Invalid image reservation response')
+    if any(row['state'] in {'reserved', 'unknown', 'terminal'} for row in calls):
+        raise GenerationBlocked(episode_id, 'image_generation_reconciliation_hold')
+    if stage in {'all', 'narrative', 'persist', 'recovery'} and any(
+        row.get('revision', 1) >= revision for row in calls
+    ):
+        raise GenerationBlocked(episode_id, 'image_revision_already_started_use_image_or_new_recovery_revision')
+
+
 def inspect_market(episode_date: str, stage: str, *, dry_run: bool) -> dict:
     from engine.common.supabase_client import icg_table
     from scripts.run_market import GenerationBlocked, _assert_generation_allowed, _make_episode_id
 
     if date.fromisoformat(episode_date).isoformat() != episode_date:
         raise ValueError("Date must use YYYY-MM-DD")
-    if stage not in {'all', 'data', 'analysis', 'narrative', 'persist', 'image'}:
+    if stage not in {'all', 'data', 'analysis', 'narrative', 'persist', 'image', 'recovery'}:
         raise ValueError('Invalid stage')
     episode_id = _make_episode_id(episode_date)
     report = {'mode': 'dry_run' if dry_run else 'live_preflight', 'status': 'pass',
@@ -21,6 +48,7 @@ def inspect_market(episode_date: str, stage: str, *, dry_run: bool) -> dict:
               'unverified': ['new_data_collection', 'new_narrative', 'new_images', 'live_delivery']}
     try:
         _assert_generation_allowed(episode_date, episode_id)
+        assert_image_ledger_allowed(episode_date, episode_id, stage)
         report['live_generation_allowed'] = True
     except GenerationBlocked as exc:
         report['live_generation_allowed'] = False
@@ -28,21 +56,6 @@ def inspect_market(episode_date: str, stage: str, *, dry_run: bool) -> dict:
         if not dry_run:
             report['status'] = 'blocked'
             return report
-    if report['live_generation_allowed']:
-        calls = icg_table('image_generation_calls').select('state').eq(
-            'scope', f'output/episodes/{episode_date}/panels'
-        ).limit(31).execute().data
-        if (not isinstance(calls, list) or any(
-            not isinstance(row, dict) or row.get('state') not in
-            {'reserved', 'success', 'failed', 'unknown', 'terminal'} for row in calls
-        )):
-            raise RuntimeError('Invalid image reservation response')
-        if any(row['state'] in {'reserved', 'unknown', 'terminal'} for row in calls):
-            report['live_generation_allowed'] = False
-            report['live_block_reason'] = 'image_generation_reconciliation_hold'
-            if not dry_run:
-                report['status'] = 'blocked'
-                return report
     if not dry_run:
         report['allowed'] = True
         return report
