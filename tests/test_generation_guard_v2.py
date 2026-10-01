@@ -34,6 +34,12 @@ def test_runner_independent_identity(tmp_path):
     assert first.scope == "output/episodes/2026-10-01/panels"
 
 
+def test_windows_runner_identity_matches_posix(tmp_path):
+    windows = guard(tmp_path, r"C:\runner\output\episodes\2026-10-01\panels")
+    posix = guard(tmp_path, "/runner/output/episodes/2026-10-01/panels")
+    assert windows._identity() == posix._identity()
+
+
 def test_prompt_and_ref_changes_change_fingerprint(tmp_path):
     original = guard(tmp_path)
     assert original.fingerprint != guard(tmp_path, prompt="villain").fingerprint

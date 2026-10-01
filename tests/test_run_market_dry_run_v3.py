@@ -66,7 +66,7 @@ def test_invalid_date_rejected_before_logging(immutable, monkeypatch, target):
     assert not (root / "output" / "episodes").exists()
 
 
-@pytest.mark.parametrize("stage", ["all", "data", "analysis", "narrative", "persist", "image"])
+@pytest.mark.parametrize("stage", ["all", "data", "analysis", "narrative", "persist", "image", "recovery"])
 def test_dry_run_never_enters_mutable_stages(immutable, monkeypatch, stage, capsys):
     import json
 

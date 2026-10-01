@@ -179,6 +179,40 @@ def _assert_generation_allowed(episode_date: str, episode_id: str) -> None:
         raise RuntimeError(f"generation safety check failed: {episode_id} (status lookup failed)") from exc
 
 
+def _assert_image_stage_inputs(episode_date: str, episode_id: str, ctx: dict) -> dict:
+    """Use the exact persisted narrative that authorizes the image revision."""
+    from engine.common.supabase_client import icg_table
+    from engine.image.generation_guard import GenerationHold, generation_revision
+    from engine.narrative.thread_contracts import validate_thread_transitions
+
+    rows = icg_table("episode_assets").select("script_json,status").eq(
+        "episode_date", episode_date
+    ).eq("episode_no", int(episode_id.rsplit("-", 1)[1])).execute().data
+    if not isinstance(rows, list) or len(rows) != 1:
+        raise GenerationHold("image requires one persisted episode; run persist first")
+    script = rows[0].get("script_json")
+    if not isinstance(script, dict) or not script.get("panels"):
+        raise GenerationHold("image requires a persisted narrative; run persist first")
+    if script.get("episode_id") != episode_id or script.get("date") != episode_date:
+        raise GenerationHold("persisted narrative episode identity mismatch")
+    revision = generation_revision()
+    stored_revision = script.get("_generation_revision", 1)
+    if type(stored_revision) is not int or stored_revision != revision:
+        raise GenerationHold(
+            f"image revision {revision} differs from persisted revision {stored_revision}; "
+            "run persist with the selected generation_revision before image"
+        )
+    if revision > 1 and (script.get("_state_candidate") or {}).get("version") != "state-candidate-1":
+        raise GenerationHold("image revision requires current narrative persistence; run recovery")
+    previous = ctx.get("previous_episode") or (ctx.get("narrative_context_pack") or {}).get("previous_episode") or {}
+    errors = validate_thread_transitions(script, previous, script.get("_resolution_review"))
+    if errors:
+        raise GenerationHold(
+            "cached narrative predates current thread contract; run recovery: " + ",".join(errors)
+        )
+    return script
+
+
 def _env_flag_enabled(name: str) -> bool:
     """Return True for boolean feature flags represented as strings."""
     return os.environ.get(name, "false").strip().lower() == "true"
@@ -1749,7 +1783,7 @@ def main() -> None:
     parser.add_argument(
         "--stage",
         default="all",
-        choices=["all", "data", "analysis", "narrative", "persist", "image"],
+        choices=["all", "data", "analysis", "narrative", "persist", "image", "recovery"],
     )
     parser.add_argument("--date", default=None, help="대상 날짜 (YYYY-MM-DD, 기본: 오늘)")
     parser.add_argument("--dry-run", action="store_true", help="읽기 전용 입력·상태 점검")
@@ -1801,8 +1835,11 @@ def main() -> None:
         ctx: dict = {}
         script_dict: dict = {}
         episode_id = _make_episode_id(episode_date)
-        if args.stage in ("all", "narrative", "persist", "image"):
+        if args.stage in ("all", "narrative", "persist", "image", "recovery"):
             _assert_generation_allowed(episode_date, episode_id)
+            from scripts.market_preflight import assert_image_ledger_allowed
+
+            assert_image_ledger_allowed(episode_date, episode_id, args.stage)
 
         if args.stage in ("all", "data"):
             step_data(episode_date, sl)
@@ -1810,7 +1847,7 @@ def main() -> None:
         if args.stage in ("all", "analysis"):
             ctx = step_analysis(episode_date, sl)
 
-        if args.stage in ("all", "narrative"):
+        if args.stage in ("all", "narrative", "recovery"):
             if not ctx:
                 # ── Hybrid: 단독 실행 시 DB에서 ctx 복원 ────────────────
                 from engine.persist.asset_writer import load_analysis_ctx
@@ -1832,7 +1869,7 @@ def main() -> None:
             except Exception as _exc:
                 logger.warning("[step_narrative] script DB 저장 실패 (진행): %s", _exc)
 
-        if args.stage in ("all", "persist"):
+        if args.stage in ("all", "persist", "recovery"):
             if not ctx:
                 from engine.persist.asset_writer import load_analysis_ctx
 
@@ -1856,7 +1893,7 @@ def main() -> None:
 
             sl.info("STEP_5", "후보 서사 상태 저장 — 발행 확정 전 story/arc 시계는 갱신하지 않음")
 
-        if args.stage in ("all", "image"):
+        if args.stage in ("all", "image", "recovery"):
             if not ctx:
                 from engine.persist.asset_writer import load_analysis_ctx
 
@@ -1867,15 +1904,8 @@ def main() -> None:
                         "analysis stage를 먼저 실행하세요."
                     )
             if not script_dict:
-                from engine.persist.asset_writer import load_narrative_script
-
-                script_dict = load_narrative_script(episode_date)
-                if not script_dict:
-                    raise RuntimeError(
-                        "image 단계 실행 불가 — script_json 없음. "
-                        "narrative stage를 먼저 실행하세요."
-                    )
-                sl.info("STEP_6", "[Hybrid] narrative_script_json DB 복원 완료")
+                script_dict = _assert_image_stage_inputs(episode_date, episode_id, ctx)
+                sl.info("STEP_6", "[Hybrid] exact persisted episode script_json 복원 완료")
             step_image(episode_date, episode_id, ctx, script_dict, sl)
 
         sl.info("PIPELINE", f"완료 episode_id={episode_id}")

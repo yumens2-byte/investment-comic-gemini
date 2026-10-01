@@ -5,7 +5,7 @@ import hashlib
 import json
 import math
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from engine.common.supabase_client import get_client, get_schema
 
@@ -23,13 +23,13 @@ def generation_revision() -> int:
 
 class ProductionGenerationGuard:
     def __init__(self, *, scope: str, panel: int, prompt: str, refs: list[Path]):
-        parts = Path(scope).parts
+        parts = PurePosixPath(scope.replace('\\', '/')).parts
         if '..' in parts:
             raise GenerationHold('Invalid generation identity')
         # Runner checkout prefixes change; retain the stable output namespace.
         if 'output' in parts:
             scope = '/'.join(parts[parts.index('output'):])
-        elif Path(scope).is_absolute():
+        elif PurePosixPath(scope).is_absolute() or PureWindowsPath(scope).is_absolute():
             raise GenerationHold('Generation scope must have a stable output namespace')
         if not scope or '..' in Path(scope).parts or panel <= 0:
             raise GenerationHold('Invalid generation identity')
@@ -49,7 +49,14 @@ class ProductionGenerationGuard:
             if not isinstance(result, dict):
                 raise ValueError('Invalid reservation receipt')
             if result.get('hold'):
-                raise GenerationHold(str(result['hold']))
+                reason = str(result['hold'])
+                if reason in {'artifact identity changed', 'revision identity changed'}:
+                    reason += (
+                        f'; scope={self.scope} panel={self.panel} revision={self.revision}. '
+                        'Resume the original inputs/artifact, or use Run Market recovery '
+                        'with a new explicit generation_revision and source_artifact_run_id.'
+                    )
+                raise GenerationHold(reason)
             return result
         except GenerationHold:
             raise
