@@ -1,0 +1,39 @@
+name: Generation Guard Operational Beta
+on:
+  push:
+    branches: [main]
+    paths:
+      - engine/image/**
+      - scripts/run_generation_guard_beta.py
+      - .github/workflows/generation_guard_beta.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: generation-guard-beta
+  cancel-in-progress: false
+jobs:
+  guard-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Durable guard faults and bounded provider smoke test
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          GEMINI_API_SUB_PAY_KEY: ${{ secrets.GEMINI_API_SUB_PAY_KEY }}
+          GUARD_BETA_LIVE_IMAGE: 'true'
+        run: python -m scripts.run_generation_guard_beta
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: generation-guard-beta-${{ github.sha }}
+          path: output/generation-guard-beta/
+          if-no-files-found: error
+          retention-days: 14

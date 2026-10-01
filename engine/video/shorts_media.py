@@ -206,16 +206,19 @@ class MediaResult:
 
 
 def _load_character_refs(scenario: ShortsScenario) -> list:
-    """캐릭터 REF 이미지 로드 — 실패해도 북엔드 생성은 계속 (REF 없이 진행)."""
+    """Require every registered cast reference before any paid bookend request."""
     try:
-        from engine.image.ref_loader import get_refs_for_panel
+        from engine.image.ref_loader import GUEST_CHARACTER_IDS, get_refs_for_panel
 
-        refs = get_refs_for_panel([*scenario.hero_ids, scenario.villain_id])
+        cast = list(dict.fromkeys([*scenario.hero_ids, scenario.villain_id]))
+        required = [character for character in cast if character not in GUEST_CHARACTER_IDS]
+        refs = get_refs_for_panel(cast)
+        if len(refs) != len(required) or any(not Path(ref).is_file() for ref in refs):
+            raise ShortsMediaError("Required bookend cast references unavailable")
         logger.info("[shorts_media] REF 이미지 %d개 로드", len(refs))
         return refs
     except Exception as exc:
-        logger.warning("[shorts_media] REF 로드 실패 (REF 없이 진행): %s", exc)
-        return []
+        raise ShortsMediaError("Bookend REF validation failed; paid generation blocked") from exc
 
 
 def preflight_check(
