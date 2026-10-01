@@ -231,6 +231,11 @@ jobs:
           echo "  NARRATIVE_CONTEXT_ENABLED       = $(flag_label "$NARRATIVE_CONTEXT_ENABLED")"
           echo "  STORY_PLANNER_ENABLED           = $(flag_label "$STORY_PLANNER_ENABLED")"
           echo "  SERIAL_NARRATIVE_P0_ENABLED     = $(flag_label "$SERIAL_NARRATIVE_P0_ENABLED")"
+          if [ "${CONTINUITY_STRICT_ENABLED,,}" = "true" ] || [ "${SERIAL_NARRATIVE_P0_ENABLED,,}" = "true" ]; then
+            echo "  PRODUCTION_QUALITY_EFFECTIVE_STRICT = ON"
+          else
+            echo "  PRODUCTION_QUALITY_EFFECTIVE_STRICT = OFF"
+          fi
           if [ "${CONTINUITY_STRICT_ENABLED,,}" = "true" ]; then
             echo "⚠️  CONTINUITY_STRICT_ENABLED=true: previous-hook payoff failures will stop STEP 4."
           fi

@@ -269,6 +269,28 @@ def _ensure_narrative_quality_inputs(ctx: dict) -> dict:
         return ctx
 
     rebuilt_ctx = dict(ctx)
+    from engine.narrative.continuity import (
+        sanitize_continuity_bundle,
+        sanitize_continuity_window,
+    )
+
+    if rebuilt_ctx.get("previous_episode"):
+        rebuilt_ctx["previous_episode"] = sanitize_continuity_bundle(
+            rebuilt_ctx["previous_episode"]
+        )
+    existing_pack = rebuilt_ctx.get("narrative_context_pack")
+    if isinstance(existing_pack, dict) and existing_pack.get("previous_episode"):
+        existing_pack = dict(existing_pack)
+        existing_pack["previous_episode"] = sanitize_continuity_bundle(
+            existing_pack["previous_episode"]
+        )
+        rebuilt_ctx["narrative_context_pack"] = existing_pack
+    if isinstance(rebuilt_ctx.get("narrative_context_pack"), dict):
+        existing_pack = dict(rebuilt_ctx["narrative_context_pack"])
+        existing_pack["continuity_window"] = sanitize_continuity_window(
+            existing_pack.get("continuity_window")
+        ) or {}
+        rebuilt_ctx["narrative_context_pack"] = existing_pack
     if narrative_enabled and not rebuilt_ctx.get("narrative_context_pack"):
         from engine.analysis.story_context_builder import build_narrative_context_pack
 
@@ -282,7 +304,7 @@ def _ensure_narrative_quality_inputs(ctx: dict) -> dict:
             previous_episode=rebuilt_ctx.get("previous_episode"),
         )
 
-    if planner_enabled and not rebuilt_ctx.get("story_beat_plan"):
+    if planner_enabled:
         from engine.narrative.story_planner import build_story_beat_plan
 
         if not rebuilt_ctx.get("narrative_context_pack"):
@@ -292,6 +314,9 @@ def _ensure_narrative_quality_inputs(ctx: dict) -> dict:
             )
         hero_id = str(rebuilt_ctx.get("hero_id") or "")
         villain_id = str(rebuilt_ctx.get("villain_id") or "")
+        # Rebuild even when a plan was restored from DB. Legacy plans may carry
+        # an unsanitized previous hook or synthetic thread that conflicts with
+        # the production retry gate.
         rebuilt_ctx["story_beat_plan"] = build_story_beat_plan(
             narrative_context_pack=rebuilt_ctx["narrative_context_pack"],
             hero_id=hero_id,
