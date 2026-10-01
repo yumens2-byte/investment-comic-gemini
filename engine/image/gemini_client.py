@@ -240,26 +240,13 @@ def generate_panel(
 
     try:
         client = _get_client()
-        # 재시도 전략 차별화 (Notion 11 Canon Test 패턴)
-        # 1회차: 전체 프롬프트
-        # 2회차: negative 강화 + identity 집중 지시
-        # 3회차: ref_paths 첫 번째(hero)만 (단순화로 생성 성공률↑)
+        # Recovery must preserve the full dramatic cast and every approved REF.
         adjusted_refs = ref_paths
         adjusted_prompt = prompt_text
-        retry_attempt = getattr(_generate_one, "_retry_count", 0)
-        if retry_attempt == 1:
-            # 2회차: identity 우선 강조
+        if getattr(_generate_one, "_retry_count", 0) > 0:
             adjusted_prompt = (
-                "PRIORITY OVERRIDE: Character identity consistency is the #1 goal.\n"
-                "Maintain EXACT appearance from reference images above all else.\n\n" + prompt_text
-            )
-        elif retry_attempt >= 2:
-            # 3회차: ref_paths 첫 번째만 (단순화로 생성 성공률↑)
-            adjusted_refs = ref_paths[:1] if ref_paths else []
-            adjusted_prompt = (
-                "SIMPLIFIED ATTEMPT: Focus on ONE character only from the reference.\n"
-                "Render the scene with primary character only if needed for quality.\n\n"
-                + prompt_text
+                "REPAIR: Preserve ALL required characters and reference identities.\n"
+                "Simplify optional background effects only.\n\n" + prompt_text
             )
         image_bytes, prompt_tokens, output_tokens = _generate_one(
             client, adjusted_prompt, adjusted_refs, aspect_ratio=aspect_ratio
