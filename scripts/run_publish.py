@@ -13,7 +13,6 @@ from __future__ import annotations
 import argparse
 import logging
 import os
-import re
 import sys
 import time
 from pathlib import Path
@@ -88,10 +87,9 @@ def validate_major_event_types() -> tuple[set[str], set[str]]:
 
 
 def _parse_date(episode_id: str) -> str:
-    m = re.match(r"ICG-(\d{4}-\d{2}-\d{2})-\d{3}", episode_id)
-    if not m:
-        raise ValueError(f"잘못된 episode_id: {episode_id}")
-    return m.group(1)
+    from scripts.resolve_episode import _parse_episode_id
+
+    return _parse_episode_id(episode_id)[0]
 
 
 def _channel_requested(channels: list[str], channel: str) -> bool:
@@ -174,6 +172,9 @@ def main() -> None:
     parser.add_argument("--episode", help="에피소드 ID")
     parser.add_argument("--date", help="날짜 (YYYY-MM-DD)")
     parser.add_argument("--channels", default="telegram", help="발행 채널 (telegram/x/all)")
+    parser.add_argument("--dry-run", action="store_true", help="읽기 전용 발행 준비 점검")
+    parser.add_argument("--preflight-only", action="store_true", help="전송 없이 발행 준비 점검")
+    parser.add_argument("--report", default="output/publish-preflight.json")
     parser.add_argument(
         "--video-only",
         action="store_true",
@@ -183,6 +184,31 @@ def main() -> None:
     from engine.quality.publish_guard import normalize_channels, require_publication_id
 
     args.channels = ",".join(normalize_channels(args.channels))
+    if args.date:
+        from datetime import date
+
+        if date.fromisoformat(args.date).isoformat() != args.date:
+            raise ValueError("Date must use YYYY-MM-DD")
+    if args.episode:
+        parsed_date = _parse_date(args.episode)
+        if args.date and args.date != parsed_date:
+            raise ValueError("episode/date mismatch")
+    from scripts.publish_preflight import inspect_publish, parse_dry_run
+
+    configured_dry_run = parse_dry_run(os.environ.get("DRY_RUN", "true"))
+    dry_run = args.dry_run or configured_dry_run
+    if dry_run or args.preflight_only:
+        from scripts.market_preflight import emit_report
+
+        report = inspect_publish(args.episode, args.date, args.channels, dry_run=dry_run,
+                                 video_only=args.video_only)
+        emit_report(report, Path(args.report))
+        if os.environ.get("GITHUB_OUTPUT"):
+            with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+                handle.write(f"allowed={'true' if report['allowed'] else 'false'}\n")
+        if not dry_run and report['status'] == 'incomplete':
+            raise SystemExit(1)
+        return
 
     # episode / date 미입력 시 Supabase 최신 assembled 에피소드 자동 선택
     if not args.episode and not args.date:
@@ -220,8 +246,6 @@ def main() -> None:
     from engine.publish.x_publisher import publish_episode_x
     from engine.publish.x_video_publisher import publish_video_to_x
 
-    dry_run = os.environ.get("DRY_RUN", "true").lower() != "false"
-
     run_id = get_run_id(episode_date)
     output_dir = Path("output") / "episodes" / episode_date
     sl = StepLogger(run_id=run_id, episode_date=episode_date, output_dir=output_dir)
@@ -237,14 +261,18 @@ def main() -> None:
         .eq("episode_date", episode_date)
         .eq("episode_no", episode_no)
         .order("created_at", desc=True)
-        .limit(1)
+        .limit(2)
         .execute()
     )
     if not rows.data:
         sl.error("STEP_8", f"episode_assets 없음: {episode_date}")
         sys.exit(1)
+    if not isinstance(rows.data, list) or len(rows.data) != 1:
+        raise ValueError("ambiguous episode identity")
 
     row = rows.data[0]
+    if row.get("status") not in {"assembled", "image_generated", "published"}:
+        raise ValueError("episode is not ready for publication")
     episode_id = args.episode or f"ICG-{episode_date}-001"
     row = _merge_video_asset_row(row, _load_video_asset_row(icg_table, episode_id, episode_date))
     row = _merge_local_video_path(row, episode_id)
@@ -336,6 +364,14 @@ def main() -> None:
         "STEP_8",
         f"발행 시작 channels={channels} dry_run={dry_run} video_only={args.video_only}",
     )
+
+    if not args.video_only or battle_video_plan.enabled:
+        from engine.quality.contracts import QualityHold
+        from scripts.publish_preflight import configuration_issues
+
+        issues = configuration_issues(channels)
+        if issues:
+            raise QualityHold('publication configuration missing: ' + ','.join(issues))
 
     # --video-only는 이미 이미지가 발행된 뒤 전투씬 mp4만 추가 업로드할 때 사용한다.
     # published 중복 방어와 slides_json 요구사항을 우회하지만, 아래 video plan은 그대로 검증한다.

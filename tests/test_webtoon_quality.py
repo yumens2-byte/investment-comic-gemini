@@ -724,6 +724,7 @@ def test_run_publish_history_and_episode_safety(monkeypatch, tmp_path, dry_run, 
     monkeypatch.setattr(history_writer, "record_publish", history)
     monkeypatch.setenv("DRY_RUN", "true" if dry_run else "false")
     monkeypatch.setenv("TELEGRAM_FREE_CHANNEL_ID", "test-channel")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-configured")
     monkeypatch.setattr("sys.argv", ["run_publish", "--episode", "ICG-2026-09-25-002"])
     if not dry_run and not tg_success:
         with pytest.raises(QualityHold):

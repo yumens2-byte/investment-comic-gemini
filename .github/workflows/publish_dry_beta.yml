@@ -1,0 +1,40 @@
+name: Publish SNS Dry Run Operational Beta
+on:
+  push:
+    branches: [main]
+    paths:
+      - scripts/run_publish.py
+      - scripts/publish_preflight.py
+      - scripts/run_publish_dry_beta.py
+      - .github/workflows/publish_sns.yml
+      - .github/workflows/publish_dry_beta.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  read-only-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHONPATH: .
+      TZ: Asia/Seoul
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Published and historical episode inspection
+        env:
+          DRY_RUN: ${{ secrets.DRY_RYN || secrets.DRY_RUN || 'false' }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python -m scripts.run_publish_dry_beta
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: publish-dry-beta-${{ github.sha }}
+          path: output/publish-dry-beta/
+          if-no-files-found: error
+          retention-days: 14
