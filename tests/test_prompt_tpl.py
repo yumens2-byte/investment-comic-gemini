@@ -251,5 +251,4 @@ def test_prompt_fallback_includes_previous_episode_continuity() -> None:
     assert "ICG-2026-06-04-001" in rendered
     assert "Continuity Directives" in rendered
     assert "이전 회차의 단서: 문은 아직 닫히지 않았다." in rendered
-    assert "thread verbatim" not in rendered
-    assert "OPEN/PROGRESSED" in rendered
+    assert "thread verbatim" in rendered

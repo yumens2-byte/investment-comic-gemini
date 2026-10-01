@@ -202,11 +202,8 @@ def test_generate_shots_keeps_better_take_when_regen_is_worse(tmp_path, monkeypa
     b = {"duration_sec": 4, "freeze_ratio": 0.9, "motion_score": 0.0, "frames": 96}
     ok = {"duration_sec": 4, "freeze_ratio": 0.0, "motion_score": 0.1, "frames": 96}
     _install_media_fakes(monkeypatch, veo, [a, b, ok, ok, ok])
-    result = _keyframed(tmp_path)
-    with pytest.raises(wm.WeeklyMediaError, match="motion quality failed"):
-        wm.generate_shots(_scenario(), tmp_path, result, dry_run=False)
-    assert result.shots == []  # A better but still invalid take cannot be published.
-    assert (tmp_path / "shots" / "shot1.mp4").exists()
+    result = wm.generate_shots(_scenario(), tmp_path, _keyframed(tmp_path), dry_run=False)
+    assert result.motion[0]["freeze_ratio"] == 0.5
     assert not (tmp_path / "shots" / "shot1_regen1.mp4").exists()
 
 

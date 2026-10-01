@@ -83,23 +83,23 @@ class TestNoBattleIntegration:
     def test_low_intel_is_no_battle(self):
         assert select_scenario("LOW", "INTEL") == "NO_BATTLE"
 
-    def test_no_battle_ending_tone_uses_risk(self):
+    def test_no_battle_ending_tone_always_optimistic(self):
         """NO_BATTLE은 어떤 outcome/risk에서도 OPTIMISTIC."""
         outcomes = ["PEACEFUL_GROWTH", "HERO_VICTORY", "HERO_DEFEAT", "SYSTEM_COLLAPSE"]
         risks    = ["LOW", "MEDIUM", "HIGH"]
         for outcome in outcomes:
             for risk in risks:
                 tone = select_ending_tone("NO_BATTLE", outcome, risk)
-                assert tone == {"LOW": "OPTIMISTIC", "MEDIUM": "TENSE", "HIGH": "OMINOUS"}[risk], (
+                assert tone == "OPTIMISTIC", (
                     f"NO_BATTLE + outcome={outcome} + risk={risk} → {tone} "
                     "(OPTIMISTIC이어야 함)"
                 )
 
-    def test_no_battle_high_risk_remains_ominous(self):
+    def test_no_battle_never_ominous(self):
         """NO_BATTLE에서 OMINOUS는 절대 반환 안 됨."""
         for outcome in ["SYSTEM_COLLAPSE", "HERO_DEFEAT", "PYRRHIC_VICTORY"]:
             tone = select_ending_tone("NO_BATTLE", outcome, "HIGH")
-            assert tone == "OMINOUS", (
+            assert tone != "OMINOUS", (
                 f"NO_BATTLE + {outcome} + HIGH → OMINOUS 반환됨 (불가)"
             )
 

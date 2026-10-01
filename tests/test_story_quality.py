@@ -98,9 +98,9 @@ def test_build_continuity_retry_feedback_describes_missing_strict_requirements()
     assert feedback is not None
     assert "STRICT CONTINUITY RETRY" in feedback
     assert "opening_hook_payoff" in feedback
-    assert "unresolved_thread_acknowledgement" in feedback
+    assert "unresolved_thread_resolution" in feedback
     assert "검은 문은 아직 닫히지 않았다" in feedback
     assert "철문 안쪽의 목소리" in feedback
     assert "EXACT_OPENING_ANCHOR" in feedback
-    assert "EXACT_RESOLVED_THREAD" not in feedback
-    assert "OPEN/PROGRESSED" in feedback
+    assert "EXACT_RESOLVED_THREAD" in feedback
+    assert "verbatim" in feedback
