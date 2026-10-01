@@ -293,9 +293,15 @@ jobs:
         if: always()
         with:
           name: episode-${{ github.run_id }}
-          path: |
-            output/episodes/
-            output/run-market-preflight.json
+          path: output/episodes/
+          retention-days: 14
+
+      - name: Upload Market Inspection
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: market-preflight-${{ github.run_id }}
+          path: output/run-market-preflight.json
           retention-days: 14
 
       - name: Notify Failure

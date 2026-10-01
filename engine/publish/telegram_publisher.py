@@ -33,6 +33,8 @@ def _validate_slides(slides: list[Path]) -> None:
             image.verify()
         with Image.open(slide) as image:
             image.load()
+            if image.info.get("icg_render_kind") == "text_fallback":
+                raise ValueError("text fallback slide cannot be published")
 
 
 def _valid_album_response(response: object, expected: int) -> bool:

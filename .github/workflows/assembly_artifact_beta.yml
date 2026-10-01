@@ -1,0 +1,37 @@
+name: Assembly Artifact Recovery Beta
+on:
+  push:
+    branches: [main]
+    paths:
+      - engine/assembly/pil_composer.py
+      - scripts/run_resume.py
+      - scripts/run_assembly_artifact_beta.py
+      - .github/workflows/assembly_artifact_beta.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  artifact-replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pillow requests
+      - run: sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+      - uses: actions/download-artifact@v4
+        with:
+          name: episode-36919762103
+          path: output/episodes/
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: 36919762103
+      - run: python -m scripts.run_assembly_artifact_beta
+      - uses: actions/upload-artifact@v4
+        with:
+          name: repaired-ICG-2026-10-02-001
+          path: output/assembly-beta/
+          if-no-files-found: error
+          retention-days: 14

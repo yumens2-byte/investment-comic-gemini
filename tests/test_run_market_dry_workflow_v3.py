@@ -70,6 +70,6 @@ def test_summary_does_not_claim_unexecuted_pipeline_finished():
 
 
 def test_preflight_report_is_uploaded_for_dry_and_blocked_runs():
-    artifact = named('Upload Episode Artifact')
+    artifact = named('Upload Market Inspection')
     assert artifact['if'] == 'always()'
-    assert 'output/run-market-preflight.json' in artifact['with']['path']
+    assert artifact['with']['path'] == 'output/run-market-preflight.json'
