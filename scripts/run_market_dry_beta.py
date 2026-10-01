@@ -36,8 +36,19 @@ def main() -> int:
             raise AssertionError('No published episode to verify protection')
         target = rows[0]['episode_date']
         before = evidence_hash(target)
-        os.environ['DRY_RUN'] = 'true'
+        configured = os.environ.get('DRY_RUN', 'false').strip().lower()
+        if configured not in {'true', 'false'}:
+            raise ValueError('Invalid repository dry-run mode')
         with patch('engine.common.logger.StepLogger', side_effect=AssertionError('DB log write')):
+            path = root / 'repository-default-preflight.json'
+            sys.argv = ['run_market', '--preflight-only', '--stage', 'all', '--date', target,
+                        '--report', str(path)]
+            run_market.main()
+            result = json.loads(path.read_text())
+            expected = 'dry_run' if configured == 'true' else 'live_preflight'
+            assert result['mode'] == expected
+            report['checks'].append('repository_secret_default_mode_wired')
+            os.environ['DRY_RUN'] = 'true'
             for stage in ('all', 'narrative', 'image'):
                 path = root / f'dry-{stage}.json'
                 sys.argv = ['run_market', '--stage', stage, '--date', target, '--report', str(path)]

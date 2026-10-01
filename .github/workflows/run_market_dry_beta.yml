@@ -27,6 +27,7 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Published-episode dry run and live protection
         env:
+          DRY_RUN: ${{ secrets.DRY_RYN || secrets.DRY_RUN || 'false' }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python -m scripts.run_market_dry_beta
