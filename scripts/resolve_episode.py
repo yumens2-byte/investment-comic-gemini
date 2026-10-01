@@ -21,6 +21,7 @@ import argparse
 import logging
 import re
 import sys
+from datetime import date
 from pathlib import Path
 
 
@@ -48,9 +49,10 @@ RESOLVABLE_STATUSES = ("assembled",)
 
 def _parse_episode_id(episode_id: str) -> tuple[str, int]:
     """ICG-YYYY-MM-DD-NNN → (YYYY-MM-DD, NNN)"""
-    m = re.match(r"ICG-(\d{4}-\d{2}-\d{2})-(\d{3})", episode_id)
-    if not m:
+    m = re.fullmatch(r"ICG-(\d{4}-\d{2}-\d{2})-(\d{3})", episode_id)
+    if not m or int(m.group(2)) < 1:
         raise ValueError(f"잘못된 episode_id 형식: {episode_id}")
+    date.fromisoformat(m.group(1))
     return m.group(1), int(m.group(2))
 
 

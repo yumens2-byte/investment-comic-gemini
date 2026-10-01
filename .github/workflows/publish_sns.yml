@@ -6,16 +6,23 @@ on:
     - cron: '6 21 * * 0-5'
   workflow_dispatch:
     inputs:
+      dry_run:
+        description: 'auto=DRY_RYN/DRY_RUN 시크릿, true=읽기 점검, false=운영'
+        type: choice
+        options: [auto, 'true', 'false']
+        default: auto
       episode_id:
         description: '에피소드 ID (예: ICG-2026-04-15-004). 미입력 시 최신 assembled 자동 선택.'
         required: false
         default: ''
       channels:
+        type: choice
+        options: [telegram, x, all]
         description: '발행 채널 (telegram / x / all)'
         required: true
         default: 'telegram'
       confirm:
-        description: '발행 확인 (YES 입력 필수)'
+        description: '운영 발행 확인 (live에서 YES 필수, dry는 불필요)'
         required: true
         default: 'NO'
 
@@ -31,11 +38,12 @@ jobs:
     name: Pre-flight Check
     runs-on: ubuntu-latest
     outputs:
+      execution_mode: ${{ steps.mode.outputs.execution_mode }}
       episode_id:    ${{ steps.resolve.outputs.episode_id }}
       slides_run_id: ${{ steps.resolve.outputs.slides_run_id }}
       video_run_id:  ${{ steps.resolve.outputs.video_run_id }}
     env:
-      DRY_RUN:      "false"
+      DRY_RUN: ${{ (inputs.dry_run != '' && inputs.dry_run != 'auto') && inputs.dry_run || secrets.DRY_RYN || secrets.DRY_RUN || 'false' }}
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
     steps:
@@ -53,10 +61,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Confirm guard (workflow_dispatch only)
-        if: github.event_name == 'workflow_dispatch'
+      - name: Validate execution mode
+        id: mode
         run: |
-          if [ "${{ inputs.confirm }}" != "YES" ]; then
+          python -c "import os; from scripts.publish_preflight import parse_dry_run; print('execution_mode=' + ('dry' if parse_dry_run(os.environ['DRY_RUN']) else 'live'))" >> "$GITHUB_OUTPUT"
+
+      - name: Confirm guard (workflow_dispatch only)
+        if: github.event_name == 'workflow_dispatch' && steps.mode.outputs.execution_mode == 'live'
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          if [ "$CONFIRM" != "YES" ]; then
             echo "❌ confirm=YES 미입력. 발행 중단."
             exit 1
           fi
@@ -78,9 +93,9 @@ jobs:
     name: Publish to SNS
     needs: pre-check
     runs-on: ubuntu-latest
-    if: needs.pre-check.outputs.episode_id != ''
+    if: needs.pre-check.outputs.episode_id != '' && needs.pre-check.outputs.execution_mode != ''
     env:
-      DRY_RUN:                    "false"
+      DRY_RUN: ${{ needs.pre-check.outputs.execution_mode == 'dry' && 'true' || 'false' }}
       PUBLISH_NON_MAJOR: ${{ secrets.PUBLISH_NON_MAJOR }}
       SUPABASE_URL:               ${{ secrets.SUPABASE_URL }}
       SUPABASE_KEY:               ${{ secrets.SUPABASE_KEY }}
@@ -107,7 +122,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Download Assembled Slides (from Resume Episode run)
-        if: needs.pre-check.outputs.slides_run_id != ''
+        if: needs.pre-check.outputs.execution_mode == 'live' && needs.pre-check.outputs.slides_run_id != ''
         uses: actions/download-artifact@v4
         with:
           pattern: slides-*
@@ -117,7 +132,7 @@ jobs:
           run-id: ${{ needs.pre-check.outputs.slides_run_id }}
 
       - name: Download Video Artifact (from Video Trailer run)
-        if: needs.pre-check.outputs.video_run_id != ''
+        if: needs.pre-check.outputs.execution_mode == 'live' && needs.pre-check.outputs.video_run_id != ''
         uses: actions/download-artifact@v4
         with:
           pattern: video-*
@@ -127,15 +142,31 @@ jobs:
           run-id: ${{ needs.pre-check.outputs.video_run_id }}
 
       - name: Check publish assets availability
+        env:
+          EPISODE_ID: ${{ needs.pre-check.outputs.episode_id }}
+          VIDEO_RUN_ID: ${{ needs.pre-check.outputs.video_run_id }}
         run: |
           echo "=== 슬라이드 파일 확인 ==="
           find output/episodes -name "S*.png" 2>/dev/null | sort || echo "슬라이드 없음"
           echo "=== 비디오 파일 확인 ==="
           find output/videos -name "*.mp4" 2>/dev/null | sort || echo "비디오 없음"
-          echo "=== episode_id: ${{ needs.pre-check.outputs.episode_id }} ==="
-          echo "=== video_run_id: ${{ needs.pre-check.outputs.video_run_id }} ==="
+          echo "=== episode_id: $EPISODE_ID ==="
+          echo "=== video_run_id: $VIDEO_RUN_ID ==="
+
+      - name: Read-only publish readiness
+        id: readiness
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_CHANNELS: ${{ inputs.channels }}
+          EPISODE_ID: ${{ needs.pre-check.outputs.episode_id }}
+        run: |
+          CHANNELS="$INPUT_CHANNELS"
+          if [ "$EVENT_NAME" = "schedule" ]; then CHANNELS="all"; fi
+          python -m scripts.run_publish --preflight-only --episode "$EPISODE_ID" --channels "$CHANNELS"
+          cat output/publish-preflight.json >> "$GITHUB_STEP_SUMMARY"
 
       - name: Anti-bot random delay
+        if: steps.readiness.outputs.allowed == 'true'
         run: |
           # 60~360초(1~6분) 랜덤 — 동일 시각 반복 발행 패턴 회피
           DELAY=$((RANDOM % 301 + 60))
@@ -143,20 +174,33 @@ jobs:
           sleep "$DELAY"
 
       - name: STEP 8 — Publish SNS
+        if: steps.readiness.outputs.allowed == 'true'
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_CHANNELS: ${{ inputs.channels }}
+          EPISODE_ID: ${{ needs.pre-check.outputs.episode_id }}
         run: |
-          if [ "${{ github.event_name }}" = "schedule" ]; then
+          if [ "$EVENT_NAME" = "schedule" ]; then
             CHANNELS="all"
           else
-            CHANNELS="${{ inputs.channels }}"
+            CHANNELS="$INPUT_CHANNELS"
           fi
 
-          EID="${{ needs.pre-check.outputs.episode_id }}"
+          EID="$EPISODE_ID"
           if [ -n "$EID" ]; then
             python -m scripts.run_publish --episode "$EID" --channels "$CHANNELS"
           else
             python -m scripts.run_publish --channels "$CHANNELS"
           fi
 
+      - name: Upload publish inspection
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: publish-preflight-${{ github.run_id }}
+          path: output/publish-preflight.json
+          retention-days: 14
+
       - name: Notify Failure
-        if: failure()
+        if: failure() && env.DRY_RUN == 'false'
         run: python -m scripts.notify_failure

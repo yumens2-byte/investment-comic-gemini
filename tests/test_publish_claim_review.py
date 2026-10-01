@@ -214,6 +214,9 @@ def legacy_run(monkeypatch, tmp_path):
     monkeypatch.setattr(history_writer, "record_publish", history)
     monkeypatch.setenv("DRY_RUN", "false")
     monkeypatch.setenv("TELEGRAM_FREE_CHANNEL_ID", "tg")
+    for key in ("TELEGRAM_BOT_TOKEN", "X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN",
+                "X_ACCESS_TOKEN_SECRET"):
+        monkeypatch.setenv(key, "test-configured")
     monkeypatch.setenv("FORCE_REPUBLISH", "false")
 
     def run(channels="x, telegram", video=False):
@@ -326,3 +329,24 @@ def test_invalid_publication_id(value):
 
     with pytest.raises(QualityHold):
         require_publication_id({"tweet_id": value}, "tweet_id")
+
+
+@pytest.mark.parametrize("missing", ["TELEGRAM_BOT_TOKEN", "X_API_KEY", "X_API_SECRET",
+                                     "X_ACCESS_TOKEN", "X_ACCESS_TOKEN_SECRET"])
+def test_missing_provider_config_never_claims_or_sends(legacy_run, missing):
+    run, calls, row, monkeypatch, *_ = legacy_run
+    monkeypatch.delenv(missing)
+    with pytest.raises(QualityHold):
+        run()
+    assert row["error_message"] is None
+    assert calls["x"] == calls["tg"] == calls["history"] == 0
+
+
+@pytest.mark.parametrize("status", ["failed", "draft", "analyzed", "unknown"])
+def test_direct_live_unready_status_never_claims_or_sends(legacy_run, status):
+    run, calls, row, *_ = legacy_run
+    row["status"] = status
+    with pytest.raises(ValueError, match="not ready"):
+        run()
+    assert row["error_message"] is None
+    assert calls["x"] == calls["tg"] == calls["history"] == 0

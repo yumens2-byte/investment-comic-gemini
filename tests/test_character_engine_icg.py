@@ -204,9 +204,9 @@ class TestResolveGuestCharacters:
         assert "CRYPTO_SHADE" in codes
 
     def test_cooldown_filters(self):
-        from datetime import date, timedelta
+        from datetime import datetime, timedelta, timezone
 
-        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        yesterday = (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
         prev_state = {
             "character_states": {
                 "sentinel_yield": {"last_appear_date": yesterday}
@@ -230,19 +230,19 @@ class TestApplyCooldown:
         assert _apply_cooldown(candidates, {}) == candidates
 
     def test_filters_yesterday(self):
-        from datetime import date, timedelta
+        from datetime import datetime, timedelta, timezone
 
-        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        yesterday = (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
         state = {"character_states": {"sentinel_yield": {"last_appear_date": yesterday}}}
         result = _apply_cooldown([("SENTINEL_YIELD", "WARNER")], state)
         assert result == []
 
     def test_passes_two_days_ago(self):
-        from datetime import date, timedelta
+        from datetime import datetime, timedelta, timezone
 
         from engine.character.character_engine import COOLDOWN_DAYS
 
-        old = (date.today() - timedelta(days=COOLDOWN_DAYS)).isoformat()
+        old = (datetime.now(timezone.utc).date() - timedelta(days=COOLDOWN_DAYS)).isoformat()
         state = {"character_states": {"sentinel_yield": {"last_appear_date": old}}}
         result = _apply_cooldown([("SENTINEL_YIELD", "WARNER")], state)
         assert len(result) == 1
