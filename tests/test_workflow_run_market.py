@@ -1,6 +1,7 @@
 import re
 from pathlib import Path
 
+import pytest
 import yaml
 
 WORKFLOW = Path(".github/workflows/run_market.yml")
@@ -20,6 +21,47 @@ def _count_job_env_key(text: str, key: str) -> int:
 
 def test_run_market_workflow_yaml_parses() -> None:
     assert _workflow_yaml()
+
+
+@pytest.mark.parametrize("requested_date", ["", "2026-09-14"])
+def test_recovery_uses_resolved_preflight_date(tmp_path, monkeypatch, requested_date):
+    """Run the workflow's real date export and restore the selected day's panels."""
+    import json
+    import textwrap
+
+    from scripts.restore_generation_artifact import restore
+
+    step = next(s for s in _workflow_yaml()["jobs"]["pipeline"]["steps"]
+                if s.get("id") == "preflight")
+    code = step["run"].split("<<'PYCODE'\n", 1)[1].rsplit("PYCODE", 1)[0]
+    selected = requested_date or "2026-10-02"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TARGET_DATE", requested_date)
+    for key in ("GITHUB_ENV", "GITHUB_OUTPUT", "GITHUB_STEP_SUMMARY"):
+        monkeypatch.setenv(key, str(tmp_path / key))
+    output = tmp_path / "output"
+    output.mkdir()
+    (output / "run-market-preflight.json").write_text(json.dumps({
+        "episode_date": selected, "allowed": True,
+        "mode": "live_preflight", "status": "pass",
+    }))
+    exec(textwrap.dedent(code), {})
+    exported = (tmp_path / "GITHUB_ENV").read_text().strip()
+    assert exported == f"TARGET_DATE={selected}"
+    source = tmp_path / "source" / selected / "panels"
+    source.mkdir(parents=True)
+    (source / "P1.png").write_bytes(b"original panel")
+    assert restore(exported.split("=", 1)[1], tmp_path / "source", tmp_path / "target") == 1
+    assert (tmp_path / "target" / selected / "panels" / "P1.png").read_bytes() == b"original panel"
+
+
+def test_recovery_requires_allowed_image_stage():
+    steps = _workflow_yaml()["jobs"]["pipeline"]["steps"]
+    for name in ("Restore original panel artifact", "Restore selected date panels only"):
+        condition = next(s for s in steps if s.get("name") == name)["if"]
+        assert "steps.preflight.outputs.allowed == 'true'" in condition
+        assert "env.DRY_RUN == 'false'" in condition
+        assert "(env.RUN_STAGE == 'image' || env.RUN_STAGE == 'all')" in condition
 
 
 def test_run_market_workflow_has_rollout_version_check_after_dependencies() -> None:
@@ -99,3 +141,4 @@ def test_deployment_workflows_use_safe_inputs_context_and_env_keys() -> None:
         assert not re.search(r"^[ \t]*[A-Za-z_][A-Za-z0-9_]*\s+:", text, re.MULTILINE), (
             f"{path} contains an env/YAML key with whitespace before ':'"
         )
+
