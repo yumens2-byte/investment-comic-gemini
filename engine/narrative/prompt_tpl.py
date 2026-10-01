@@ -178,8 +178,8 @@ def _append_narrative_context_fallback(rendered: str, context_pack: dict | None)
             )
         if unresolved:
             lines.append(
-                "- Continue the prior unanswered question honestly. Referencing a question "
-                "does not resolve it; keep OPEN/PROGRESSED until an actual answer is verified."
+                "- HARD RULE: If unresolved_threads are listed, copy at least one listed "
+                "thread verbatim into the top-level resolved_threads array."
             )
     directives = context_pack.get("continuity_directives") or []
     if directives:

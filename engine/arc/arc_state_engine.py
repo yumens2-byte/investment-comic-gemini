@@ -244,7 +244,6 @@ def update_after_episode(
     form_triggered: int = 0,
     zero_block_appeared: bool = False,
     villain_defeated: bool = False,
-    episode_date: str | None = None,
 ) -> dict[str, Any]:
     """
     에피소드 완료 후 arc_state 갱신.
@@ -283,7 +282,7 @@ def update_after_episode(
     # 기준이어야 하므로, 오늘 이미 갱신된 상태면 시계·증분 필드는 건너뛰고
     # 최신 에피소드 내용(hook/outcome/type)만 반영한다.
     # 빌런 전환은 정당한 상태 변화이므로 가드 대상에서 제외.
-    _today_iso = episode_date or datetime.now(tz=timezone.utc).date().isoformat()
+    _today_iso = datetime.now(tz=timezone.utc).date().isoformat()
     if not villain_changed and s.get("last_episode_date") == _today_iso:
         if open_hook:
             s["open_hook"] = open_hook
@@ -310,14 +309,14 @@ def update_after_episode(
         s["villain_streak"] = (s.get("villain_streak") or 0) + 1
 
     # ── arc_tension 자동 조정 ────────────────────────────────────────────────
-    tension = s.get("arc_tension") if s.get("arc_tension") is not None else 30
+    tension = s.get("arc_tension") or 30
     delta_t = _TENSION_DELTA.get(outcome, 0)
     s["arc_tension"] = max(0, min(100, tension + delta_t))
 
     # ── hero_momentum 재계산 ─────────────────────────────────────────────────
     # 간단 모델: 승리 +8 / 무승부 0 / 패배 -8 (EDT 기준 근사)
-    momentum = s.get("hero_momentum") if s.get("hero_momentum") is not None else 50
-    if outcome == "HERO_VICTORY":
+    momentum = s.get("hero_momentum") or 50
+    if outcome in ("HERO_VICTORY", "PEACEFUL_GROWTH"):
         s["hero_momentum"] = min(100, momentum + 8)
         s["hero_win_streak"] = (s.get("hero_win_streak") or 0) + 1
     elif outcome == "PYRRHIC_VICTORY":
@@ -326,7 +325,7 @@ def update_after_episode(
     elif outcome in ("HERO_DEFEAT", "SYSTEM_COLLAPSE"):
         s["hero_momentum"] = max(0, momentum - 8)
         s["hero_win_streak"] = 0
-    elif outcome not in {"PEACEFUL_GROWTH", "OBSERVATION"}:
+    else:
         s["hero_win_streak"] = 0
 
     # ── villain_signature 자동 판정 ──────────────────────────────────────────
@@ -364,7 +363,7 @@ def update_after_episode(
     # ── 메타 ─────────────────────────────────────────────────────────────────
     s["last_outcome"]      = outcome
     s["last_episode_type"] = episode_type
-    s["last_episode_date"] = _today_iso
+    s["last_episode_date"] = datetime.now(tz=timezone.utc).date().isoformat()
     if open_hook:
         s["open_hook"] = open_hook
 

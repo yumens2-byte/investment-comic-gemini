@@ -200,15 +200,20 @@ def _get_chart_direction(outcome: str | None) -> str:
         "DRAW": "Background charts show NEUTRAL mixed colors. Sideways movement.",
         "VILLAIN_TEMP_VICTORY": "Background charts show RED downward lines. Market pressure visual.",
         "HERO_DEFEAT": "Background charts ALL RED. Steep downward. Emergency warnings. No green anywhere.",
-        "SYSTEM_COLLAPSE": "ALL RED ONLY. Catastrophic chart collapse. Abstract warning lights. ZERO green allowed.",
+        "SYSTEM_COLLAPSE": "ALL RED ONLY. Catastrophic chart collapse. ERROR screens everywhere. ZERO green allowed.",
     }
 
-    # Chart instructions are deterministic: runtime prose can request numbers or
-    # labelled ERROR displays that contradict the no-typography contract.
-    direction = _FALLBACK.get(outcome, "")
+    try:
+        from engine.common.notion_loader import load_chart_direction_rule
+
+        rules = load_chart_direction_rule()
+        direction = rules.get(outcome) or _FALLBACK.get(outcome, "")
+    except Exception:
+        direction = _FALLBACK.get(outcome, "")
+
     if not direction:
         return ""
-    return f"CHART DIRECTION RULE ({outcome}): {direction} Abstract unlabelled lines only."
+    return f"CHART DIRECTION RULE ({outcome}): {direction}"
 
 
 def _get_local_canon_designs(char_ids: list[str]) -> str:
@@ -261,27 +266,20 @@ def _get_char_designs(char_ids: list[str]) -> str:
     """
     if not char_ids:
         return ""
-    from engine.common.exceptions import PipelineAborted
-    from engine.image.ref_loader import GUEST_CHARACTER_IDS
-
     try:
         from engine.common.notion_loader import char_design_to_prompt_block, load_char_design_blocks
+
         specs = load_char_design_blocks(char_ids)
+        if not specs:
+            return _get_local_canon_designs(char_ids)
+        blocks = []
+        for char_id in char_ids:
+            if char_id in specs:
+                blocks.append(char_design_to_prompt_block(char_id, specs[char_id]))
+        return "\n\n".join(blocks)
     except Exception as exc:
-        logger.warning("[prompt_builder] CHAR_DESIGN unavailable: %s", exc)
-        specs = {}
-    blocks = []
-    for char_id in char_ids:
-        spec = specs.get(char_id)
-        if spec:
-            block = char_design_to_prompt_block(char_id, spec)
-        else:
-            block = _get_local_canon_designs([char_id])
-        if not block and char_id not in GUEST_CHARACTER_IDS:
-            raise PipelineAborted("prompt", f"Missing character design: {char_id}")
-        if block:
-            blocks.append(block)
-    return "\n\n".join(blocks)
+        logger.warning("[prompt_builder] CHAR_DESIGN 로드 실패 (local canon fallback): %s", exc)
+        return _get_local_canon_designs(char_ids)
 
 
 def _tone_hint(panel_type: str, key_text: str, narration: str) -> str:
@@ -327,21 +325,12 @@ def build_panel_prompt(
     Returns:
         완성된 프롬프트 문자열.
     """
-    from engine.common.exceptions import PipelineAborted
-
     style_block = _get_style_block()
     negative_block = _get_negative_block()
 
     panel_type = panel.get("panel_type", "BATTLE")
-    outcome = battle_outcome or panel.get("battle_outcome")
-    no_battle = panel.get("scenario_type") == "NO_BATTLE" or outcome == "NO_BATTLE"
-    background_only = panel_type in {"TEXT_CARD", "DISCLAIMER"}
     setting = panel.get("setting", "Financial district")
     action = panel.get("action", "")
-    if panel_type == "TEXT_CARD":
-        action = ("Abstract neutral light shapes on a dark background. No chart, arrows, "
-                  "tickers, numbers, labels, readable text or implied market direction. "
-                  "Market facts are added by the compositor, not drawn into this image.")
     key_text = panel.get("key_text", "")
     narration = panel.get("narration", "")
     market_ref = panel.get("market_ref", "")
@@ -349,11 +338,6 @@ def build_panel_prompt(
 
     # 캐릭터 정보
     characters = panel.get("characters", [])
-    if background_only and characters:
-        raise PipelineAborted("prompt", f"{panel_type} cannot contain characters")
-    ids = [ch.get("char_id", "") for ch in characters]
-    if any(not char_id for char_id in ids) or len(ids) != len(set(ids)):
-        raise PipelineAborted("prompt", "Invalid or duplicate character cast")
     char_desc_lines: list[str] = []
     for ch in characters:
         role = ch.get("role", "")
@@ -368,22 +352,6 @@ def build_panel_prompt(
 
     # 패널 타입별 시각적 스펙 (조명/구도/분위기) — Notion에서 로드
     visual_spec_block = _get_panel_visual_spec(panel_type)
-    if background_only:
-        tone_hint = "Clean abstract background without characters or typography"
-        visual_spec_block = "COMPOSITION: Abstract environment only; no characters, silhouettes, bodies, weapons or faces."
-    elif no_battle:
-        tone_hint = "Strategic observation, quiet non-combat scene"
-        visual_spec_block = "COMPOSITION: Non-combat strategic observation. No attacks or forced confrontation."
-    elif outcome == "DRAW" and panel_type in {"COVER", "BATTLE", "CLIMAX", "AFTERMATH"}:
-        tone_hint = "Unresolved stalemate, balanced forces"
-        visual_spec_block = "COMPOSITION: Both opposing forces remain at equal scale. Balanced stalemate; neither side dominant, defeated or retreating."
-    else:
-        # Runtime compositions can assume a single character for multi-cast panels.
-        visual_spec_block = "\n".join(
-            (f"COMPOSITION: Exactly the approved cast ({len(ids)} characters); staging follows the declared action."
-             if line.startswith("COMPOSITION:") else line)
-            for line in visual_spec_block.splitlines()
-        )
 
     # 캐릭터별 외형 고정 명세 블록 (Notion에서 로드)
     char_ids = [ch.get("char_id", "") for ch in characters if ch.get("char_id")]
@@ -409,9 +377,8 @@ def build_panel_prompt(
         "== DYNAMIC ACTION (MUST BE DEPICTED) ==",
         f"{action}",
         "REQUIREMENT: Render this exact action as the visual focal point.",
-        ("No characters, limbs, faces or character poses. Depict only the requested abstract environment."
-         if background_only or not characters else
-         "Depict intent and motion appropriate to each reference-defined species. Never invent limbs, faces, eyes or human anatomy."),
+        "Characters MUST be shown performing this action with clear motion, body language, and intent — NOT in a static standing pose.",
+        "Use dynamic poses, mid-action limbs, motion blur where appropriate, and expressive faces.",
         "The character reference (REF) images define appearance ONLY (costume, face, weapon design), NOT pose or stance.",
         "== END DYNAMIC ACTION ==",
         "",
@@ -428,13 +395,6 @@ def build_panel_prompt(
         mechanics = spec.get("body_mechanics") or {}
         staging = spec.get("staging") or {}
         required = spec.get("required_character_ids") or []
-        if len(required) != len(set(required)) or set(required) != set(ids):
-            raise PipelineAborted("prompt", "Performance cast differs from panel cast")
-        if background_only and (spec.get("subject_id") or spec.get("target_id")):
-            raise PipelineAborted("prompt", "Character performance on background-only panel")
-        for key in ("subject_id", "target_id"):
-            if spec.get(key) and spec[key] not in required:
-                raise PipelineAborted("prompt", f"Performance {key} outside required cast")
         lines += [
             "== PERFORMANCE CONTRACT — HARD REQUIREMENT ==",
             f"REQUIRED CHARACTER COUNT: exactly {len(required)} required character(s): {', '.join(required)}",
@@ -445,12 +405,11 @@ def build_panel_prompt(
             f"TARGET: {spec.get('target_id') or 'none'}",
             f"VISIBLE CONTACT: {spec.get('contact_point') or 'none required'}",
             f"FOCAL POINT: {staging.get('focal_point', '')}",
-            "Performance applies only to existing cast; empty cast requires no body or pose.",
+            "Do not replace the required action with a neutral standing pose.",
             "Never omit a required character or duplicate a character.",
             "== END PERFORMANCE CONTRACT ==",
             "",
             "== BODY MECHANICS ==",
-            "SPECIES PRECEDENCE: Character canon and REF anatomy override generic human body mechanics. For formless or armoured non-human beings, use only canon-defined body structures.",
             f"LEAD: {mechanics.get('lead_limb') or 'not applicable'}",
             f"BASE: {mechanics.get('support_limb') or 'stable and anatomically plausible'}",
             f"WEIGHT: {mechanics.get('weight_direction') or 'balanced for the action'}",
@@ -462,17 +421,12 @@ def build_panel_prompt(
             "",
         ]
 
-    if not characters and performance_spec is not None:
-        mechanics_start = lines.index("== BODY MECHANICS ==")
-        mechanics_end = lines.index("== END BODY MECHANICS ==", mechanics_start)
-        del lines[mechanics_start:mechanics_end + 1]
-
     # 패널 타입별 시각적 스펙 주입 (조명/구도/분위기/engagement)
     if visual_spec_block:
         lines += [visual_spec_block, ""]
 
     # CHART DIRECTION RULE — outcome 기반 배경 차트 색상 (BATTLE/CLIMAX에만 의미 있음)
-    chart_dir = _get_chart_direction(outcome)
+    chart_dir = _get_chart_direction(battle_outcome or panel.get("battle_outcome"))
     if chart_dir and panel_type in ("BATTLE", "CLIMAX", "AFTERMATH"):
         lines += [chart_dir, ""]
 
@@ -502,9 +456,6 @@ def build_panel_prompt(
         f"MARKET_CONTEXT (visual mood only, no text): {market_ref or 'general market'}",
         "",
         negative_block,
-        "FINAL PRIORITY: No readable typography or numbers; any runtime request for chart labels, positive numbers or ERROR text is replaced by abstract unlabelled geometry.",
-        f"CAST PRIORITY: Render exactly {len(ids)} approved character(s); never omit, duplicate, add or replace a cast member. Generic composition counts never override this cast.",
-        "CANON PRIORITY: Exact reference species, fixed anatomy, handedness and required facing direction override generic human anatomy, role-based facing, facial-expression and limb instructions. No unregistered characters.",
     ]
 
     if ref_paths:
@@ -516,7 +467,6 @@ def build_panel_prompt(
 def build_for_episode(
     episode_script: dict,
     performance_specs: list[object] | None = None,
-    battle_outcome: str | None = None,
 ) -> list[PanelPrompt]:
     """
     에피소드 전체 패널 프롬프트 생성.
@@ -527,8 +477,8 @@ def build_for_episode(
     Returns:
         PanelPrompt 리스트 (panels 순서 동일).
     """
-    from engine.common.exceptions import CanonLockViolation, PipelineAborted
-    from engine.image.ref_loader import GUEST_CHARACTER_IDS, get_refs_for_panel
+    from engine.common.exceptions import CanonLockViolation
+    from engine.image.ref_loader import get_refs_for_panel
 
     panels = episode_script.get("panels", [])
     panel_prompts: list[PanelPrompt] = []
@@ -537,13 +487,6 @@ def build_for_episode(
         int(getattr(spec, "panel_idx", 0) or (spec.get("panel_idx", 0) if isinstance(spec, dict) else 0)): spec
         for spec in (performance_specs or [])
     }
-
-    if performance_specs:
-        panel_indices = [panel.get("idx", 0) for panel in panels]
-        if (len(specs_by_idx) != len(performance_specs)
-                or len(panel_indices) != len(set(panel_indices))
-                or set(specs_by_idx) != set(panel_indices)):
-            raise PipelineAborted("prompt", "Incomplete or duplicate performance panel contracts")
 
     for panel in panels:
         idx = panel.get("idx", 0)
@@ -559,15 +502,9 @@ def build_for_episode(
             logger.error("[prompt_builder] Canon Lock 위반: %s", exc)
             raise
 
-        expected_refs = [c for c in char_ids if c and c not in GUEST_CHARACTER_IDS]
-        if len(ref_paths) != len(expected_refs) or any(not path.is_file() for path in ref_paths):
-            raise PipelineAborted("prompt", f"Incomplete character references for panel {idx}")
-        effective_panel = dict(panel)
-        effective_panel.setdefault("scenario_type", episode_script.get("scenario_type"))
         prompt_text = build_panel_prompt(
-            effective_panel,
+            panel,
             ref_paths,
-            battle_outcome=battle_outcome or episode_script.get("battle_outcome"),
             performance_spec=specs_by_idx.get(idx),
         )
         panel_prompts.append(

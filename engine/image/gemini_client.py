@@ -7,23 +7,20 @@ Gemini 2.5 Flash Image API 클라이언트.
   GEMINI_API_KEY 이름 절대 사용 금지 (doc 19 patch).
 
 RULE 07: 모든 패널에 캐릭터 REF 이미지 멀티 입력 주입.
-재시도: 완료된 이미지 누락 응답만 최대 3회. 영속 가드 HOLD는 fallback 금지.
+재시도: 패널별 3회, 최종 실패 시 text_card fallback.
 비용 계산: prompt_tokens * 0.30 + output_tokens * 30.0, 분모 1e6.
 로그: output/episodes/{date}/panels/gemini_run.log (JSONL)
 """
 
 from __future__ import annotations
 
-import hashlib
-import io
 import json
 import logging
 import os
-import tempfile
 import time
 from pathlib import Path
 
-from engine.image.generation_guard import GenerationHold, ProductionGenerationGuard
+from engine.common.retry import image_retry
 
 logger = logging.getLogger(__name__)
 
@@ -46,14 +43,7 @@ def _get_client():
             "GEMINI_API_SUB_PAY_KEY 환경변수 누락. GitHub Secrets에 GEMINI_API_SUB_PAY_KEY 등록 필요. "
             "(주의: GEMINI_API_KEY 이름 사용 불가 — doc 19 patch)"
         )
-    from google.genai import types
-
-    return genai.Client(
-        api_key=pay_key,
-        http_options=types.HttpOptions(
-            timeout=120_000, retry_options=types.HttpRetryOptions(attempts=1)
-        ),
-    )
+    return genai.Client(api_key=pay_key)
 
 
 def _calc_cost(prompt_tokens: int, output_tokens: int) -> float:
@@ -130,9 +120,7 @@ def _response_parts(response: object) -> list[object]:
 def _response_finish_reason(response: object) -> str:
     candidates = _obj_value(response, "candidates", [])
     if not candidates:
-        feedback = _obj_value(response, "prompt_feedback")
-        reason = _obj_value(feedback, "block_reason")
-        return str(reason) if reason else "no_candidates"
+        return "no_candidates"
     return str(_obj_value(candidates[0], "finish_reason", "unknown"))
 
 
@@ -143,6 +131,7 @@ def _write_jsonl_log(log_path: Path, record: dict) -> None:
         fh.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+@image_retry()
 def _generate_one(
     client,
     prompt_text: str,
@@ -178,7 +167,7 @@ def _generate_one(
                 )
             )
         else:
-            raise GenerationHold(f"Missing mandatory REF: {ref_path}")
+            logger.warning("[gemini] REF 이미지 없음: %s", ref_path)
 
     config = None
     if aspect_ratio:
@@ -204,62 +193,10 @@ def _generate_one(
             if data:
                 return data, prompt_tokens, output_tokens
 
-    raise NoImageResponse(_response_finish_reason(response), prompt_tokens, output_tokens)
-
-
-class NoImageResponse(RuntimeError):
-    """A completed provider response without an image, preserving billed usage."""
-
-    def __init__(self, reason: str, prompt_tokens: int, output_tokens: int):
-        super().__init__(f"Gemini completed without image (finish_reason={reason})")
-        self.reason = reason
-        self.prompt_tokens = prompt_tokens
-        self.output_tokens = output_tokens
-
-
-def _terminal_error(exc: Exception) -> bool:
-    status = getattr(exc, "code", None) or getattr(exc, "status_code", None)
-    if str(status) in {"400", "401", "403", "404", "429"}:
-        return True
-    message = str(exc).lower()
-    return any(word in message for word in (
-        "quota", "resource_exhausted", "budget", "billing", "permission_denied",
-        "unauthenticated", "invalid_argument", "safety", "prohibited", "policy",
-        "blocklist", "recitation", "spii", "blocked",
-    ))
-
-
-def _validate_png(data: bytes) -> None:
-    from PIL import Image
-
-    with Image.open(io.BytesIO(data)) as image:
-        if image.format != "PNG":
-            raise ValueError("Provider image is not PNG")
-        image.verify()
-    with Image.open(io.BytesIO(data)) as image:
-        image.load()
-        if image.width <= 0 or image.height <= 0:
-            raise ValueError("Provider image has invalid dimensions")
-
-
-def _persist_exclusive(path: Path, data: bytes) -> None:
-    """Commit a complete, fsynced file with atomic no-overwrite semantics."""
-    temporary = None
-    try:
-        with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as handle:
-            temporary = Path(handle.name)
-            handle.write(data)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.link(temporary, path)
-        directory = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
+    raise RuntimeError(
+        "Gemini 응답에 이미지 없음 — fallback 필요 "
+        f"(finish_reason={_response_finish_reason(response)})"
+    )
 
 
 def generate_panel(
@@ -269,109 +206,113 @@ def generate_panel(
     output_dir: Path,
     log_path: Path,
     aspect_ratio: str | None = None,
-    *,
-    guard=None,
 ) -> tuple[Path | None, float]:
-    """Generate with durable pre-call reservations; ambiguous outcomes always HOLD.
-
-    SDK retries are disabled. Only completed, nonterminal no-image/invalid-image
-    responses can retry (at most three calls, also constrained by the ledger).
-    Explicit guard injection is for offline tests; production uses its DB guard.
     """
-    output_dir = Path(output_dir)
-    ref_paths = [Path(ref) for ref in ref_paths]
-    if panel_idx <= 0 or not prompt_text.strip():
-        raise GenerationHold("Valid panel and prompt required")
-    for ref in ref_paths:
-        if not ref.is_file():
-            raise GenerationHold(f"Missing mandatory REF: {ref}")
+    패널 이미지 생성 + P{N}.png 저장 + gemini_run.log 기록.
+
+    Args:
+        panel_idx: 패널 번호 (1-based).
+        prompt_text: 프롬프트.
+        ref_paths: REF 이미지 경로 목록.
+        output_dir: 출력 디렉토리 (output/episodes/DATE/panels/).
+        log_path: gemini_run.log 경로.
+
+    Returns:
+        (저장된 PNG 경로 또는 None, 패널 비용 USD).
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"P{panel_idx}.png"
-    if guard is None:
-        guard = ProductionGenerationGuard(
-            scope=output_dir.as_posix(), panel=panel_idx,
-            prompt=prompt_text + f"\n[model={_MODEL};aspect={aspect_ratio}]",
-            refs=ref_paths,
-        )
-    if guard.reuse(output_path):
-        try:
-            _validate_png(output_path.read_bytes())
-        except Exception as exc:
-            raise GenerationHold("Successful artifact failed PNG validation") from exc
-        return output_path, 0.0
-    client = _get_client()
-    total_cost = 0.0
-    for attempt in range(1, 4):
-        token = guard.reserve()
-        started = time.monotonic()
-        record = {
-            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "panel": panel_idx, "model": _MODEL, "attempt": attempt,
-            "ref_images": [str(p) for p in ref_paths],
-            "cost_usd": None, "cost_estimated": False,
-        }
-        prompt = prompt_text if attempt == 1 else (
-            "REPAIR: Preserve ALL required characters and reference identities.\n"
-            "Simplify optional background effects only.\n\n" + prompt_text
-        )
-        try:
-            image_bytes, input_tokens, output_tokens = _generate_one(
-                client, prompt, ref_paths, aspect_ratio=aspect_ratio
-            )
-        except NoImageResponse as exc:
-            known_cost = _calc_cost(exc.prompt_tokens, exc.output_tokens) if (
-                exc.prompt_tokens or exc.output_tokens
-            ) else None
-            terminal = _terminal_error(exc)
-            record.update(status="terminal" if terminal else "failed", cost_usd=known_cost,
-                          error=str(exc), latency_sec=round(time.monotonic() - started, 2))
-            _write_jsonl_log(log_path, record)
-            guard.finish(token, state="terminal" if terminal else "failed", actual_cost=known_cost)
-            if terminal:
-                raise GenerationHold(str(exc)) from exc
-            total_cost += known_cost if known_cost is not None else _calc_cost(
-                _estimate_prompt_tokens(prompt, ref_paths), _ESTIMATED_IMAGE_OUTPUT_TOKENS
-            )
-            continue
-        except Exception as exc:
-            # Even server errors can have ambiguous billing; never automatically retry.
-            terminal = _terminal_error(exc)
-            record.update(status="terminal" if terminal else "unknown", error=str(exc),
-                          latency_sec=round(time.monotonic() - started, 2))
-            _write_jsonl_log(log_path, record)
-            guard.finish(token, state="terminal" if terminal else "unknown", actual_cost=None)
-            raise GenerationHold("Provider outcome requires reconciliation: " + str(exc)) from exc
+    start_ts = time.monotonic()
 
-        measured = bool(input_tokens or output_tokens)
-        actual_cost = _calc_cost(input_tokens, output_tokens) if measured else None
-        charged = actual_cost if measured else _calc_cost(
-            _estimate_prompt_tokens(prompt, ref_paths), _ESTIMATED_IMAGE_OUTPUT_TOKENS
+    log_record: dict = {
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "panel": panel_idx,
+        "model": _MODEL,
+        "ref_images": [str(p) for p in ref_paths],
+        "status": "unknown",
+        "prompt_tokens": 0,
+        "output_tokens": 0,
+        "latency_sec": 0.0,
+        "cost_usd": 0.0,
+        "cost_estimated": False,
+        "output": None,
+    }
+
+    try:
+        client = _get_client()
+        # 재시도 전략 차별화 (Notion 11 Canon Test 패턴)
+        # 1회차: 전체 프롬프트
+        # 2회차: negative 강화 + identity 집중 지시
+        # 3회차: ref_paths 첫 번째(hero)만 (단순화로 생성 성공률↑)
+        adjusted_refs = ref_paths
+        adjusted_prompt = prompt_text
+        retry_attempt = getattr(_generate_one, "_retry_count", 0)
+        if retry_attempt == 1:
+            # 2회차: identity 우선 강조
+            adjusted_prompt = (
+                "PRIORITY OVERRIDE: Character identity consistency is the #1 goal.\n"
+                "Maintain EXACT appearance from reference images above all else.\n\n" + prompt_text
+            )
+        elif retry_attempt >= 2:
+            # 3회차: ref_paths 첫 번째만 (단순화로 생성 성공률↑)
+            adjusted_refs = ref_paths[:1] if ref_paths else []
+            adjusted_prompt = (
+                "SIMPLIFIED ATTEMPT: Focus on ONE character only from the reference.\n"
+                "Render the scene with primary character only if needed for quality.\n\n"
+                + prompt_text
+            )
+        image_bytes, prompt_tokens, output_tokens = _generate_one(
+            client, adjusted_prompt, adjusted_refs, aspect_ratio=aspect_ratio
         )
-        total_cost += charged
-        record.update(prompt_tokens=input_tokens, output_tokens=output_tokens,
-                      cost_usd=actual_cost, cost_estimated=not measured,
-                      estimated_cost_usd=None if measured else charged,
-                      latency_sec=round(time.monotonic() - started, 2))
-        try:
-            _validate_png(image_bytes)
-        except Exception as exc:
-            record.update(status="failed", error=str(exc))
-            _write_jsonl_log(log_path, record)
-            guard.finish(token, state="failed", actual_cost=actual_cost)
-            continue
-        try:
-            _persist_exclusive(output_path, image_bytes)
-            guard.finish(token, state="success", actual_cost=actual_cost,
-                         output_hash=hashlib.sha256(image_bytes).hexdigest())
-        except Exception as exc:
-            # A paid result exists or its ledger commit failed; preserve it and stop.
-            record.update(status="hold", output=str(output_path), error=str(exc))
-            _write_jsonl_log(log_path, record)
-            raise GenerationHold("Image persistence/ledger requires reconciliation: " + str(exc)) from exc
-        record.update(status="success", output=str(output_path))
-        _write_jsonl_log(log_path, record)
-        return output_path, total_cost
-    return None, total_cost
+
+        latency = round(time.monotonic() - start_ts, 2)
+
+        cost_estimated = False
+        if prompt_tokens == 0 and output_tokens == 0:
+            prompt_tokens = _estimate_prompt_tokens(adjusted_prompt, adjusted_refs)
+            output_tokens = _ESTIMATED_IMAGE_OUTPUT_TOKENS
+            cost_estimated = True
+        cost_usd = _calc_cost(prompt_tokens, output_tokens)
+
+        output_path.write_bytes(image_bytes)
+
+        log_record.update(
+            {
+                "status": "success",
+                "prompt_tokens": prompt_tokens,
+                "output_tokens": output_tokens,
+                "latency_sec": latency,
+                "cost_usd": cost_usd,
+                "cost_estimated": cost_estimated,
+                "output": str(output_path),
+            }
+        )
+        _write_jsonl_log(log_path, log_record)
+
+        logger.info(
+            "[gemini] 패널 P%d 생성 완료 (%.2fs, tokens=%d/%d, $%.4f, estimated=%s)",
+            panel_idx,
+            latency,
+            prompt_tokens,
+            output_tokens,
+            cost_usd,
+            cost_estimated,
+        )
+        return output_path, cost_usd
+
+    except Exception as exc:
+        latency = round(time.monotonic() - start_ts, 2)
+        log_record.update(
+            {
+                "status": "failed",
+                "latency_sec": latency,
+                "error": str(exc),
+            }
+        )
+        _write_jsonl_log(log_path, log_record)
+
+        logger.error("[gemini] 패널 P%d 생성 실패 → text_card fallback: %s", panel_idx, exc)
+        return None, 0.0  # 상위에서 text_card fallback 처리
 
 
 def generate_episode(

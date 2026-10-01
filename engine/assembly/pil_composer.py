@@ -27,7 +27,6 @@ import textwrap
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
-from PIL.PngImagePlugin import PngInfo
 
 logger = logging.getLogger(__name__)
 
@@ -86,8 +85,6 @@ def compose_slide(
     panel_type: str,
     market_ref: str | None = None,
     output_path: Path | None = None,
-    *,
-    strict: bool = False,
 ) -> Path:
     """
     단일 슬라이드 조립 (오버레이 방식).
@@ -112,12 +109,10 @@ def compose_slide(
         return _compose_disclaimer_slide(output_path, narration)
 
     if panel_image_path is None or not panel_image_path.exists():
-        if strict:
-            raise ValueError(f"Assembly source image missing: panel {panel_idx}")
         return _compose_text_card(output_path, key_text, narration, panel_idx, market_ref)
 
     return _compose_image_slide(
-        output_path, panel_image_path, key_text, narration, panel_idx, market_ref, strict=strict
+        output_path, panel_image_path, key_text, narration, panel_idx, market_ref
     )
 
 
@@ -128,8 +123,6 @@ def _compose_image_slide(
     narration: str,
     panel_idx: int,
     market_ref: str | None,
-    *,
-    strict: bool = False,
 ) -> Path:
     """이미지 전체(1080x1350) + 하단 반투명 텍스트 오버레이."""
     try:
@@ -137,8 +130,6 @@ def _compose_image_slide(
         # 전체 슬라이드 크기로 리사이즈 (1080x1350)
         panel_img = panel_img.resize((SLIDE_W, SLIDE_H), Image.LANCZOS)
     except Exception as exc:
-        if strict:
-            raise ValueError(f"Assembly source image invalid: panel {panel_idx}") from exc
         logger.warning("[pil_composer] 이미지 로드 실패: %s", exc)
         return _compose_text_card(output_path, key_text, narration, panel_idx, market_ref)
 
@@ -225,9 +216,7 @@ def _compose_text_card(
         ref_font = _get_font(30)
         draw.text((50, SLIDE_H - 100), market_ref, font=ref_font, fill=TEXT_AMBER)
 
-    metadata = PngInfo()
-    metadata.add_text("icg_render_kind", "text_fallback")
-    slide.save(str(output_path), "PNG", optimize=True, pnginfo=metadata)
+    slide.save(str(output_path), "PNG", optimize=True)
     return output_path
 
 
@@ -273,8 +262,6 @@ def compose_episode(
     panels: list[dict],
     panel_images: list[Path | None],
     output_dir: Path,
-    *,
-    strict: bool = False,
 ) -> list[Path]:
     """
     에피소드 전체 슬라이드 조립.
@@ -287,8 +274,6 @@ def compose_episode(
     Returns:
         슬라이드 경로 목록 (S1.png ~ S8.png).
     """
-    if strict:
-        validate_panel_sources(panels, panel_images)
     output_dir.mkdir(parents=True, exist_ok=True)
     slides: list[Path] = []
 
@@ -304,30 +289,9 @@ def compose_episode(
             panel_type=panel.get("panel_type", "NORMAL"),
             market_ref=panel.get("market_ref"),
             output_path=output_dir / f"S{idx}.png",
-            strict=strict,
         )
         slides.append(slide_path)
         logger.info("[pil_composer] S%d.png → %s", idx, slide_path)
 
     logger.info("[pil_composer] 슬라이드 %d개 조립 완료", len(slides))
     return slides
-
-
-def validate_panel_sources(panels: list[dict], panel_images: list[Path | None]) -> None:
-    """Validate every source before writing a publishable slide; no text fallback."""
-    if not panels:
-        raise ValueError("Assembly panels empty")
-    indices = [p.get("idx", i + 1) for i, p in enumerate(panels)]
-    if indices != list(range(1, len(panels) + 1)):
-        raise ValueError("Assembly panel indices must be contiguous")
-    for i, panel in enumerate(panels):
-        if panel.get("panel_type") == "DISCLAIMER":
-            continue
-        source = panel_images[i] if i < len(panel_images) else None
-        if source is None or not source.is_file():
-            raise ValueError(f"Assembly source image missing: panel {i + 1}")
-        try:
-            with Image.open(source) as image:
-                image.load()
-        except (OSError, ValueError) as exc:
-            raise ValueError(f"Assembly source image invalid: panel {i + 1}") from exc

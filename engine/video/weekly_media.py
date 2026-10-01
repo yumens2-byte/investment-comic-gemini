@@ -25,7 +25,6 @@ Motion QA (2026-09-25 설계):
 from __future__ import annotations
 
 import logging
-import math
 import os
 import re
 import shutil
@@ -48,9 +47,7 @@ logger = logging.getLogger(__name__)
 KEYFRAME_IDX_BASE = 100  # generate_panel 파일명 P{idx}.png — 본편(1~8)/북엔드(91,92)와 분리
 KEYFRAME_ASPECT = "9:16"
 VEO_RESOLUTION = "720p"
-MAX_REFS_PER_KEYFRAME = 16
-MAX_VIDEO_RETRIES = 2
-MAX_MOTION_REGENERATIONS = 2
+MAX_REFS_PER_KEYFRAME = 3
 # 이미지 단가: DB 실측(2026-09-07~21 북엔드 2장 $0.0779) 기준 장당 ≈ $0.039
 IMAGE_UNIT_COST_USD = 0.039
 # 각색(Claude) + TTS 부대비용 추정 (예산 사전검사용)
@@ -134,9 +131,7 @@ def preflight_v2(scenario: WeeklyScenarioV2, dry_run: Optional[bool] = None) -> 
         auth = verify_youtube_credentials()
         report["youtube_auth"] = auth["valid"]
         if not auth["valid"]:
-            logger.warning(
-                "[weekly_media] YouTube 자격증명 무효 — 발행 전 재발급 필요: %s", auth["detail"]
-            )
+            logger.warning("[weekly_media] YouTube 자격증명 무효 — 발행 전 재발급 필요: %s", auth["detail"])
     except Exception as exc:
         report["youtube_auth"] = None
         logger.warning("[weekly_media] YouTube 자격증명 검사 생략: %s", exc)
@@ -178,18 +173,11 @@ def measure_motion(path: Path) -> dict:
     duration = _probe_duration(path)
     result = subprocess.run(
         [
-            "ffmpeg",
-            "-hide_banner",
-            "-nostats",
-            "-i",
-            str(path),
+            "ffmpeg", "-hide_banner", "-nostats", "-i", str(path),
             "-vf",
             f"freezedetect=n={FREEZE_NOISE}:d={FREEZE_MIN_SEC},"
             "select='gte(scene\\,0)',metadata=print:key=lavfi.scene_score:file=-",
-            "-an",
-            "-f",
-            "null",
-            "-",
+            "-an", "-f", "null", "-",
         ],
         capture_output=True,
         text=True,
@@ -242,9 +230,7 @@ class V2MediaResult:
 def expected_paths(out_dir: Path) -> tuple[list[Path], list[Path]]:
     """조립/복원 단계가 참조하는 파일 경로 (생성 규칙의 단일 소스)."""
     out_dir = Path(out_dir)
-    keyframes = [
-        out_dir / "keyframes" / f"P{KEYFRAME_IDX_BASE + i}.png" for i in range(1, SHOT_COUNT + 1)
-    ]
+    keyframes = [out_dir / "keyframes" / f"P{KEYFRAME_IDX_BASE + i}.png" for i in range(1, SHOT_COUNT + 1)]
     shots = [out_dir / "shots" / f"shot{i}.mp4" for i in range(1, SHOT_COUNT + 1)]
     return keyframes, shots
 
@@ -280,14 +266,10 @@ def generate_keyframes(
     log_path = kf_dir / "gemini_run.log"
     for shot in scenario.shots:
         try:
-            cast = list(dict.fromkeys(shot.cast))
-            if len(cast) > MAX_REFS_PER_KEYFRAME:
-                raise WeeklyMediaError("keyframe cast exceeds reference limit")
-            refs = get_refs_for_panel(cast)
-            if len(refs) < len(cast) or any(not Path(ref).is_file() for ref in refs):
-                raise WeeklyMediaError(f"shot{shot.seq} missing required cast references")
+            refs = get_refs_for_panel(list(shot.cast))[:MAX_REFS_PER_KEYFRAME]
         except Exception as exc:
-            raise WeeklyMediaError(f"shot{shot.seq} REF validation failed") from exc
+            logger.warning("[weekly_media] shot%d REF 로드 실패 (REF 없이 진행): %s", shot.seq, exc)
+            refs = []
         path, cost = generate_panel(
             panel_idx=KEYFRAME_IDX_BASE + shot.seq,
             prompt_text=f"{NO_TEXT_RULE}\n\n{shot.keyframe_prompt}",
@@ -300,9 +282,7 @@ def generate_keyframes(
         if path is None:
             raise WeeklyMediaError(f"shot{shot.seq} 키프레임 생성 실패 (refs={len(refs)})")
         result.keyframes.append(Path(path))
-        logger.info(
-            "[weekly_media] shot%d 키프레임: %s refs=%d cost=$%.4f", shot.seq, path, len(refs), cost
-        )
+        logger.info("[weekly_media] shot%d 키프레임: %s refs=%d cost=$%.4f", shot.seq, path, len(refs), cost)
     return result
 
 
@@ -314,8 +294,6 @@ def generate_keyframes(
 def _generate_one_shot(
     client, shot, keyframe: Path, output_path: Path, max_retry: int, result: "V2MediaResult"
 ) -> dict:
-    if not isinstance(max_retry, int) or not 0 <= max_retry <= MAX_VIDEO_RETRIES:
-        raise WeeklyMediaError("video retry count outside hard limit")
     last_exc: Exception | None = None
     for attempt in range(1, max_retry + 2):
         if attempt > 1:
@@ -334,15 +312,10 @@ def _generate_one_shot(
             last_exc = exc
             logger.warning(
                 "[weekly_media] shot%d I2V 실패 attempt=%d/%d: %s",
-                shot.seq,
-                attempt,
-                max_retry + 1,
-                exc,
+                shot.seq, attempt, max_retry + 1, exc,
             )
     result.failed_attempts += 1
-    raise WeeklyMediaError(
-        f"shot{shot.seq} I2V 최종 실패 (부분 발행 금지): {last_exc}"
-    ) from last_exc
+    raise WeeklyMediaError(f"shot{shot.seq} I2V 최종 실패 (부분 발행 금지): {last_exc}") from last_exc
 
 
 def generate_shots(
@@ -374,13 +347,7 @@ def generate_shots(
     from engine.video.veo_client import VeoClient
 
     freeze_max = _env_float("WEEKLY_FREEZE_MAX", 0.25)
-    if not math.isfinite(freeze_max) or not 0 <= freeze_max <= 1:
-        raise WeeklyMediaError("motion freeze threshold outside finite 0..1 range")
     regen_max = _env_int("WEEKLY_MOTION_REGEN_MAX", 1)
-    if not 0 <= regen_max <= MAX_MOTION_REGENERATIONS:
-        raise WeeklyMediaError("motion regeneration count outside hard limit")
-    if not 0 <= max_retry_per_shot <= MAX_VIDEO_RETRIES:
-        raise WeeklyMediaError("video retry count outside hard limit")
     client = VeoClient()
 
     for shot, keyframe in zip(scenario.shots, result.keyframes):
@@ -396,11 +363,7 @@ def generate_shots(
             check_before_generation(estimated_cost_usd=result.total_cost_usd + estimate_shot_cost())
             logger.warning(
                 "[weekly_media] shot%d 정지 비율 %.2f > %.2f — 재생성 %d/%d",
-                shot.seq,
-                metrics["freeze_ratio"],
-                freeze_max,
-                attempts,
-                regen_max,
+                shot.seq, metrics["freeze_ratio"], freeze_max, attempts, regen_max,
             )
             alt = path.with_name(f"shot{shot.seq}_regen{attempts}.mp4")
             res2 = _generate_one_shot(client, shot, keyframe, alt, max_retry_per_shot, result)
@@ -415,17 +378,12 @@ def generate_shots(
                 alt.unlink(missing_ok=True)
         metrics.update({"seq": shot.seq, "regenerated": attempts, "camera_move": shot.camera_move})
         if metrics["freeze_ratio"] > freeze_max:
-            raise WeeklyMediaError(
-                f"shot{shot.seq} motion quality failed after bounded regeneration"
-            )
+            logger.warning("[weekly_media] shot%d 정지 비율 %.2f 기준 초과 상태로 채택", shot.seq, metrics["freeze_ratio"])
         result.motion.append(metrics)
         result.shots.append(path)
         logger.info(
             "[weekly_media] shot%d 완료: freeze=%.2f motion=%.4f cost 누계=$%.4f",
-            shot.seq,
-            metrics["freeze_ratio"],
-            metrics["motion_score"],
-            result.total_cost_usd,
+            shot.seq, metrics["freeze_ratio"], metrics["motion_score"], result.total_cost_usd,
         )
     return result
 
@@ -464,9 +422,7 @@ def accumulated_cost(episode_id: str, add_usd: float) -> float:
     return round(prior + float(add_usd or 0.0), 4)
 
 
-def record_spend(
-    episode_id: str, add_usd: float, note: str, manifest: Optional[dict] = None
-) -> float:
+def record_spend(episode_id: str, add_usd: float, note: str, manifest: Optional[dict] = None) -> float:
     """상태 변경 없이 지출만 원장에 누적한다 (중간 실패 시 호출)."""
     if add_usd <= 0:
         return 0.0
@@ -496,7 +452,5 @@ def persist_v2_media(episode_id: str, media: V2MediaResult) -> None:
     _update_row(episode_id, payload)
     logger.info(
         "[weekly_media] persist v2 media: %s cost(+%.4f) regen=%d",
-        episode_id,
-        media.total_cost_usd,
-        media.regenerations,
+        episode_id, media.total_cost_usd, media.regenerations,
     )

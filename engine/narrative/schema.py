@@ -103,15 +103,6 @@ class Panel(BaseModel):
     )
 
 
-class ThreadTransition(BaseModel):
-    thread_id: str
-    status: Literal["OPEN", "PROGRESSED", "RESOLVED"]
-    evidence_panel_idxs: list[int] = Field(default_factory=list)
-    evidence_quote: str = ""
-    new_fact: str = ""
-    resolution_result: str = ""
-
-
 class EpisodeScript(BaseModel):
     """ICG 에피소드 전체 스크립트."""
 
@@ -133,7 +124,6 @@ class EpisodeScript(BaseModel):
         max_length=3,
         description="다음 회차로 넘길 미해결 감정/갈등 thread 목록",
     )
-    thread_transitions: list[ThreadTransition] = Field(default_factory=list, max_length=8)
     resolved_threads: list[str] = Field(
         default_factory=list,
         max_length=3,
