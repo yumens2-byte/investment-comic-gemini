@@ -51,13 +51,17 @@ jobs:
           cache: pip
 
       - name: Install media test dependencies
-        timeout-minutes: 8
+        timeout-minutes: 12
         run: |
           if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
             # Avoid the Azure mirror that stalled the 2026-10-01 main CI.
-            for SOURCE in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+            for SOURCE in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
               if [ -f "$SOURCE" ]; then
-                sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$SOURCE"
+                sudo sed -E -i 's|https?://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$SOURCE"
+                if grep -q 'azure.archive.ubuntu.com' "$SOURCE"; then
+                  echo "Azure Ubuntu mirror remains configured; refusing installation."
+                  exit 1
+                fi
               fi
             done
             sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update
