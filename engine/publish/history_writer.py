@@ -28,7 +28,10 @@ def record_publish(
     2. icg.episode_assets.status = published 업데이트
     """
     from engine.common.supabase_client import icg_table
-    from engine.persist.asset_writer import patch as asset_patch
+    from engine.persist.asset_writer import patch_by_episode as asset_patch
+
+    if not tweet_ids and not telegram_sent:
+        raise ValueError("cannot record publication without a successful channel")
 
     # 1. published_comics 기록
     try:
@@ -46,13 +49,14 @@ def record_publish(
         ).execute()
         logger.info("[history_writer] published_comics 기록 완료: %s", episode_id)
     except Exception as exc:
-        logger.warning("[history_writer] published_comics 기록 실패: %s", exc)
+        logger.error("[history_writer] published_comics 기록 실패: %s", exc)
+        raise
 
     # 2. episode_assets status → published (UPDATE only, script_json 같은 NOT NULL 필드 보존)
     try:
         asset_patch(
             episode_date,
-            event_type,
+            int(episode_id.split("-")[-1]),
             {
                 "status": "published",
                 "total_runtime_sec": runtime_sec,
@@ -60,4 +64,5 @@ def record_publish(
         )
         logger.info("[history_writer] episode_assets status=published")
     except Exception as exc:
-        logger.warning("[history_writer] episode_assets 업데이트 실패: %s", exc)
+        logger.error("[history_writer] episode_assets 업데이트 실패: %s", exc)
+        raise

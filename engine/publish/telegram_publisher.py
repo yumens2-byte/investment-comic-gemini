@@ -21,6 +21,38 @@ _TG_API_BASE = "https://api.telegram.org"
 _DISCLAIMER_REQUIRED = "본 콘텐츠는 투자 참고 정보이며, 투자 권유가 아닙니다"
 
 
+def _validate_slides(slides: list[Path]) -> None:
+    from PIL import Image
+
+    if not slides:
+        raise ValueError("slides required")
+    for slide in slides:
+        if not slide.is_file():
+            raise ValueError(f"slide file missing: {slide}")
+        with Image.open(slide) as image:
+            image.verify()
+        with Image.open(slide) as image:
+            image.load()
+
+
+def _valid_album_response(response: object, expected: int) -> bool:
+    if not isinstance(response, dict) or response.get("ok") is not True:
+        return False
+    messages = response.get("result")
+    return (
+        isinstance(messages, list)
+        and len(messages) == expected
+        and all(
+            isinstance(message, dict)
+            and isinstance(message.get("message_id"), int)
+            and not isinstance(message.get("message_id"), bool)
+            and message["message_id"] > 0
+            for message in messages
+        )
+        and len({message["message_id"] for message in messages}) == expected
+    )
+
+
 def _get_bot_token() -> str:
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     if not token:
@@ -37,19 +69,20 @@ def _send_media_group(
     """슬라이드를 media group(앨범)으로 전송."""
     if not slides:
         return None
+    _validate_slides(slides)
+    if len(slides) > 10:
+        raise ValueError("Telegram album exceeds ten slides")
 
     url = f"{_TG_API_BASE}/bot{token}/sendMediaGroup"
     media = []
     files = {}
 
     for i, slide in enumerate(slides[:10]):  # TG 최대 10장
-        if not slide.exists():
-            continue
         key = f"photo{i}"
         files[key] = open(slide, "rb")
         item = {"type": "photo", "media": f"attach://{key}"}
         if i == 0 and caption:
-            item["caption"] = caption[:1024]  # TG 최대 1024자
+            item["caption"] = _bounded_caption(caption)
             item["parse_mode"] = "HTML"
         media.append(item)
 
@@ -66,13 +99,23 @@ def _send_media_group(
             timeout=30,
         )
         resp.raise_for_status()
-        return resp.json()
+        payload = resp.json()
+        return payload if _valid_album_response(payload, len(slides)) else None
     except Exception as exc:
         logger.error("[telegram] media group 전송 실패: %s", exc)
         return None
     finally:
         for f in files.values():
             f.close()
+
+
+def _bounded_caption(caption: str) -> str:
+    """Reserve room for the required disclaimer before truncating story text."""
+    suffix = f"\n\n⚠️ {_DISCLAIMER_REQUIRED}"
+    if len(caption) <= 1024 and _DISCLAIMER_REQUIRED in caption:
+        return caption
+    body = caption.replace(_DISCLAIMER_REQUIRED, "").rstrip()
+    return body[: 1024 - len(suffix)].rstrip() + suffix
 
 
 def _send_text(token: str, channel_id: str, text: str) -> dict | None:
@@ -126,6 +169,8 @@ def publish_episode_telegram(
         channels = [free_id] if free_id else []
 
     results: dict[str, bool] = {}
+    if not dry_run:
+        _validate_slides(slides)
 
     for channel_id in channels:
         if not channel_id:
@@ -142,22 +187,23 @@ def publish_episode_telegram(
 
         try:
             token = _get_bot_token()
+            results[channel_id] = True
 
             # 슬라이드 10장씩 분할 전송 (TG 앨범 최대 10장)
             for batch_start in range(0, len(slides), 10):
                 batch = slides[batch_start : batch_start + 10]
                 cap = caption if batch_start == 0 else ""
                 resp = _send_media_group(token, channel_id, batch, cap)
-                if resp:
+                if _valid_album_response(resp, len(batch)):
                     logger.info(
                         "[telegram] 채널 %s 슬라이드 %d~%d 발행 완료",
                         channel_id,
                         batch_start + 1,
                         batch_start + len(batch),
                     )
-                    results[channel_id] = True
                 else:
                     results[channel_id] = False
+                    break
 
                 if batch_start + 10 < len(slides):
                     time.sleep(2)
