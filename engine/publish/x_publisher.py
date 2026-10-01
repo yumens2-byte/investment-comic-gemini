@@ -132,6 +132,8 @@ def _validate_slides(slides: list[Path]) -> None:
             image.verify()
         with Image.open(path) as image:
             image.load()
+            if image.info.get("icg_render_kind") == "text_fallback":
+                raise ValueError("text fallback slide cannot be published")
 
 
 def _guard_disclaimer(caption_x_final: str) -> None:

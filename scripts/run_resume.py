@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import logging
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -129,6 +130,23 @@ def _get_artifact_run_id(episode_date: str, event_type: str) -> str | None:
     return None
 
 
+def restore_panel_source(path_str: str | None, episode_date: str) -> Path | None:
+    """Restore only this episode's exact legacy nested artifact path."""
+    if not path_str:
+        return None
+    path = Path(path_str)
+    root = Path("output/episodes") / episode_date / "panels"
+    if path.parent != root or not re.fullmatch(r"P[1-9][0-9]*\.png", path.name):
+        raise ValueError("Invalid episode panel source path")
+    if not path.is_file():
+        legacy = Path("output/episodes/episodes") / episode_date / "panels" / path.name
+        if legacy.is_file():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(legacy, path)
+            logger.info("[run_resume] restored legacy artifact panel %s", path.name)
+    return path
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="ICG 에피소드 재개 (STEP 7 PIL 조립)")
     parser.add_argument(
@@ -140,7 +158,7 @@ def main() -> None:
     parser.add_argument(
         "--allow-narrative-only",
         action="store_true",
-        help="이미지 생성 전 narrative_done 상태도 조립 허용 (text_card fallback 가능)",
+        help="narrative_done 조회 허용 (모든 필수 원본 이미지 검증은 유지)",
     )
     args = parser.parse_args()
 
@@ -198,7 +216,7 @@ def main() -> None:
     if explicit_episode and status == "assembled" and args.force:
         sl.info("STEP_7", "assembled 에피소드 강제 재조립 허용 (--force)")
     if status == "narrative_done" and args.allow_narrative_only:
-        sl.warning("STEP_7", "narrative_done 상태 조립 허용 — 이미지 없는 text_card fallback 가능")
+        sl.warning("STEP_7", "narrative_done 상태 조회 허용 — 필수 원본 이미지 없으면 조립 차단")
 
     script_dict = row.get("script_json", {})
     dialog_edits = row.get("dialog_edits_json", {})
@@ -236,14 +254,14 @@ def main() -> None:
     panel_images = []
     for p in panels_json:
         path_str = p.get("path") if isinstance(p, dict) else None
-        panel_images.append(Path(path_str) if path_str else None)
+        panel_images.append(restore_panel_source(path_str, episode_date))
 
     # PIL 조립
     ts = sl.step_start("STEP_7_PIL", "슬라이드 조립")
     try:
         slides_dir = output_dir / "slides"
         panels = script_dict.get("panels", [])
-        slides = compose_episode(panels, panel_images, slides_dir)
+        slides = compose_episode(panels, panel_images, slides_dir, strict=True)
 
         # slides_json 업데이트
         import os as _os
