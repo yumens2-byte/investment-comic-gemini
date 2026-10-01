@@ -106,6 +106,15 @@ def inspect_publish(episode: str | None, requested_date: str | None, channels: s
         except (ValueError, OSError):
             pass
     readiness = []
+    if script.get("_state_candidate"):
+        from engine.publish.manifest import validate_manifest
+        from engine.publish.state_commit import require_state_ready
+
+        try:
+            validate_manifest(script, paths)
+            require_state_ready(episode_date, episode_no, script["_state_candidate"])
+        except (ValueError, QualityHold, OSError):
+            readiness.append('narrative_state_contract_not_ready')
     if not files_valid:
         readiness.append('slides_missing_or_invalid')
     if 'x' in requested_channels:

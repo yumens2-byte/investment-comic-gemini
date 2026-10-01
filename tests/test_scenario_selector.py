@@ -56,11 +56,11 @@ class TestSelectScenario:
 class TestSelectEndingTone:
     """EndingTone 결정 로직 테스트."""
 
-    def test_no_battle_always_optimistic(self):
-        """NO_BATTLE은 어떤 outcome/risk에서도 항상 OPTIMISTIC."""
+    def test_no_battle_tone_depends_on_risk(self):
+        """Scene staging must not erase market risk."""
         for outcome in ["PEACEFUL_GROWTH", "HERO_VICTORY", "HERO_DEFEAT", "SYSTEM_COLLAPSE", "DRAW"]:
             for risk in ["LOW", "MEDIUM", "HIGH"]:
-                assert select_ending_tone("NO_BATTLE", outcome, risk) == "OPTIMISTIC", \
+                assert select_ending_tone("NO_BATTLE", outcome, risk) == {"LOW": "OPTIMISTIC", "MEDIUM": "TENSE", "HIGH": "OMINOUS"}[risk], \
                     f"NO_BATTLE + {outcome} + {risk} → OPTIMISTIC이어야 함"
 
     def test_system_collapse_ominous(self):

@@ -268,6 +268,9 @@ def main() -> None:
 
         slides_json = [{"idx": i + 1, "path": str(s)} for i, s in enumerate(slides)]
         slides_run_id = _os.environ.get("GITHUB_RUN_ID")  # publish_sns.yml 아티팩트 다운로드용
+        from engine.publish.manifest import build_manifest
+
+        script_dict["_assembly_manifest"] = build_manifest(script_dict, slides)
 
         fallback_count = sum(1 for p in panel_images if p is None or not p.exists())
         fallback_count += max(0, len(panels) - len(panel_images))
@@ -278,6 +281,7 @@ def main() -> None:
             episode_no,
             {
                 "slides_json": slides_json,
+                "script_json": script_dict,
                 "dialog_edited": bool(dialog_edits),
                 "status": "assembled",
                 "slides_run_id": slides_run_id,  # 슬라이드 아티팩트 run_id 저장

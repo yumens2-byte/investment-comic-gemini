@@ -139,7 +139,7 @@ def merge_thread_ledger(bundles: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for value in values:
             item = normalize_thread(value, due_in=max(0, 2 - age), source_episode_id=str(bundle.get("source_episode_id") or ""))
             existing = ledger.get(item["thread_id"])
-            if existing is None or item["status"] in {"PAID", "EXTENDED"}:
+            if existing is None:
                 ledger[item["thread_id"]] = item
     return list(ledger.values())[:8]
 

@@ -151,6 +151,7 @@ def publish_episode_x(
     script_dict: dict,
     slides: list[Path],
     dry_run: bool = True,
+    receipt_callback=None,
 ) -> list[str]:
     """
     에피소드를 X에 발행.
@@ -236,6 +237,8 @@ def publish_episode_x(
         if raw_id is None or isinstance(raw_id, bool) or not str(raw_id).strip() or str(raw_id) == "0":
             raise ValueError("X tweet response missing publication ID; reconciliation required")
         tweet_id = str(raw_id)
+        if receipt_callback is not None:
+            receipt_callback([tweet_id])
         tweet_ids.append(tweet_id)
         reply_to = tweet_id
 

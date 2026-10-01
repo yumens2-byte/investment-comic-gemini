@@ -1,0 +1,122 @@
+{
+  "script": {
+    "resolved_threads": [
+      "아이언 식큐리티 누나가 손바닥에 놓아준 온기—그 행방을 퓨처스 걸은 여전히 모르고 있다."
+    ],
+    "unresolved_threads": [
+      "퓨처스 걸이 품에 넣은 찢긴 페이지—그 절반의 숫자가 EDT의 노트패드와 어떻게 이어지는지, 누군가는 알고 있다.",
+      "노트패드의 마지막 페이지를 찢은 것이 누구인지, 언제, 무엇을 지웠는지는 여전히 밝혀지지 않았다.",
+      "머슬맨이 손을 펴기로 결단한 이유를 퓨처스 걸은 아직 모른다."
+    ],
+    "next_hook": "머슬맨이 손을 펴던 그 순간—퓨처스 걸은 찢긴 페이지 절반을 다시 꺼내 들었다.",
+    "panels": [
+      {
+        "idx": 1,
+        "panel_type": "COVER",
+        "narration": "이전 회차의 단서: 아이언 식큐리티 누나가 손바닥에 놓아준 온기—그 행방을 퓨처스 걸은 여전히 모르고 있다. 그리고 오늘, WTI가 93달러를 넘었다.",
+        "key_text": "누나가 건넨 온기—아직 닿지 않은 곳이 있다."
+      },
+      {
+        "idx": 2,
+        "panel_type": "TENSION",
+        "narration": "WTI +2.22%, BTC +1.07%. 두 파동이 같은 방향을 가리켰다. 머슬맨은 이 동시성이 우연인지, 신호인지 판단해야 했다.",
+        "key_text": "유가가 오르면 코인도 흔들린다."
+      },
+      {
+        "idx": 3,
+        "panel_type": "TENSION",
+        "narration": "머슬맨의 내면에서 익숙한 목소리가 울렸다. 한 방이면 끝낼 수 있다고. 하지만 그 확신이 두려움을 덮는 거짓말일 수 있다는 것도 알았다.",
+        "key_text": "내 화력이면 충분해—정말 그런가?"
+      },
+      {
+        "idx": 4,
+        "panel_type": "TENSION",
+        "narration": "BTC 84738. 숫자는 초록이었지만 유동성의 냄새는 원유가 지배했다. 머슬맨은 두 힘이 충돌하는 지점을 손끝으로 느꼈다.",
+        "key_text": "BTC가 올라도 기름 냄새는 지워지지 않아."
+      },
+      {
+        "idx": 5,
+        "panel_type": "CLIMAX",
+        "narration": "힘은 도구일 뿐이었다. 의지가 방향을 결정한다—그 진실이 손바닥이 펴지는 순간 온몸으로 전해졌다. VIX는 조용했다.",
+        "key_text": "VIX 16.42. 공포는 아직 잠들어 있다."
+      },
+      {
+        "idx": 6,
+        "panel_type": "AFTERMATH",
+        "narration": "폭주하지 않는 것이 오늘의 결단이었다. 고요한 아침이 왔다. 그러나 퓨처스 걸에게 닿지 못한 온기의 행방은 여전히 그의 마음 어딘가에 걸려 있었다.",
+        "key_text": "화염을 다루지만, 오늘은 손을 펴기로 했다."
+      },
+      {
+        "idx": 7,
+        "panel_type": "TEXT_CARD",
+        "narration": "WTI +2.22% 유가 압력 / BTC +1.07% 디지털 자산 동반 상승 / VIX 16.42 (-0.97%) 변동성 완화. 세 지표가 그린 오늘의 윤곽.",
+        "key_text": "오늘의 시장: 에너지 압력 속 완만한 성장"
+      },
+      {
+        "idx": 8,
+        "panel_type": "DISCLAIMER",
+        "narration": "본 콘텐츠는 픽션 서사 형식의 시장 정보 콘텐츠입니다. 제시된 수치는 공개 데이터 기반이며, 투자 결정의 근거로 사용할 수 없습니다.",
+        "key_text": "투자 권유가 아닙니다."
+      }
+    ]
+  },
+  "previous_episode": {
+    "title": "고요한 방패—아이언 식큐리티 누나, 군중의 온도를 읽다",
+    "arc_id": null,
+    "arc_day": null,
+    "logline": "공포와 탐욕 지수가 71로 소폭 냉각되는 가운데, 아이언 식큐리티 누나는 찢긴 페이지의 온기를 손바닥에 떠올리며 시장의 균열을 홀로 감시한다.",
+    "outcome": "PEACEFUL_GROWTH",
+    "version": "continuity-1",
+    "hero_ids": [
+      "CHAR_HERO_002"
+    ],
+    "next_hook": "아이언 식큐리티 누나가 손바닥에 놓아준 온기—그 행방을 퓨처스 걸은 여전히 모르고 있다.",
+    "event_type": "BATTLE",
+    "villain_id": "CHAR_VILLAIN_001",
+    "arc_tension": null,
+    "source_date": "2026-10-01",
+    "scenario_type": "NO_BATTLE",
+    "active_villain": "CHAR_VILLAIN_001",
+    "resolved_threads": [
+      "골드 본드 머슬이 손바닥으로 느낀 온기—그것이 찢긴 페이지의 숫자와 연결된다는 것을 센티넬은 알고 있다."
+    ],
+    "source_episode_id": "ICG-2026-10-01-001",
+    "must_continue_from": "아이언 식큐리티 누나가 손바닥에 놓아준 온기—그 행방을 퓨처스 걸은 여전히 모르고 있다.",
+    "relationship_delta": {},
+    "structured_threads": [
+      {
+        "type": "MYSTERY",
+        "status": "OPEN",
+        "promise": "아이언 식큐리티 누나가 손바닥에 놓아준 온기—그 행방을 퓨처스 걸은 여전히 모르고 있다.",
+        "thread_id": "THREAD_C80952EB8CB7",
+        "payoff_due_in": 2,
+        "setup_episode_id": "ICG-2026-10-01-001",
+        "owner_character_ids": []
+      },
+      {
+        "type": "MYSTERY",
+        "status": "OPEN",
+        "promise": "퓨처스 걸이 품에 넣은 찢긴 페이지—그 절반의 숫자가 EDT의 노트패드와 어떻게 이어지는지, 누군가는 알고 있다.",
+        "thread_id": "THREAD_FD6FEDA8B0DF",
+        "payoff_due_in": 2,
+        "setup_episode_id": "ICG-2026-10-01-001",
+        "owner_character_ids": []
+      },
+      {
+        "type": "MYSTERY",
+        "status": "OPEN",
+        "promise": "노트패드의 마지막 페이지를 찢은 것이 누구인지, 언제, 무엇을 지웠는지는 여전히 밝혀지지 않았다.",
+        "thread_id": "THREAD_1C3F4236B5C1",
+        "payoff_due_in": 2,
+        "setup_episode_id": "ICG-2026-10-01-001",
+        "owner_character_ids": []
+      }
+    ],
+    "unresolved_threads": [
+      "아이언 식큐리티 누나가 손바닥에 놓아준 온기—그 행방을 퓨처스 걸은 여전히 모르고 있다.",
+      "퓨처스 걸이 품에 넣은 찢긴 페이지—그 절반의 숫자가 EDT의 노트패드와 어떻게 이어지는지, 누군가는 알고 있다.",
+      "노트패드의 마지막 페이지를 찢은 것이 누구인지, 언제, 무엇을 지웠는지는 여전히 밝혀지지 않았다."
+    ],
+    "final_panel_summary": "방어 전문가가 소총을 등에 멘다. 그 모순을 그녀는 오늘도 설명하지 않았다—다만 손을 펴고, 온기를 내보냈다."
+  }
+}

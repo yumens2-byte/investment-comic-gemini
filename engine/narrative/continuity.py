@@ -105,6 +105,19 @@ def build_continuity_bundle(
     structured_threads = [
         normalize_thread(item, source_episode_id=episode_id) for item in unresolved_threads
     ]
+    from engine.narrative.thread_contracts import previous_threads
+
+    previous = ctx.get("previous_episode") or (ctx.get("narrative_context_pack") or {}).get("previous_episode") or {}
+    ledger = previous_threads(previous)
+    for transition in script_dict.get("thread_transitions") or []:
+        if transition.get("thread_id") in ledger:
+            ledger[transition["thread_id"]]["status"] = transition["status"]
+            ledger[transition["thread_id"]]["last_progress_episode_id"] = episode_id
+    for item in structured_threads:
+        ledger.setdefault(item["thread_id"], item)
+    structured_threads = list(ledger.values())[:8]
+    unresolved_threads = [item["promise"] for item in structured_threads
+                          if item["status"] not in {"PAID", "RESOLVED"}][:3]
     return {
         "version": "continuity-1",
         "source_episode_id": episode_id,
@@ -162,7 +175,7 @@ def load_previous_continuity(episode_date: str) -> dict[str, Any] | None:
     try:
         from engine.common.supabase_client import icg_table
 
-        for status in ("published", "assembled"):
+        for status in ("published",):
             resp = (
                 icg_table("episode_assets")
                 .select(
@@ -279,7 +292,7 @@ def load_continuity_window(episode_date: str, limit: int = 3) -> dict[str, Any]:
                 "episode_date, episode_no, event_type, status, script_json, "
                 "battle_json, scenario_type, heroes_json"
             )
-            .in_("status", ["published", "assembled"])
+            .in_("status", ["published"])
             .lt("episode_date", episode_date)
             .order("episode_date", desc=True)
             .order("episode_no", desc=True)

@@ -913,11 +913,11 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                 hero_power=0,
                 villain_power=0,
                 balance=0,
-                outcome="PEACEFUL_GROWTH",
+                outcome="OBSERVATION",
                 hero_power_breakdown={},
                 villain_power_breakdown={},
             )
-            logger.info("[Step 3-5] NO_BATTLE → PEACEFUL_GROWTH (전투 스킵)")
+            logger.info("[Step 3-5] NO_BATTLE → OBSERVATION (전투 스킵)")
 
         elif _scenario_v2 and scenario_type_v2 == "ALLIANCE":
             from engine.narrative.battle_calc import battle_alliance, battle_multi_villain
@@ -1559,6 +1559,22 @@ def _build_episode_asset_payload(episode_id: str, ctx: dict, script_dict: dict) 
     except Exception as _cont_exc:
         logger.warning("[step_persist] continuity bundle 생성 실패 (진행): %s", _cont_exc)
 
+    from engine.narrative.state_candidate import build_state_candidate
+    from engine.narrative.thread_contracts import validate_thread_transitions
+
+    contract_errors = validate_thread_transitions(
+        script_dict, ctx.get("previous_episode") or (ctx.get("narrative_context_pack") or {}).get("previous_episode") or {},
+        ctx.get("_resolution_review"))
+    if contract_errors:
+        raise ValueError("narrative thread contract failed: " + ",".join(contract_errors))
+
+    script_for_asset["_state_candidate"] = build_state_candidate(
+        episode_id[4:14], ctx, script_dict)
+    from engine.image.generation_guard import generation_revision
+
+    script_for_asset["_generation_revision"] = generation_revision()
+    if ctx.get("_resolution_review"):
+        script_for_asset["_resolution_review"] = ctx["_resolution_review"]
     payload = {
         "episode_no": int(episode_id.split("-")[-1]),
         "title": script_dict.get("title", ""),
@@ -1838,86 +1854,7 @@ def main() -> None:
                 sl.info("STEP_5", "[Hybrid] narrative_script_json DB 복원 완료")
             step_persist(episode_date, episode_id, ctx, script_dict, sl)
 
-            # ── Step 3-Story-Save: 에피소드 완료 후 story_state 저장 (2026-04-22 보정) ──
-            # SCENARIO_V2_ENABLED=true 이고 ctx에 _story_state 있을 때만 실행.
-            # 실패해도 파이프라인 계속 (다음 날 load_story_state가 DEFAULT 반환).
-            _scenario_v2_enabled = os.environ.get("SCENARIO_V2_ENABLED", "false").lower() == "true"
-            if _scenario_v2_enabled and ctx.get("_story_state"):
-                try:
-                    from engine.character.story_state_manager import (
-                        save_story_state,
-                        update_after_episode,
-                    )
-
-                    _delta = ctx.get("delta") or {}
-                    _vix = _delta.get("vix") or 0.0
-                    _outcome = (ctx.get("battle_result") or {}).get("outcome", "DRAW")
-                    _updated_state = update_after_episode(
-                        ctx["_story_state"],
-                        ctx.get("_guest_characters", []),
-                        _outcome,
-                        _vix,
-                    )
-                    save_story_state(episode_date, _updated_state)
-                    sl.info(
-                        "STEP_5",
-                        f"[Step 3-Story-Save] story_state 저장 완료 "
-                        f"(arc={_updated_state.get('arc_id')} "
-                        f"ep={_updated_state.get('arc_episode', 0)} "
-                        f"rift={_updated_state.get('world_state', {}).get('dimensional_rift_progress', 0)}%)",
-                    )
-                except Exception as _exc:
-                    sl.warning(
-                        "STEP_5",
-                        f"[Step 3-Story-Save] 실패 (영향 없음): {_exc}",
-                    )
-
-            # -- ARC_STATE_V3: 에피소드 완료 후 arc_state 갱신/저장 (2026-05-02) --
-            _arc_v3_enabled = os.environ.get("ARC_STATE_V3_ENABLED", "false").lower() == "true"
-            if _arc_v3_enabled and ctx.get("_arc_state") is not None:
-                try:
-                    from engine.arc.arc_state_engine import save_arc_state as _arc_save
-                    from engine.arc.arc_state_engine import (
-                        snapshot_to_daily_analysis as _arc_snap,
-                    )
-                    from engine.arc.arc_state_engine import (
-                        update_after_episode as _arc_update,
-                    )
-
-                    _outcome_v3 = (ctx.get("battle_result") or {}).get("outcome", "DRAW")
-                    _ep_type_v3 = ctx.get("episode_type_v3") or ctx.get(
-                        "scenario_type", "ONE_VS_ONE"
-                    )
-                    _snap_row = ctx.get("_snapshot_row") or {}
-                    _new_villain = ctx.get("_new_villain_id")
-                    _open_hook_v3 = (script_dict or {}).get("next_hook")
-
-                    _updated_arc = _arc_update(
-                        state=ctx["_arc_state"],
-                        outcome=_outcome_v3,
-                        episode_type=_ep_type_v3,
-                        snapshot=_snap_row,
-                        new_villain=_new_villain,
-                        open_hook=_open_hook_v3,
-                    )
-                    _arc_save(_updated_arc)
-                    _arc_snap(
-                        episode_date=episode_date,
-                        state=_updated_arc,
-                        episode_type_v3=_ep_type_v3,
-                    )
-                    sl.info(
-                        "STEP_5",
-                        f"[ARC_V3] arc_state 갱신 완료 "
-                        f"(arc_day={_updated_arc['arc_day']} "
-                        f"tension={_updated_arc['arc_tension']} "
-                        f"sig={_updated_arc['villain_signature']})",
-                    )
-                except Exception as _arc_exc:
-                    sl.warning(
-                        "STEP_5",
-                        f"[ARC_V3] arc_state 갱신 실패 (영향 없음): {_arc_exc}",
-                    )
+            sl.info("STEP_5", "후보 서사 상태 저장 — 발행 확정 전 story/arc 시계는 갱신하지 않음")
 
         if args.stage in ("all", "image"):
             if not ctx:

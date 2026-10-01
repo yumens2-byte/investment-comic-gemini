@@ -318,6 +318,9 @@ def generate_episode(
 
     client = Anthropic()
     system_prompt = load_system_prompt()
+    from engine.narrative.thread_contracts import thread_prompt
+
+    system_prompt += thread_prompt((narrative_context_pack or {}).get("previous_episode") or {})
 
     # ── render_user_prompt() 호출 — v2.0 + v2.3 파라미터 ────────────────────
     try:
@@ -406,6 +409,14 @@ def generate_episode(
         user_prompt += "\n\n" + continuity_retry_feedback.strip() + "\n"
 
     last_error: Exception | None = None
+    if scenario_type == "NO_BATTLE":
+        # Remove the obsolete runtime template directive rather than only appending
+        # an opposing instruction. The style/canon blocks remain unchanged.
+        user_prompt = user_prompt.replace(
+            "Outcome: **PEACEFUL_GROWTH** — THIS IS FIXED. Peaceful growth, internal reflection.",
+            "Outcome: OBSERVATION. No combat result or market growth is implied.",
+        )
+        user_prompt += "\nNO_BATTLE describes scene staging only. Ground market direction in supplied evidence.\n"
 
     for attempt in range(1, _MAX_RETRIES + 1):
         try:

@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - scripts/run_operational_beta.py
+      - scripts/run_narrative_contract_beta.py
+      - engine/narrative/thread_contracts.py
       - .github/workflows/operational_beta.yml
   workflow_dispatch:
 
@@ -34,11 +36,28 @@ jobs:
           X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
           DRY_RUN: 'true'
         run: python -m scripts.run_operational_beta
+      - name: Live database adapters and Notion continuity contract (read only)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_NARRATIVE_SYSTEM_ID: '3439208cbdc3810d9e7ceb5f48f8f093'
+          NOTION_NARRATIVE_USER_ID: '3439208cbdc3816bb578d7355b3a1966'
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+          DRY_RUN: 'true'
+        run: python -m scripts.run_narrative_contract_beta
       - name: Upload beta evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: operational-beta-${{ github.sha }}
-          path: output/operational-beta.json
+          path: |
+            output/operational-beta.json
+            output/narrative-contract-beta/
           if-no-files-found: error
           retention-days: 14
