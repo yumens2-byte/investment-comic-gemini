@@ -97,7 +97,7 @@ def _make_episode_id(episode_date: str) -> str:
 
     Hybrid 멀티-스테이지 패턴 대응:
       - 해당 날짜에 아직 published 되지 않은 에피소드가 있으면 → 해당 ID 재사용
-      - 없으면 → (last_no + 1) 로 신규 생성
+      - published도 ID 재사용 후 생성 가드로 차단; 빈 날짜만 001 생성
     이렇게 하지 않으면 image stage 등 후속 stage가 별도 프로세스로
     실행될 때 +1 증가한 ID를 반환하여 episode_id 불일치가 발생함.
 
@@ -114,9 +114,13 @@ def _make_episode_id(episode_date: str) -> str:
             .limit(1)
             .execute()
         )
+        if not isinstance(rows.data, list):
+            raise RuntimeError("invalid episode identity response")
         if rows.data:
-            last_no = rows.data[0]["episode_no"] or 0
-            last_status = rows.data[0].get("status") or ""
+            last_no = rows.data[0].get("episode_no")
+            last_status = rows.data[0].get("status")
+            if type(last_no) is not int or last_no < 1 or not last_status:
+                raise RuntimeError("invalid stored episode identity")
             # 진행 중인 에피소드 (미발행) → 재사용
             if last_status != "published":
                 episode_id = f"ICG-{episode_date}-{last_no:03d}"
@@ -126,15 +130,42 @@ def _make_episode_id(episode_date: str) -> str:
                     last_status,
                 )
                 return episode_id
-            # 마지막이 published → 새 번호 생성
-            no = last_no + 1
+            # Published IDs remain stable: a repeat must hit the generation guard.
+            no = last_no
         else:
             no = 1
     except Exception as _exc:
-        logger.warning("[pipeline] episode_id 조회 실패 (no=1 fallback): %s", _exc)
-        no = 1
+        raise RuntimeError("episode identity lookup failed; generation blocked") from _exc
 
     return f"ICG-{episode_date}-{no:03d}"
+
+
+def _assert_generation_allowed(episode_date: str, episode_id: str) -> None:
+    """Exact identity guard; FORCE_RUN never bypasses terminal image states."""
+    from engine.common.supabase_client import icg_table
+
+    episode_no = int(episode_id.rsplit("-", 1)[1])
+    try:
+        response = (
+            icg_table("episode_assets")
+            .select("episode_no,status,error_message")
+            .eq("episode_date", episode_date)
+            .eq("episode_no", episode_no)
+            .execute()
+        )
+        rows = response.data
+        if not isinstance(rows, list):
+            raise RuntimeError("invalid episode status response")
+        if len(rows) > 1:
+            raise RuntimeError("ambiguous episode identity")
+        if rows and str(rows[0].get("error_message") or "").startswith("PUBLISH_HOLD:"):
+            raise RuntimeError("unresolved publication; generation blocked")
+        if rows and rows[0].get("status") in {"published", "assembled", "image_generated"}:
+            raise RuntimeError(f"generation blocked: {episode_id} status={rows[0]['status']}")
+        if rows and not rows[0].get("status"):
+            raise RuntimeError("missing episode status")
+    except Exception as exc:
+        raise RuntimeError(f"generation safety check failed: {episode_id}") from exc
 
 
 def _env_flag_enabled(name: str) -> bool:
@@ -388,9 +419,7 @@ def step_data(episode_date: str, logger_inst) -> None:
             _macro_overrides = market_fetcher.fetch_macro_overrides()
         except Exception as _ov_exc:
             _macro_overrides = {}
-            logger_inst.warning(
-                "STEP_2", f"[MacroOverride] 수집 실패 — FRED 값 유지: {_ov_exc}"
-            )
+            logger_inst.warning("STEP_2", f"[MacroOverride] 수집 실패 — FRED 값 유지: {_ov_exc}")
         for _col, _val in _macro_overrides.items():
             if _val is None:
                 continue
@@ -770,7 +799,9 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
             if scenario_type_v2 == "NO_BATTLE":
                 from engine.narrative.character_selector import select_for_no_battle
 
-                _serial_p0 = os.environ.get("SERIAL_NARRATIVE_P0_ENABLED", "false").lower() == "true"
+                _serial_p0 = (
+                    os.environ.get("SERIAL_NARRATIVE_P0_ENABLED", "false").lower() == "true"
+                )
                 _cast_history = None
                 if _serial_p0:
                     from engine.narrative.continuity import load_continuity_window
@@ -1165,7 +1196,8 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                     _mirror_errors = validate_canon_mirrors(canon)
                     if _mirror_errors:
                         logger_inst.warning(
-                            "STEP_3", "[SerialP0] canon mirror warnings: " + "; ".join(_mirror_errors)
+                            "STEP_3",
+                            "[SerialP0] canon mirror warnings: " + "; ".join(_mirror_errors),
                         )
                     _recent_villains = _continuity_window.get("recurring_villains") or []
                     _context_pack["villain_reader_card"] = build_villain_reader_card(
@@ -1286,9 +1318,7 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
         # serial flag from workflow env, so five production violations were
         # logged and then persisted.  Never downgrade them to warnings in a
         # strict continuity run.
-        strict_production = _production_quality_strict_enabled(
-            continuity_strict=strict_continuity
-        )
+        strict_production = _production_quality_strict_enabled(continuity_strict=strict_continuity)
         # Serial fields are a separate rollout contract. Continuity strict keeps
         # factual/action quality fail-closed, but must not silently enable P0.
         serial_required = _env_flag_enabled("SERIAL_NARRATIVE_P0_ENABLED")
@@ -1311,11 +1341,7 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
             collect_required_cast(ctx.get("story_beat_plan"))
         )
         continuity_retry_feedback: str | None = (
-            "\n\n".join(
-                item
-                for item in (serial_base_instruction, cast_base_instruction)
-                if item
-            )
+            "\n\n".join(item for item in (serial_base_instruction, cast_base_instruction) if item)
             or None
         )
         script_dict: dict | None = None
@@ -1382,8 +1408,7 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
                 "status": "pass" if not production_violations else "fail",
                 "violation_codes": [item.code for item in production_violations],
                 "violations": [
-                    {"code": item.code, "detail": item.detail}
-                    for item in production_violations
+                    {"code": item.code, "detail": item.detail} for item in production_violations
                 ],
             }
             logger_inst.info(
@@ -1407,8 +1432,7 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
                     continuity_attempt,
                     max_quality_attempts,
                     script_dict["_production_quality"]["status"],
-                    ",".join(script_dict["_production_quality"]["violation_codes"])
-                    or "none",
+                    ",".join(script_dict["_production_quality"]["violation_codes"]) or "none",
                 ),
             )
 
@@ -1427,19 +1451,25 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
             )
             from engine.narrative.production_quality import build_production_retry_feedback
 
-            production_feedback = build_production_retry_feedback(
-                production_violations, serial_required=serial_required
-            ) or ""
-            continuity_retry_feedback = "\n\n".join(
-                item
-                for item in (
-                    continuity_retry_feedback,
-                    production_feedback,
-                    serial_base_instruction,
-                    cast_base_instruction,
+            production_feedback = (
+                build_production_retry_feedback(
+                    production_violations, serial_required=serial_required
                 )
-                if item
-            ) or None
+                or ""
+            )
+            continuity_retry_feedback = (
+                "\n\n".join(
+                    item
+                    for item in (
+                        continuity_retry_feedback,
+                        production_feedback,
+                        serial_base_instruction,
+                        cast_base_instruction,
+                    )
+                    if item
+                )
+                or None
+            )
             if not continuity_retry_feedback:
                 break
             continuity_reasons = list(
@@ -1447,9 +1477,7 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
             )
             if strict_continuity and continuity_warnings and not continuity_reasons:
                 continuity_reasons.append("continuity_score_below_threshold")
-            retry_reasons = continuity_reasons + [
-                item.code for item in production_violations
-            ]
+            retry_reasons = continuity_reasons + [item.code for item in production_violations]
             logger_inst.warning(
                 "STEP_4",
                 "[QualityRetry] strict retry requested: %s"
@@ -1606,7 +1634,11 @@ def step_image(
                     + ",".join(issue.code for issue in performance_quality.issues)
                 )
 
-        panel_prompts = build_for_episode(script_dict, performance_specs=performance_specs)
+        panel_prompts = build_for_episode(
+            script_dict,
+            performance_specs=performance_specs,
+            battle_outcome=(ctx.get("battle_result") or {}).get("outcome"),
+        )
         panels_input = [
             {
                 "panel_idx": pp.panel_idx,
@@ -1617,9 +1649,15 @@ def step_image(
         ]
 
         panel_paths, total_cost = gemini_generate(panels_input, output_dir)
+        if (
+            not panel_paths
+            or len(panel_paths) != len(panel_prompts)
+            or any(path is None for path in panel_paths)
+        ):
+            raise RuntimeError("incomplete image generation; image_generated status forbidden")
 
         # episode_assets 업데이트 — patch 사용 (기존 script_json 등 보존)
-        from engine.persist.asset_writer import patch as asset_patch
+        from engine.persist.asset_writer import patch_by_episode as asset_patch
 
         panels_json = [
             {"panel_idx": i + 1, "path": str(p) if p else None} for i, p in enumerate(panel_paths)
@@ -1640,7 +1678,7 @@ def step_image(
 
         asset_patch(
             episode_date,
-            ctx["event_type"],
+            int(episode_id.rsplit("-", 1)[1]),
             image_asset_payload,
             optional_fields=frozenset({"performance_quality_json"}),
         )
@@ -1709,31 +1747,14 @@ def main() -> None:
         ctx: dict = {}
         script_dict: dict = {}
         episode_id = _make_episode_id(episode_date)
+        if args.stage in ("all", "narrative", "persist", "image"):
+            _assert_generation_allowed(episode_date, episode_id)
 
         if args.stage in ("all", "data"):
             step_data(episode_date, sl)
 
         if args.stage in ("all", "analysis"):
             ctx = step_analysis(episode_date, sl)
-
-        # ── 중복 발행 방어 (Layer 3) ─────────────────────────────────────
-        if args.stage in ("all", "narrative", "persist", "image"):
-            _force = os.environ.get("FORCE_RUN", "false").lower() == "true"
-            try:
-                from engine.persist.asset_writer import get_current_status
-
-                _cur = get_current_status(episode_date, "NORMAL")
-                if _cur == "published" and not _force:
-                    sl.error(
-                        "PIPELINE",
-                        f"🛑 이미 published 상태 — episode_date={episode_date} 재생성 차단. "
-                        "강제 재생성이 필요하면 FORCE_RUN=true 설정 후 재실행.",
-                    )
-                    sys.exit(1)
-            except SystemExit:
-                raise
-            except Exception as _exc:
-                sl.warning("PIPELINE", f"published 상태 체크 실패 (진행): {_exc}")
 
         if args.stage in ("all", "narrative"):
             if not ctx:

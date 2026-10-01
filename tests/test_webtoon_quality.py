@@ -574,13 +574,26 @@ def test_gemini_recovery_preserves_all_refs(monkeypatch, tmp_path):
 
     def generator(client, prompt, refs, aspect_ratio=None):
         calls.append((prompt, refs))
-        return b"image", 1, 1
+        import io
 
-    generator._retry_count = 2
+        from PIL import Image
+
+        image = io.BytesIO()
+        Image.new("RGB", (4, 4)).save(image, "PNG")
+        return image.getvalue(), 1, 1
+
     monkeypatch.setattr(gemini_client, "_generate_one", generator)
     monkeypatch.setattr(gemini_client, "_get_client", lambda: object())
     refs = [tmp_path / "hero.png", tmp_path / "villain.png"]
-    gemini_client.generate_panel(1, "two characters", refs, tmp_path, tmp_path / "run.log")
+    from unittest.mock import Mock
+
+    for ref in refs:
+        ref.write_bytes(b"reference")
+    guard = Mock()
+    guard.reuse.return_value = False
+    gemini_client.generate_panel(
+        1, "two characters", refs, tmp_path, tmp_path / "run.log", guard=guard
+    )
     assert calls[0][1] == refs
     assert "ONE character" not in calls[0][0]
 
