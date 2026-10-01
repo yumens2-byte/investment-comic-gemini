@@ -19,14 +19,16 @@ def named(name):
     return next(step for step in steps() if step['name'] == name)
 
 
-def test_dispatch_dry_run_is_real_boolean_not_string():
+def test_dispatch_dry_run_auto_uses_repository_secret_with_explicit_override():
     parsed = workflow()
     trigger = parsed.get('on', parsed.get(True))
     dry = trigger['workflow_dispatch']['inputs']['dry_run']
-    assert dry['type'] == 'boolean'
-    assert dry['default'] is False
+    assert dry['type'] == 'choice'
+    assert dry['default'] == 'auto'
+    assert dry['options'] == ['auto', 'true', 'false']
     env = parsed['jobs']['pipeline']['env']
-    assert env['DRY_RUN'] == "${{ inputs.dry_run == true && 'true' || 'false' }}"
+    assert env['DRY_RUN'] == ("${{ (inputs.dry_run != '' && inputs.dry_run != 'auto') "
+                              "&& inputs.dry_run || secrets.DRY_RYN || secrets.DRY_RUN || 'false' }}")
 
 
 @pytest.mark.parametrize('name', [

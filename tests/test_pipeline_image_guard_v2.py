@@ -60,6 +60,7 @@ def test_empty_new_episode_allowed(monkeypatch):
 
 
 def test_main_blocks_before_all_stage_mutations(monkeypatch, tmp_path):
+    monkeypatch.setenv("DRY_RUN", "false")
     import sys
 
     monkeypatch.chdir(tmp_path)

@@ -7,10 +7,11 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: '읽기 전용 사전 점검 (DB 쓰기·Claude/Gemini 생성·발행 없음)'
-        type: boolean
+        description: 'auto=Repository Secret DRY_RYN/DRY_RUN 사용, true=읽기 전용, false=운영'
+        type: choice
+        options: [auto, 'true', 'false']
         required: false
-        default: false
+        default: auto
       target_date:
         description: '실행 대상 날짜 (YYYY-MM-DD, 미입력 시 오늘)'
         required: false
@@ -106,7 +107,7 @@ jobs:
       SUPABASE_SCHEMA: icg
       NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
       NOTION_TRACKER_DS: '4c08a06f-c1cc-4600-bec4-fb3d018139ff'   # ICG Episode Tracker DB ID (이전 값 485ba577-...은 data source/collection ID로 잘못 입력되어 있었음)
-      DRY_RUN: ${{ inputs.dry_run == true && 'true' || 'false' }}
+      DRY_RUN: ${{ (inputs.dry_run != '' && inputs.dry_run != 'auto') && inputs.dry_run || secrets.DRY_RYN || secrets.DRY_RUN || 'false' }}
       TARGET_DATE: ${{ inputs.target_date || '' }}
       RUN_STAGE: ${{ inputs.stage || 'all' }}
       FORCE_RUN: ${{ inputs.force || 'false' }}
