@@ -65,7 +65,7 @@ def _today() -> str:
     return date.today().strftime("%Y-%m-%d")
 
 
-def _latest_date(stage: str) -> str:
+def _latest_date(stage: str, *, strict: bool = False) -> str:
     """
     날짜 미입력 시 기준 날짜 결정.
     - stage=all/data: 오늘 날짜 (신규 수집)
@@ -87,7 +87,8 @@ def _latest_date(stage: str) -> str:
         if rows.data:
             return str(rows.data[0]["snapshot_date"])
     except Exception:
-        pass
+        if strict:
+            raise
     return _today()
 
 
@@ -140,6 +141,14 @@ def _make_episode_id(episode_date: str) -> str:
     return f"ICG-{episode_date}-{no:03d}"
 
 
+class GenerationBlocked(RuntimeError):
+    """A known completed/held episode; database failures remain errors."""
+
+    def __init__(self, episode_id: str, reason: str):
+        self.reason = reason
+        super().__init__(f"generation safety check failed: {episode_id} ({reason})")
+
+
 def _assert_generation_allowed(episode_date: str, episode_id: str) -> None:
     """Exact identity guard; FORCE_RUN never bypasses terminal image states."""
     from engine.common.supabase_client import icg_table
@@ -159,13 +168,15 @@ def _assert_generation_allowed(episode_date: str, episode_id: str) -> None:
         if len(rows) > 1:
             raise RuntimeError("ambiguous episode identity")
         if rows and str(rows[0].get("error_message") or "").startswith("PUBLISH_HOLD:"):
-            raise RuntimeError("unresolved publication; generation blocked")
+            raise GenerationBlocked(episode_id, "unresolved_publication_hold")
         if rows and rows[0].get("status") in {"published", "assembled", "image_generated"}:
-            raise RuntimeError(f"generation blocked: {episode_id} status={rows[0]['status']}")
+            raise GenerationBlocked(episode_id, "already_" + rows[0]["status"])
         if rows and not rows[0].get("status"):
             raise RuntimeError("missing episode status")
+    except GenerationBlocked:
+        raise
     except Exception as exc:
-        raise RuntimeError(f"generation safety check failed: {episode_id}") from exc
+        raise RuntimeError(f"generation safety check failed: {episode_id} (status lookup failed)") from exc
 
 
 def _env_flag_enabled(name: str) -> bool:
@@ -1725,9 +1736,36 @@ def main() -> None:
         choices=["all", "data", "analysis", "narrative", "persist", "image"],
     )
     parser.add_argument("--date", default=None, help="대상 날짜 (YYYY-MM-DD, 기본: 오늘)")
+    parser.add_argument("--dry-run", action="store_true", help="읽기 전용 입력·상태 점검")
+    parser.add_argument("--preflight-only", action="store_true", help="운영 실행 전 상태 점검")
+    parser.add_argument("--report", type=Path, default=Path("output/run-market-preflight.json"))
     args = parser.parse_args()
+    dry_value = os.environ.get("DRY_RUN", "false").strip().lower()
+    if dry_value not in {"true", "false"}:
+        parser.error("DRY_RUN must be true or false")
+    dry_run = args.dry_run or dry_value == "true"
 
-    episode_date = args.date or _latest_date(args.stage)
+    episode_date = args.date
+
+    if dry_run or args.preflight_only:
+        from scripts.market_preflight import emit_report, inspect_market
+        try:
+            episode_date = episode_date or _latest_date(args.stage, strict=True)
+            report = inspect_market(episode_date, args.stage, dry_run=dry_run)
+        except Exception as exc:
+            # No provider URLs, raw payloads or secrets in public reports.
+            emit_report({"status": "failed", "mode": "dry_run" if dry_run else "live_preflight",
+                         "error_type": type(exc).__name__, "allowed": False}, args.report)
+            raise SystemExit(1) from exc
+        emit_report(report, args.report)
+        return
+
+    episode_date = episode_date or _latest_date(args.stage)
+    try:
+        if date.fromisoformat(episode_date).isoformat() != episode_date:
+            raise ValueError("Noncanonical date")
+    except ValueError:
+        parser.error("--date must be a valid YYYY-MM-DD date")
 
     # StepLogger 초기화
     from engine.common.logger import StepLogger, get_run_id
