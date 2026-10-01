@@ -20,6 +20,9 @@ def record_publish(
     gemini_cost_usd: float,
     claude_cost_usd: float,
     runtime_sec: float,
+    *,
+    state_candidate: dict | None = None,
+    telegram_receipts: dict | None = None,
 ) -> None:
     """
     발행 완료 후 이력 기록.
@@ -32,6 +35,21 @@ def record_publish(
 
     if not tweet_ids and not telegram_sent:
         raise ValueError("cannot record publication without a successful channel")
+
+    if state_candidate is not None:
+        from engine.common.supabase_client import get_client, get_schema
+
+        if telegram_sent and not telegram_receipts:
+            raise ValueError("Telegram delivery receipt required")
+        receipt = get_client().schema(get_schema()).rpc("finalize_episode_publication", {
+            "p_date": episode_date, "p_no": int(episode_id.split("-")[-1]),
+            "p_candidate": state_candidate, "p_tweet_ids": tweet_ids,
+            "p_telegram": telegram_receipts or {}, "p_slide_count": slide_count,
+            "p_cost": round(gemini_cost_usd + claude_cost_usd, 6), "p_runtime": runtime_sec,
+        }).execute().data
+        if not isinstance(receipt, dict) or receipt.get("committed") is not True:
+            raise RuntimeError("publication state commit unconfirmed; reconcile without resending")
+        return
 
     # 1. published_comics 기록
     try:

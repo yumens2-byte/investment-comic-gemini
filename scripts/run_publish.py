@@ -358,6 +358,7 @@ def main() -> None:
     )
     tweet_ids: list[str] = []
     telegram_sent = False
+    telegram_receipts: dict[str, list[int]] = {}
 
     ts_total = time.monotonic()
     sl.info(
@@ -466,6 +467,19 @@ def main() -> None:
         from engine.quality.contracts import QualityHold
 
         _validate_slides(slides)
+        from engine.narrative.thread_contracts import validate_thread_transitions
+
+        errors = validate_thread_transitions(script_dict,
+            (script_dict.get("_state_candidate") or {}).get("previous_episode") or {},
+            script_dict.get("_resolution_review"))
+        if errors:
+            raise QualityHold("narrative contract failed: " + ",".join(errors))
+        if script_dict.get("_state_candidate"):
+            from engine.publish.manifest import validate_manifest
+            from engine.publish.state_commit import require_state_ready
+
+            validate_manifest(script_dict, slides)
+            require_state_ready(episode_date, episode_no, script_dict["_state_candidate"])
         if _channel_requested(channels, "x"):
             from engine.publish.x_publisher import _guard_disclaimer
 
@@ -477,12 +491,19 @@ def main() -> None:
 
     # Retain a durable hold through all channel sends and history updates.
     publication_token = None if dry_run else claim_publication(row, episode_date, episode_no)
+    receipt_mode = bool(script_dict.get("_state_candidate")) and not dry_run
+
+    def persist_receipt(channel, ids):
+        from engine.publish.state_commit import record_delivery
+
+        record_delivery(episode_date, episode_no, publication_token, channel, ids)
 
     # X 발행
     if _channel_requested(channels, "x"):
         ts = sl.step_start("STEP_8_X", "X 발행")
         try:
-            tweet_ids = publish_episode_x(script_dict, slides, dry_run=dry_run)
+            receipt_args = {"receipt_callback": lambda ids: persist_receipt("x", ids)} if receipt_mode else {}
+            tweet_ids = publish_episode_x(script_dict, slides, dry_run=dry_run, **receipt_args)
             sl.step_done("STEP_8_X", ts, f"트윗 {len(tweet_ids)}개")
         except Exception as exc:
             sl.step_fail("STEP_8_X", ts, exc)
@@ -496,7 +517,10 @@ def main() -> None:
 
         ts = sl.step_start("STEP_8_TG", "Telegram 발행")
         try:
-            results = publish_episode_telegram(script_dict, slides, tg_channels, dry_run=dry_run)
+            receipt_args = {"receipts": telegram_receipts} if script_dict.get("_state_candidate") else {}
+            if receipt_mode:
+                receipt_args["receipt_callback"] = lambda channel, ids: persist_receipt("telegram:" + channel, ids)
+            results = publish_episode_telegram(script_dict, slides, tg_channels, dry_run=dry_run, **receipt_args)
             telegram_sent = bool(results) and all(results.values())
             sl.step_done("STEP_8_TG", ts, f"결과: {results}")
         except Exception as exc:
@@ -556,6 +580,8 @@ def main() -> None:
                         episode_id=episode_id,
                     )
                     tweet_ids.append(require_publication_id(result, "tweet_id"))
+                    if receipt_mode:
+                        persist_receipt("x", [tweet_ids[-1]])
                 sl.step_done("STEP_8_X_VIDEO", ts, f"video={battle_video_path}")
             except Exception as exc:
                 sl.step_fail("STEP_8_X_VIDEO", ts, exc)
@@ -579,6 +605,9 @@ def main() -> None:
             gemini_cost_usd=float(row.get("gemini_cost_usd", 0) or 0),
             claude_cost_usd=float(row.get("claude_cost_usd", 0) or 0),
             runtime_sec=runtime,
+            **({"state_candidate": script_dict["_state_candidate"],
+                "telegram_receipts": telegram_receipts}
+               if script_dict.get("_state_candidate") else {}),
         )
     except Exception as exc:
         sl.error("STEP_8", f"이력 기록 실패 — 대사 필요: {exc}")

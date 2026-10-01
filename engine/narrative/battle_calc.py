@@ -37,7 +37,8 @@ Outcome = Literal[
     "VILLAIN_TEMP_VICTORY",   # -10 ~ -6
     "HERO_DEFEAT",            # -30 ~ -11
     "SYSTEM_COLLAPSE",        # <= -31
-    "PEACEFUL_GROWTH",        # v2.0 — NO_BATTLE 전용, balance 없음
+    "PEACEFUL_GROWTH",        # legacy compatibility only
+    "OBSERVATION",           # no combat; no market direction implied
     "PYRRHIC_VICTORY",        # v2.0 — ALLIANCE 전용, balance 10~29
 ]
 
@@ -838,9 +839,9 @@ def apply_v23_modifiers(
         result.hero_power_breakdown.get("alliance_decay") is not None
     ):
         new_outcome = resolve_alliance_outcome(new_balance)
-    elif result.outcome == "PEACEFUL_GROWTH":
+    elif result.outcome in {"PEACEFUL_GROWTH", "OBSERVATION"}:
         # NO_BATTLE은 Modifier 적용 안 함 (PEACEFUL_GROWTH 유지)
-        new_outcome = "PEACEFUL_GROWTH"
+        new_outcome = result.outcome
     else:
         new_outcome = resolve_outcome(new_balance)
 

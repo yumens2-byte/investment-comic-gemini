@@ -146,6 +146,8 @@ def publish_episode_telegram(
     slides: list[Path],
     channels: list[str] | None = None,
     dry_run: bool = True,
+    receipts: dict[str, list[int]] | None = None,
+    receipt_callback=None,
 ) -> dict[str, bool]:
     """
     에피소드를 Telegram에 발행.
@@ -197,6 +199,11 @@ def publish_episode_telegram(
                 cap = caption if batch_start == 0 else ""
                 resp = _send_media_group(token, channel_id, batch, cap)
                 if _valid_album_response(resp, len(batch)):
+                    if receipt_callback is not None:
+                        receipt_callback(channel_id, [message["message_id"] for message in resp["result"]])
+                    if receipts is not None:
+                        receipts.setdefault(channel_id, []).extend(
+                            message["message_id"] for message in resp["result"])
                     logger.info(
                         "[telegram] 채널 %s 슬라이드 %d~%d 발행 완료",
                         channel_id,

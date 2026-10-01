@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 
 from engine.common.supabase_client import get_client, get_schema
@@ -11,6 +12,13 @@ from engine.common.supabase_client import get_client, get_schema
 
 class GenerationHold(RuntimeError):
     """Requires reconciliation rather than automatic paid regeneration."""
+
+
+def generation_revision() -> int:
+    value = os.environ.get("ICG_GENERATION_REVISION", "1")
+    if not value.isascii() or not value.isdigit() or not 1 <= int(value) <= 100:
+        raise GenerationHold("generation revision must be 1..100")
+    return int(value)
 
 
 class ProductionGenerationGuard:
@@ -30,6 +38,7 @@ class ProductionGenerationGuard:
         except OSError as exc:
             raise GenerationHold('Mandatory reference unavailable') from exc
         self.scope, self.panel = scope, panel
+        self.revision = generation_revision()
         self.fingerprint = hashlib.sha256(json.dumps(
             [prompt, ref_hashes], ensure_ascii=False, separators=(',', ':')
         ).encode()).hexdigest()
@@ -52,7 +61,11 @@ class ProductionGenerationGuard:
                 'p_fingerprint': self.fingerprint}
 
     def reuse(self, output_path: Path) -> bool:
-        receipt = self._rpc('image_generation_inspect', self._identity())
+        name = 'image_generation_inspect' if self.revision == 1 else 'image_generation_inspect_v2'
+        params = self._identity()
+        if self.revision > 1:
+            params['p_revision'] = self.revision
+        receipt = self._rpc(name, params)
         digest = receipt.get('output_hash')
         if digest:
             try:
@@ -63,11 +76,22 @@ class ProductionGenerationGuard:
                 raise GenerationHold('Successful artifact hash mismatch')
             return True
         if output_path.exists():
+            if self.revision > 1:
+                digest = hashlib.sha256(output_path.read_bytes()).hexdigest()
+                if digest in receipt.get('prior_hashes', []):
+                    archive = output_path.parent / 'previous-revisions'
+                    archive.mkdir(exist_ok=True)
+                    output_path.replace(archive / f'P{self.panel}-{digest}.png')
+                    return False
             raise GenerationHold('Unreceipted image requires reconciliation')
         return False
 
     def reserve(self) -> str:
-        receipt = self._rpc('image_generation_reserve', self._identity())
+        name = 'image_generation_reserve' if self.revision == 1 else 'image_generation_reserve_v2'
+        params = self._identity()
+        if self.revision > 1:
+            params['p_revision'] = self.revision
+        receipt = self._rpc(name, params)
         token = receipt.get('token')
         if not isinstance(token, str) or not token:
             raise GenerationHold('Missing reservation token')

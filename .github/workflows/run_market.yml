@@ -6,6 +6,14 @@ on:
     - cron: '36 16 * * 0-5'
   workflow_dispatch:
     inputs:
+      generation_revision:
+        description: '명시적 수정 이미지 회차 1..100. 비용 한도는 기존 회차와 합산'
+        required: false
+        default: '1'
+      source_artifact_run_id:
+        description: '기존 원본 PNG 복원용 Run Market 실행 ID. 이전 대본은 복원하지 않음'
+        required: false
+        default: ''
       dry_run:
         description: 'auto=Repository Secret DRY_RYN/DRY_RUN 사용, true=읽기 전용, false=운영'
         type: choice
@@ -109,6 +117,7 @@ jobs:
       NOTION_TRACKER_DS: '4c08a06f-c1cc-4600-bec4-fb3d018139ff'   # ICG Episode Tracker DB ID (이전 값 485ba577-...은 data source/collection ID로 잘못 입력되어 있었음)
       DRY_RUN: ${{ (inputs.dry_run != '' && inputs.dry_run != 'auto') && inputs.dry_run || secrets.DRY_RYN || secrets.DRY_RUN || 'false' }}
       TARGET_DATE: ${{ inputs.target_date || '' }}
+      ICG_GENERATION_REVISION: ${{ inputs.generation_revision || '1' }}
       RUN_STAGE: ${{ inputs.stage || 'all' }}
       FORCE_RUN: ${{ inputs.force || 'false' }}
       SCENARIO_V2_ENABLED: ${{ (inputs.scenario_v2 != '' && inputs.scenario_v2 != 'auto') && inputs.scenario_v2 || vars.SCENARIO_V2_ENABLED || 'false' }}
@@ -273,6 +282,19 @@ jobs:
           DATE_ARG=()
           if [ -n "${TARGET_DATE}" ]; then DATE_ARG=(--date "${TARGET_DATE}"); fi
           python -m scripts.run_market --stage persist "${DATE_ARG[@]}"
+
+      - name: Restore original panel artifact
+        if: ${{ inputs.source_artifact_run_id != '' && env.DRY_RUN == 'false' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: episode-${{ inputs.source_artifact_run_id }}
+          run-id: ${{ inputs.source_artifact_run_id }}
+          github-token: ${{ github.token }}
+          path: output/recovery-source
+
+      - name: Restore selected date panels only
+        if: ${{ inputs.source_artifact_run_id != '' && env.DRY_RUN == 'false' }}
+        run: python -m scripts.restore_generation_artifact --date "$TARGET_DATE"
 
       - name: STEP 6 — Image Generation (Gemini)
         if: ${{ steps.preflight.outputs.allowed == 'true' && (env.RUN_STAGE == 'image' || env.RUN_STAGE == 'all' && (github.event_name != 'schedule' || steps.major_gate.outputs.should_run_expensive == 'true')) }}

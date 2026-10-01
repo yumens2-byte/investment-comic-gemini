@@ -338,6 +338,10 @@ def build_panel_prompt(
     background_only = panel_type in {"TEXT_CARD", "DISCLAIMER"}
     setting = panel.get("setting", "Financial district")
     action = panel.get("action", "")
+    if panel_type == "TEXT_CARD":
+        action = ("Abstract neutral light shapes on a dark background. No chart, arrows, "
+                  "tickers, numbers, labels, readable text or implied market direction. "
+                  "Market facts are added by the compositor, not drawn into this image.")
     key_text = panel.get("key_text", "")
     narration = panel.get("narration", "")
     market_ref = panel.get("market_ref", "")
