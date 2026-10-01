@@ -200,6 +200,9 @@ jobs:
           from pathlib import Path
           report = json.loads(Path("output/run-market-preflight.json").read_text())
           allowed = report["allowed"] and report["mode"] != "dry_run"
+          # Pin every subsequent stage and artifact restore to the preflight date.
+          with open(os.environ["GITHUB_ENV"], "a") as env:
+              env.write(f"TARGET_DATE={report['episode_date']}\n")
           with open(os.environ["GITHUB_OUTPUT"], "a") as out:
               out.write(f"allowed={str(allowed).lower()}\n")
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as out:
@@ -284,7 +287,7 @@ jobs:
           python -m scripts.run_market --stage persist "${DATE_ARG[@]}"
 
       - name: Restore original panel artifact
-        if: ${{ inputs.source_artifact_run_id != '' && env.DRY_RUN == 'false' }}
+        if: ${{ steps.preflight.outputs.allowed == 'true' && inputs.source_artifact_run_id != '' && env.DRY_RUN == 'false' && (env.RUN_STAGE == 'image' || env.RUN_STAGE == 'all') }}
         uses: actions/download-artifact@v4
         with:
           name: episode-${{ inputs.source_artifact_run_id }}
@@ -293,7 +296,7 @@ jobs:
           path: output/recovery-source
 
       - name: Restore selected date panels only
-        if: ${{ inputs.source_artifact_run_id != '' && env.DRY_RUN == 'false' }}
+        if: ${{ steps.preflight.outputs.allowed == 'true' && inputs.source_artifact_run_id != '' && env.DRY_RUN == 'false' && (env.RUN_STAGE == 'image' || env.RUN_STAGE == 'all') }}
         run: python -m scripts.restore_generation_artifact --date "$TARGET_DATE"
 
       - name: STEP 6 — Image Generation (Gemini)
@@ -332,3 +335,4 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
         run: python -m scripts.notify_failure
+
