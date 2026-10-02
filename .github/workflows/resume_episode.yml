@@ -143,6 +143,13 @@ jobs:
           path: output/episodes/
           retention-days: 14
 
+      - name: Notify Content QC Warnings
+        if: ${{ always() && env.DRY_RUN != 'true' }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
+        run: python -m scripts.notify_failure --qc-warnings
+
       - name: Notify Failure
         if: failure()
         env:

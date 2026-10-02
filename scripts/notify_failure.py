@@ -16,8 +16,12 @@ GitHub Actions 파이프라인 실패 시 마스터 Telegram 알림 발송.
 
 from __future__ import annotations
 
+import argparse
+import html
+import json
 import os
 import sys
+from pathlib import Path
 
 import requests
 
@@ -42,6 +46,25 @@ def _send_telegram(token: str, channel_id: str, text: str) -> bool:
 
 def main() -> None:
     """파이프라인 실패 알림 메인 로직."""
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--qc-warnings", action="store_true")
+    args = parser.parse_args()
+    findings = []
+    if args.qc_warnings:
+        from engine.quality.content_qc import WARNING_PATH
+
+        try:
+            for line in Path(WARNING_PATH).read_text(encoding="utf-8").splitlines():
+                try:
+                    finding = json.loads(line)
+                    if isinstance(finding, dict) and finding.get("code") == "CONTENT_QC_WARNING":
+                        findings.append(str(finding.get("message", "content review warning")))
+                except (ValueError, TypeError):
+                    continue
+        except OSError:
+            return
+        if not findings:
+            return
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
     channel_id = os.environ.get("TELEGRAM_FREE_CHANNEL_ID", "")
 
@@ -66,6 +89,15 @@ def main() -> None:
         "수동 확인 후 재실행하거나 Supabase icg.episode_assets.status 점검 필요."
     )
 
+    if args.qc_warnings:
+        details = "\n".join(html.escape(value[:100]) for value in list(dict.fromkeys(findings))[:5])
+        message = (
+            "⚠️ <b>ICG 콘텐츠 QC 경고 — 작업 계속 진행</b>\n\n"
+            f"워크플로우: <code>{html.escape(workflow)}</code>\n"
+            f"Run ID: <code>{html.escape(run_id)}</code>\n"
+            f"{details}\n\n"
+            f"<a href='{html.escape(run_url, quote=True)}'>Actions 로그 확인</a>"
+        )
     success = _send_telegram(token, channel_id, message)
     if success:
         print(f"[notify_failure] 알림 전송 완료 (run_id={run_id})")

@@ -36,36 +36,34 @@ def reviewed_script(tmp_path):
 
 @pytest.mark.parametrize("qc", [None, {}, False, {"status": "HOLD"},
                                  {"version": "content-qc-1", "status": "PASS"}])
-def test_incomplete_review_cannot_acquire_publication_claim(monkeypatch, qc):
+def test_incomplete_review_warns_but_can_acquire_claim(monkeypatch, qc):
     from engine.common import supabase_client
+    from tests.test_publish_claim_review import AtomicFakeTable
 
-    db = Mock(side_effect=AssertionError("claim attempted before content gate"))
-    monkeypatch.setattr(supabase_client, "icg_table", db)
-    with pytest.raises(QualityHold, match="content QC"):
-        claim_publication({"status": "assembled", "script_json": {"_recovery_qc": qc}},
-                          "2026-10-02", 1)
-    db.assert_not_called()
-
-
-def test_content_prefix_alone_blocks_claim():
-    with pytest.raises(QualityHold):
-        require_content_ready({}, {"error_message": "CONTENT_QC_HOLD:visual mismatch"})
+    table = AtomicFakeTable()
+    table.row["script_json"] = {"_recovery_qc": qc}
+    before = copy.deepcopy(table.row)
+    monkeypatch.setattr(supabase_client, "icg_table", lambda _: table)
+    token = claim_publication(before, "2026-09-25", 2)
+    assert token.startswith("PUBLISH_HOLD:")
+    assert before["script_json"]["_recovery_qc"] == qc
 
 
-def test_review_binds_narrative_revision_and_source_bytes(tmp_path):
+def test_content_prefix_is_warning():
+    assert require_content_ready({}, {"error_message": "CONTENT_QC_HOLD:visual mismatch"})
+
+
+def test_review_mismatches_are_warnings_without_fabricating_pass(tmp_path):
     script, row, source = reviewed_script(tmp_path)
-    require_content_ready(script, row)
-    require_reviewed_sources(script, [source])
+    assert require_content_ready(script, row) == []
+    assert require_reviewed_sources(script, [source]) == []
     Image.new("RGB", (20, 20), "blue").save(source)
-    with pytest.raises(QualityHold, match="bytes changed"):
-        require_reviewed_sources(script, [source])
-    with pytest.raises(QualityHold):
-        require_content_ready({**script, "title": "changed"}, row)
-    with pytest.raises(QualityHold):
-        require_content_ready({**script, "_generation_revision": 4}, row)
+    assert "bytes changed" in require_reviewed_sources(script, [source])[0]
+    assert require_content_ready({**script, "title": "changed"}, row)
+    assert require_content_ready({**script, "_generation_revision": 4}, row)
     row["panels_json"][0]["sha256"] = "0" * 64
-    with pytest.raises(QualityHold):
-        require_content_ready(script, row)
+    assert require_content_ready(script, row)
+    assert script["_recovery_qc"]["status"] == "PASS"  # Stored review is not rewritten.
 
 
 def test_claim_fences_script_changed_after_inspection(tmp_path, monkeypatch):
@@ -83,11 +81,12 @@ def test_claim_fences_script_changed_after_inspection(tmp_path, monkeypatch):
     assert table.row["error_message"] is None
 
 
-def test_resume_force_and_narrative_flag_cannot_bypass_hold(monkeypatch, tmp_path):
+def test_resume_content_hold_reaches_assembly(monkeypatch, tmp_path):
     from engine.common import logger, supabase_client
     from scripts import run_resume
 
-    row = {"status": "narrative_done", "script_json": {"_recovery_qc": {"status": "HOLD"}}}
+    row = {"status": "narrative_done", "script_json": {"_recovery_qc": {"status": "HOLD"}},
+           "panels_json": []}
     table = Mock()
     for name in ("select", "eq", "limit"):
         getattr(table, name).return_value = table
@@ -95,11 +94,13 @@ def test_resume_force_and_narrative_flag_cannot_bypass_hold(monkeypatch, tmp_pat
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(supabase_client, "icg_table", lambda _: table)
     monkeypatch.setattr(logger, "StepLogger", Mock())
+    assemble = Mock(side_effect=RuntimeError("assembly reached"))
+    monkeypatch.setattr("engine.assembly.pil_composer.compose_episode", assemble)
     monkeypatch.setattr(sys, "argv", ["run_resume", "--episode", "ICG-2026-10-02-001",
                                      "--force", "--allow-narrative-only"])
-    with pytest.raises(QualityHold):
+    with pytest.raises((RuntimeError, SystemExit)):
         run_resume.main()
-    assert not Path("output/episodes/2026-10-02/slides").exists()
+    assemble.assert_called_once()
 
 
 def test_text_card_discards_old_chart_and_is_publishable(tmp_path):

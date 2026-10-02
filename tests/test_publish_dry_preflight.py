@@ -90,8 +90,9 @@ def test_hold_and_duplicate_are_reported(database):
 def test_content_hold_is_reported_before_publication(database):
     row, *_ = database
     row['script_json']['_recovery_qc'] = {'status': 'HOLD'}
-    assert 'content_qc_hold' in inspect()['block_reasons']
-    assert inspect()['allowed'] is False
+    assert 'content_qc_hold' not in inspect()['block_reasons']
+    assert inspect()['content_qc_warnings']
+    assert row['script_json']['_recovery_qc']['status'] == 'HOLD'
 
 
 def test_missing_disclaimer_and_channel_configuration_are_not_ready(database, monkeypatch):
