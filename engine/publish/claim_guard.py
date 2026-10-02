@@ -15,6 +15,9 @@ PREFIX = "PUBLISH_HOLD:"
 
 
 def require_no_publication_hold(row: dict) -> None:
+    from engine.quality.content_qc import require_content_ready
+
+    require_content_ready(row.get("script_json") or {}, row)
     if str(row.get("error_message") or "").startswith(PREFIX):
         raise QualityHold("previous publication is unresolved; reconcile before retry")
 
@@ -32,6 +35,8 @@ def claim_publication(row: dict, episode_date: str, episode_no: int) -> str:
         .eq("status", row.get("status"))
     )
     old = row.get("error_message")
+    if "script_json" in row:
+        query = query.eq("script_json", row["script_json"])
     query = query.is_("error_message", "null") if old is None else query.eq("error_message", old)
     response = query.execute()
     rows = response.data

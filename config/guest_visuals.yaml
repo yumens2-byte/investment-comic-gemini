@@ -1,0 +1,28 @@
+version: guest-visuals-1
+source: https://www.notion.so/34a9208cbdc38166b8cbe5c6f6937fa3
+source_title: ICG 신규 캐릭터 4종 상세설계서 v1.0
+# Existing guest appearances, translated for image prompts. Readable source
+# tickers/tattoos become abstract lines under the existing no-typography rule.
+characters:
+  SENTINEL_YIELD:
+    name: Sentinel Yield, The Rate Warden
+    body: A neutral rate warden wearing black-and-white judge robes.
+    costume: Black-and-white judge robes in every panel.
+    weapon: A sword shaped like a yield curve, carried in hand.
+    strict: Same robes and yield-curve sword across panels. Never replace with a silver robot or a turquoise hologram.
+  CRYPTO_SHADE:
+    name: Crypto Shade, The Underground Broker
+    body: A figure with a half-face mask.
+    costume: A dark cloak and half-face mask in every panel.
+    identifier: A data crystal held in hand.
+    strict: Same dark cloak, half-face mask and data crystal across panels.
+  SECTOR_PHANTOM:
+    name: Sector Phantom, The Rotation Ghost
+    body: A translucent form with abstract market glyph shapes making up the torso.
+    identifier: Translucent torso made of abstract glyphs, without readable ETF tickers.
+    strict: Same translucent form across panels. No readable typography or numbers.
+  MOMENTUM_RIDER:
+    name: Momentum Rider, The Trend Surfer
+    body: A trend surfer with moving-average lines flowing across the body like tattoos.
+    identifier: A wave-shaped surfboard and abstract moving-average lines.
+    strict: Same wave-shaped board and flowing line markings across panels. No readable typography or numbers.

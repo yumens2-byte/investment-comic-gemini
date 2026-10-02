@@ -219,6 +219,9 @@ def main() -> None:
         sl.warning("STEP_7", "narrative_done 상태 조회 허용 — 필수 원본 이미지 없으면 조립 차단")
 
     script_dict = row.get("script_json", {})
+    from engine.quality.content_qc import require_content_ready
+
+    require_content_ready(script_dict, row)
     dialog_edits = row.get("dialog_edits_json", {})
 
     # artifact_run_id 출력 (yml의 다운로드 step에서 활용)
@@ -255,6 +258,10 @@ def main() -> None:
     for p in panels_json:
         path_str = p.get("path") if isinstance(p, dict) else None
         panel_images.append(restore_panel_source(path_str, episode_date))
+
+    from engine.quality.content_qc import require_reviewed_sources
+
+    require_reviewed_sources(script_dict, panel_images)
 
     # PIL 조립
     ts = sl.step_start("STEP_7_PIL", "슬라이드 조립")
