@@ -65,20 +65,15 @@ jobs:
           python-version: '3.11'
           cache: pip
       - run: pip install -r requirements.txt 'psycopg[binary]==3.3.6'
-      - name: Start PostgREST (local, test credentials only)
+      - name: Download PostgREST (local, test credentials only)
         run: |
           curl -fsSL -o /tmp/postgrest.tar.xz \
             https://github.com/PostgREST/postgrest/releases/download/v12.2.3/postgrest-v12.2.3-linux-static-x64.tar.xz
           tar -xf /tmp/postgrest.tar.xz -C /tmp
-          cat > /tmp/pgrst.conf <<CONF
-          db-uri = "postgres://authenticator:${AUTHENTICATOR_TEST_PASSWORD}@localhost:5432/postgres"
-          db-schemas = "icg"
-          db-anon-role = "anon"
-          jwt-secret = "${POSTGREST_TEST_JWT_SECRET}"
-          server-port = 53000
-          CONF
-          nohup /tmp/postgrest /tmp/pgrst.conf > /tmp/postgrest.log 2>&1 &
+      # The test starts PostgREST itself after creating the roles and schema.
       - run: python scripts/test_publication_postgrest_contract.py
+        env:
+          POSTGREST_BIN: /tmp/postgrest
       - if: failure()
         run: cat /tmp/postgrest.log
   lint-test:
