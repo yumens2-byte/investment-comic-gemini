@@ -199,6 +199,13 @@ def determine_episode_type(
 
     # ── STEP 3: Arc Day 기반 기본값 ───────────────────────────────────────────
     base_type = _step3_arc_day_base(arc_day)
+    if (arc_day >= 7 and base_type == "AFTERMATH"
+            and not (recent_outcomes and recent_outcomes[0].upper() in {
+                "HERO_VICTORY", "HERO_TACTICAL_VICTORY", "DRAW",
+                "VILLAIN_TEMP_VICTORY", "HERO_DEFEAT", "SYSTEM_COLLAPSE", "PYRRHIC_VICTORY"})):
+        # General long-arc aftermath needs a preceding conflict. STEP_0 recovery
+        # already returned above and must not be changed by this editorial rule.
+        base_type = "INTEL"
 
     # ── STEP 4: DSS + REVERSAL + CONFLICT 보정 (PR-01 가중 통합) ──────────────
     corrected_type = _step4_dss_correction(

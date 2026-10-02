@@ -280,6 +280,7 @@ def generate_episode(
     active_character_cards: list[dict] | None = None,
     villain_ids: list[str] | None = None,
     continuity_retry_feedback: str | None = None,
+    episode_decision: dict | None = None,
 ) -> EpisodeScript:
     """
     Claude API를 호출하여 EpisodeScript를 생성.
@@ -407,6 +408,9 @@ def generate_episode(
         )
     if continuity_retry_feedback:
         user_prompt += "\n\n" + continuity_retry_feedback.strip() + "\n"
+
+    from engine.narrative.episode_decision import narrative_action_contract
+    user_prompt += "\n" + narrative_action_contract(episode_decision) + "\n"
 
     last_error: Exception | None = None
     if scenario_type == "NO_BATTLE":

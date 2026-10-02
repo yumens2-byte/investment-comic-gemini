@@ -47,3 +47,11 @@ def test_keep_when_no_alternative_allowed():
     )
     assert scenario == "ONE_VS_ONE"
     assert "no_alternative_allowed" in reason
+
+
+def test_latest_prefix_not_oldest_tail():
+    from engine.narrative.storyline_guard import latest_streak
+
+    assert latest_streak(["NO_BATTLE", "NO_BATTLE", "ONE_VS_ONE", "NO_BATTLE"], "NO_BATTLE") == 2
+    assert latest_streak(["ONE_VS_ONE", "NO_BATTLE", "NO_BATTLE"], "NO_BATTLE") == 0
+    assert latest_streak([], "NO_BATTLE") == 0

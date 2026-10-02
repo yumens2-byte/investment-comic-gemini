@@ -13,11 +13,11 @@ from collections.abc import Sequence
 ScenarioType = str
 
 
-def _tail_streak(values: Sequence[str], target: str) -> int:
-    """values의 끝에서 target이 연속된 길이 반환."""
+def latest_streak(values: Sequence[str], target: str) -> int:
+    """Count the newest prefix; callers provide published history newest first."""
     streak = 0
-    for v in reversed(values):
-        if v == target:
+    for v in values:
+        if str(v).upper() == target.upper():
             streak += 1
         else:
             break
@@ -63,7 +63,7 @@ def choose_scenario_with_diversity(
     """
     base = (base_scenario or "ONE_VS_ONE").upper()
     recent = [str(s).upper() for s in recent_scenarios if s]
-    streak = _tail_streak(recent, base)
+    streak = latest_streak(recent, base)
 
     if streak < max_same_streak:
         return base, f"keep_base(streak={streak})"

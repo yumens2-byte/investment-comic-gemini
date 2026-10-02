@@ -381,6 +381,10 @@ def build_panel_prompt(
     if background_only:
         tone_hint = "Clean abstract background without characters or typography"
         visual_spec_block = "COMPOSITION: Abstract environment only; no characters, silhouettes, bodies, weapons or faces."
+    elif no_battle and panel.get("_action_mode") == "TACTICAL_ACTION":
+        tone_hint = "Urgent non-combat tactical action; visible state change"
+        visual_spec_block = ("COMPOSITION: Show the declared tracking, evasion, rescue or barrier "
+                             "operation using only approved characters. No attacks or combat verdict.")
     elif no_battle:
         tone_hint = "Strategic observation, quiet non-combat scene"
         visual_spec_block = "COMPOSITION: Non-combat strategic observation. No attacks or forced confrontation."
@@ -573,7 +577,13 @@ def build_for_episode(
         if len(ref_paths) != len(expected_refs) or any(not path.is_file() for path in ref_paths):
             raise PipelineAborted("prompt", f"Incomplete character references for panel {idx}")
         effective_panel = dict(panel)
-        effective_panel.setdefault("scenario_type", episode_script.get("scenario_type"))
+        decision = episode_script.get("_episode_decision") or {}
+        if decision and panel.get("scenario_type") not in {None, decision["scenario_type"]}:
+            raise PipelineAborted("prompt", f"Panel {idx} contradicts final episode decision")
+        effective_panel["scenario_type"] = (decision.get("scenario_type")
+                                            or panel.get("scenario_type")
+                                            or episode_script.get("scenario_type"))
+        effective_panel["_action_mode"] = decision.get("action_mode")
         prompt_text = build_panel_prompt(
             effective_panel,
             ref_paths,
