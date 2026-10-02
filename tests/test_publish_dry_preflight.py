@@ -94,6 +94,20 @@ def test_content_hold_is_reported_before_publication(database):
     assert inspect()['allowed'] is False
 
 
+def test_warning_qc_does_not_block_live_read_only_preflight(database, monkeypatch):
+    row, *_ = database
+    row['script_json'] = {'_recovery_qc': {'status': 'HOLD'}}
+    row['error_message'] = 'CONTENT_QC_HOLD:wrong shield'
+    monkeypatch.setenv('ICG_QC_MODE', 'warning')
+    monkeypatch.setenv('DRY_RUN', 'false')
+    report = publish_preflight.inspect_publish('ICG-2026-05-10-001', None, 'all', dry_run=False)
+    assert report['allowed'] is True and report['qc_mode'] == 'warning'
+    assert 'wrong shield' in report['qc_warnings'][0]
+    assert 'caption_x_final disclaimer missing' in report['qc_warnings']
+    assert report['database_writes'] == report['publishes'] == 0
+    assert not Path('output/qc_warnings.jsonl').exists()
+
+
 def test_missing_disclaimer_and_channel_configuration_are_not_ready(database, monkeypatch):
     row, *_ = database
     row['script_json'] = {}

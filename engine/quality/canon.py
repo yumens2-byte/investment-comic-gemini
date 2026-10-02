@@ -9,6 +9,7 @@ from pathlib import Path
 from pydantic import Field
 
 from engine.quality.contracts import QualityHold, StrictModel
+from engine.quality.policy import qc_finding
 
 
 class CanonEntry(StrictModel):
@@ -55,11 +56,12 @@ def verify_manifest(manifest: CanonManifest, script: dict, root: Path) -> None:
         cast = panel.get("characters", [])
         ids = [c["char_id"] for c in cast]
         if len(ids) != len(set(ids)):
-            raise QualityHold("duplicate character in panel")
+            qc_finding("character_canon", "duplicate character in panel", error_type=QualityHold)
         for c in cast:
             # Explicit form required. Never silently substitute form1.
             if (c["char_id"], c.get("form")) not in entries:
-                raise QualityHold(f"unapproved character/form: {c['char_id']}")
+                qc_finding("character_canon", f"unapproved character/form: {c['char_id']}",
+                           error_type=QualityHold)
 
 
 def repair_prompt(original: str, required_cast: tuple[str, ...], findings: list[str]) -> str:

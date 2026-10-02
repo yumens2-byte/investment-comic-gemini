@@ -13,6 +13,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from engine.quality.policy import qc_finding
+
 logger = logging.getLogger(__name__)
 
 # Fallback 상수 — Notion 로드 실패 시 사용 (최소 보안 수준)
@@ -360,10 +362,14 @@ def build_panel_prompt(
     # 캐릭터 정보
     characters = panel.get("characters", [])
     if background_only and characters:
-        raise PipelineAborted("prompt", f"{panel_type} cannot contain characters")
+        qc_finding("image_cast", f"{panel_type} cannot contain characters",
+                   error_type=lambda reason: PipelineAborted("prompt", reason))
     ids = [ch.get("char_id", "") for ch in characters]
-    if any(not char_id for char_id in ids) or len(ids) != len(set(ids)):
+    if any(not char_id for char_id in ids):
         raise PipelineAborted("prompt", "Invalid or duplicate character cast")
+    if len(ids) != len(set(ids)):
+        qc_finding("image_cast", "Invalid or duplicate character cast",
+                   error_type=lambda reason: PipelineAborted("prompt", reason))
     char_desc_lines: list[str] = []
     for ch in characters:
         role = ch.get("role", "")
@@ -443,12 +449,15 @@ def build_panel_prompt(
         staging = spec.get("staging") or {}
         required = spec.get("required_character_ids") or []
         if len(required) != len(set(required)) or set(required) != set(ids):
-            raise PipelineAborted("prompt", "Performance cast differs from panel cast")
+            qc_finding("image_performance", "Performance cast differs from panel cast",
+                       error_type=lambda reason: PipelineAborted("prompt", reason))
         if background_only and (spec.get("subject_id") or spec.get("target_id")):
-            raise PipelineAborted("prompt", "Character performance on background-only panel")
+            qc_finding("image_performance", "Character performance on background-only panel",
+                       error_type=lambda reason: PipelineAborted("prompt", reason))
         for key in ("subject_id", "target_id"):
             if spec.get(key) and spec[key] not in required:
-                raise PipelineAborted("prompt", f"Performance {key} outside required cast")
+                qc_finding("image_performance", f"Performance {key} outside required cast",
+                           error_type=lambda reason: PipelineAborted("prompt", reason))
         lines += [
             "== PERFORMANCE CONTRACT — HARD REQUIREMENT ==",
             f"REQUIRED CHARACTER COUNT: exactly {len(required)} required character(s): {', '.join(required)}",
@@ -557,7 +566,8 @@ def build_for_episode(
         if (len(specs_by_idx) != len(performance_specs)
                 or len(panel_indices) != len(set(panel_indices))
                 or set(specs_by_idx) != set(panel_indices)):
-            raise PipelineAborted("prompt", "Incomplete or duplicate performance panel contracts")
+            qc_finding("image_performance", "Incomplete or duplicate performance panel contracts",
+                       error_type=lambda reason: PipelineAborted("prompt", reason))
 
     for panel in panels:
         idx = panel.get("idx", 0)
@@ -579,7 +589,8 @@ def build_for_episode(
         effective_panel = dict(panel)
         decision = episode_script.get("_episode_decision") or {}
         if decision and panel.get("scenario_type") not in {None, decision["scenario_type"]}:
-            raise PipelineAborted("prompt", f"Panel {idx} contradicts final episode decision")
+            qc_finding("image_scenario", f"Panel {idx} contradicts final episode decision",
+                       error_type=lambda reason: PipelineAborted("prompt", reason))
         effective_panel["scenario_type"] = (decision.get("scenario_type")
                                             or panel.get("scenario_type")
                                             or episode_script.get("scenario_type"))

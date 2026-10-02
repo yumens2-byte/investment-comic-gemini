@@ -69,11 +69,11 @@ def inspect_publish(episode: str | None, requested_date: str | None, channels: s
     if not isinstance(script, dict):
         raise ValueError('Malformed narrative metadata')
     reasons = []
-    from engine.quality.content_qc import require_content_ready
+    from engine.quality.content_qc import content_qc_findings
+    from engine.quality.policy import qc_is_strict
 
-    try:
-        require_content_ready(script, row)
-    except QualityHold:
+    qc_warnings = content_qc_findings(script, row)
+    if qc_warnings and qc_is_strict():
         reasons.append('content_qc_hold')
     try:
         guard_legacy_track(script, row)
@@ -124,23 +124,24 @@ def inspect_publish(episode: str | None, requested_date: str | None, channels: s
     if not files_valid:
         readiness.append('slides_missing_or_invalid')
     if 'x' in requested_channels:
-        from engine.common.exceptions import DisclaimerMissing
-        from engine.publish.x_publisher import _guard_disclaimer
+        from engine.publish.x_publisher import DISCLAIMER_REQUIRED
 
-        try:
-            _guard_disclaimer(script.get('caption_x_final', ''))
-        except DisclaimerMissing:
-            readiness.append('x_disclaimer_missing')
+        if DISCLAIMER_REQUIRED not in script.get('caption_x_final', ''):
+            qc_warnings.append('caption_x_final disclaimer missing')
+            if qc_is_strict():
+                readiness.append('x_disclaimer_missing')
     readiness.extend(configuration_issues(requested_channels))
     if video_only:
         readiness.append('video_only_preflight_not_supported')
     ready = not reasons and not readiness
     return {'mode': 'dry_run' if dry_run else 'live_preflight',
+            'run_id': os.environ.get('GITHUB_RUN_ID', 'local'),
             'status': 'blocked' if reasons else ('ready' if ready else 'incomplete'),
             'inspection_status': 'pass', 'episode_id': episode, 'episode_date': episode_date,
             'episode_status': row.get('status'), 'channels': requested_channels,
             'allowed': ready and not dry_run, 'live_publish_ready': ready,
             'block_reasons': reasons, 'readiness_issues': readiness,
+            'qc_warnings': qc_warnings, 'qc_mode': 'strict' if qc_is_strict() else 'warning',
             'slides_metadata_present': bool(valid_metadata), 'slides_files_present': files_present,
             'slides_files_valid': files_valid, 'database_writes': 0, 'paid_calls': 0, 'publishes': 0,
             'unverified': ['provider_authentication', 'actual_delivery', 'visual_comic_quality']}

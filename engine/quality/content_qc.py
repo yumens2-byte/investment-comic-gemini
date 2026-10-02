@@ -1,15 +1,16 @@
-"""An unresolved content review cannot be bypassed by assembly or publish flags."""
+"""Preserve content review evidence; default to advisory assembly/publication QC."""
 import hashlib
 import re
 from pathlib import Path
 
 from engine.publish.manifest import script_hash
 from engine.quality.contracts import QualityHold
+from engine.quality.policy import advisory_qc
 
 PREFIX = "CONTENT_QC_HOLD:"
 
 
-def require_content_ready(script: dict, row: dict | None = None) -> None:
+def _require_content_ready(script: dict, row: dict | None = None) -> None:
     if not isinstance(script, dict):
         raise QualityHold("content QC: malformed narrative")
     if row and str(row.get("error_message") or "").startswith(PREFIX):
@@ -53,8 +54,23 @@ def require_content_ready(script: dict, row: dict | None = None) -> None:
             raise QualityHold("content QC hold: reviewed panel identity changed")
 
 
+def content_qc_findings(script: dict, row: dict | None = None) -> list[str]:
+    """Pure inspection for preflight; preserves failed QC evidence without writes."""
+    try:
+        _require_content_ready(script, row)
+    except QualityHold as exc:
+        return [str(exc)]
+    return []
+
+
+@advisory_qc("content_review")
+def require_content_ready(script: dict, row: dict | None = None) -> None:
+    _require_content_ready(script, row)
+
+
+@advisory_qc("reviewed_sources")
 def require_reviewed_sources(script: dict, images: list[Path | None]) -> None:
-    require_content_ready(script)
+    _require_content_ready(script)
     if "_recovery_qc" not in script:
         return
     hashes = script["_recovery_qc"]["panel_hashes"]

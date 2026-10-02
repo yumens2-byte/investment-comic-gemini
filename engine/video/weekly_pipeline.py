@@ -31,6 +31,7 @@ from datetime import date, datetime, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
 
+from engine.quality.policy import qc_finding
 from engine.video.shorts_pipeline import (
     CanonGuardError,
     ConsistencyGuardError,
@@ -382,30 +383,24 @@ def enforce_no_text_in_images(scenario: ShortsScenario) -> None:
             problems.append(f"{label}: {', '.join(hits)}")
 
     if problems:
-        raise ValueError(
-            "image_prompt 에 텍스트 렌더링 요청이 있습니다 (이미지에 글자를 넣으면 깨진다): "
-            + " | ".join(problems)
-        )
+        qc_finding("video_typography", "image_prompt 에 텍스트 렌더링 요청이 있습니다 (이미지에 글자를 넣으면 깨진다): "
+            + " | ".join(problems), error_type=ValueError)
 
 
 def enforce_weekly_limits(scenario: ShortsScenario) -> None:
     """18초 규격 준수 검증 (컷 수·길이·나레이션 상한)."""
     if len(scenario.cuts) != WEEKLY_CUT_COUNT:
-        raise ValueError(f"주간 다이제스트는 {WEEKLY_CUT_COUNT}컷 고정. got={len(scenario.cuts)}")
+        qc_finding("video_format", f"주간 다이제스트는 {WEEKLY_CUT_COUNT}컷 고정. got={len(scenario.cuts)}", error_type=ValueError)
     for cut in scenario.cuts:
         if cut.duration_sec != WEEKLY_CUT_SEC:
-            raise ValueError(f"컷 길이는 {WEEKLY_CUT_SEC}초 고정. got={cut.duration_sec}")
+            qc_finding("video_format", f"컷 길이는 {WEEKLY_CUT_SEC}초 고정. got={cut.duration_sec}", error_type=ValueError)
         if len(cut.narration_tts) > WEEKLY_CUT_NARRATION_MAX:
-            raise ValueError(
-                f"cut{cut.seq} 나레이션 {len(cut.narration_tts)}자 > "
-                f"{WEEKLY_CUT_NARRATION_MAX}자 (음성이 다음 장면과 겹침)"
-            )
+            qc_finding("video_format", f"cut{cut.seq} 나레이션 {len(cut.narration_tts)}자 > "
+                f"{WEEKLY_CUT_NARRATION_MAX}자 (음성이 다음 장면과 겹침)", error_type=ValueError)
     for label, bookend in (("intro", scenario.intro), ("outro", scenario.outro)):
         if len(bookend.narration_tts) > WEEKLY_BOOKEND_NARRATION_MAX:
-            raise ValueError(
-                f"{label} 나레이션 {len(bookend.narration_tts)}자 > "
-                f"{WEEKLY_BOOKEND_NARRATION_MAX}자 (18초 규격 초과)"
-            )
+            qc_finding("video_format", f"{label} 나레이션 {len(bookend.narration_tts)}자 > "
+                f"{WEEKLY_BOOKEND_NARRATION_MAX}자 (18초 규격 초과)", error_type=ValueError)
 
 
 def _build_weekly_prompt(facts: dict, episodes: list[dict]) -> str:
@@ -521,8 +516,9 @@ def generate_weekly_scenario(
         try:
             scenario = ShortsScenario(**json.loads(_extract_json(raw)))
             if sorted(scenario.hero_ids) != sorted(facts["hero_ids"]):
-                raise ConsistencyGuardError(
-                    f"hero_ids mismatch: expected={facts['hero_ids']} got={scenario.hero_ids}"
+                qc_finding("video_consistency",
+                    f"hero_ids mismatch: expected={facts['hero_ids']} got={scenario.hero_ids}",
+                    error_type=ConsistencyGuardError
                 )
             enforce_weekly_limits(scenario)
             enforce_no_text_in_images(scenario)

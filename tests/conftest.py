@@ -8,6 +8,14 @@ from __future__ import annotations
 import sys
 from unittest.mock import MagicMock
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def legacy_strict_qc_contract(monkeypatch):
+    """Keep strict regressions; advisory tests select warning explicitly."""
+    monkeypatch.setenv("ICG_QC_MODE", "strict")
+
 # ── engine.common.supabase_client mock ───────────────────
 _mock_table = MagicMock()
 _mock_table.select.return_value = _mock_table

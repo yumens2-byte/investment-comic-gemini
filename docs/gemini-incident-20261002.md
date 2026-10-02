@@ -22,53 +22,76 @@ Baseline: main `05f9c28798e5e7c6f86593291acaad13230a3f08` (PR #96).
 - Main CI #36993290611 and operational guard/read-only betas succeeded.
   That does not certify a subsequent character image request or content QC.
 
-## Requirements and implementation
+## QC execution policy
 
-1. Preserve provider finish reason, panel and measured/unknown cost even
-   when settlement RPC returns HOLD. Log safe structured usage fields and
-   an evidence path before settlement; do not log prompts, bytes or credentials.
-2. Keep terminal and missing-usage outcomes fail-closed, with one paid
-   attempt. Preserve the original ledger error in the exception chain.
-3. Surface existing content QC reason, normalized to one line and bounded
-   to 500 characters. No QC threshold, receipt or publication bypass.
+Content QC defaults to `ICG_QC_MODE=warning`. Failed or stale content review,
+reviewed image hashes, narrative continuity/grounding, thread transitions,
+production quality, claim evidence, editorial checks, character/cast/performance
+checks, mobile text layout, release review scores and video visual/motion/duration
+checks emit `[QC_WARNING]` and continue with available valid inputs. X disclaimer
+QC also warns. Existing PASS/FAIL/HOLD evidence and measured scores are preserved;
+this policy does not fabricate approval or rewrite failed findings as PASS.
 
-Changed source: engine/image/gemini_client.py, engine/quality/content_qc.py.
-Changed tests: tests/test_image_adapter_guard_v2.py,
-tests/test_content_recovery_qc.py. This document is the fifth changed file.
+The global policy takes precedence over legacy continuity/serial/performance
+strict flags. QC-only narrative retries and frozen-video regeneration do not
+consume extra paid calls in warning mode. `ICG_QC_MODE=strict` is an explicit
+rollback option, exercised by existing regression tests. New tests separately
+verify the production warning default with the variable absent.
 
-Regression tests reproduce the observed PROHIBITED_CONTENT/cost outcome
-with a production-shaped ledger HOLD, ensure one reservation/request and
-no output, verify unknown cost remains unknown, and check bounded QC diagnostics.
-Targeted adapter/content tests: 43 passed. Ruff and whitespace check passed.
-Full suite: 1,469 passed in 41.00 seconds after installing the missing local
-SOCKS proxy dependency (socksio). No repository dependency change was needed.
+Actual operational prerequisites remain exceptions: valid structured inputs and
+identities, usable files, required reference files and approved source hashes,
+API/DB availability, ledger reconciliation/budget limits, provider rejection,
+publication claims, durable delivery receipts and duplicate-send protection.
+These checks cannot produce a missing image or verify an ambiguous paid call.
+Source QC hashes are advisory; immutable generation and publication identity
+contracts remain enforced.
 
-## Delivery status
+## Telegram behavior
 
-The reviewable change contains five files. Upload to
-`yumens2-byte/investment-comic-gemini`, branch
-`codex/gemini-failure-diagnostics-20261002`, and PR creation/CI verification
-were approved by the user. Main deployment and episode recovery are separate
-from this diagnostic change. Remote CI results are recorded on the PR.
+Existing failure notifications and normal Telegram publication remain in place.
+Six operational workflows add an `always()` QC summary notification with
+`continue-on-error: true`, using the same bot and free channel secrets. The
+summary includes unique warnings for the current Actions run, bounded and HTML
+escaped. Successful jobs can now send QC alerts because warnings no longer
+trigger `failure()`. Live preflight QC findings are included even when a later
+readiness issue prevents publication. Dry/read-only inspections send no alerts;
+Telegram notification failure cannot fail the workflow. Logs retain the findings
+if the notification configuration is absent.
+
+## Provider diagnosis
+
+Gemini refusal diagnostics preserve finish reason, panel, measured/unknown cost,
+ledger HOLD cause and evidence path. Safe usage fields are logged before the
+settlement RPC; prompts, image bytes and credentials are excluded. Terminal and
+missing-usage outcomes still have one paid attempt and preserve their exception
+chain. No request is retried to bypass provider controls.
+
+## Validation and delivery
+
+Local validation: 1,492 tests passed in 42.84 seconds; Ruff and whitespace
+checks passed. The final notification-size adjustment passed all 22 advisory
+policy tests. Remote CI conclusions are recorded on PR #97. Tests cover continued assembly with a real
+source image and failed review, unchanged failed QC evidence, performance/video
+warnings, paid-call/publication safeguards, read-only preflight, dry-run behavior,
+Telegram deduplication, current-run filtering and workflow notification steps.
+
+Repository: `yumens2-byte/investment-comic-gemini`.
+Branch: `codex/gemini-failure-diagnostics-20261002`.
+PR: https://github.com/yumens2-byte/investment-comic-gemini/pull/97.
+Main merge/deployment and paid episode recovery have not been performed.
 
 ## Recovery boundary
 
-The software diagnosis fix does not make Gemini's rejected image available.
-Do not rerun the same date/revision or remove its terminal receipt. Preserve
-USD 0.0007725 in the date budget. Review the rejected scene/reference and
-provider feedback, then use the existing explicit reviewed-recovery contract
-for a new narrative/image revision and immutable terminal acknowledgement.
-Do not rewrite prompts to evade provider controls. Unknown details of which
-input triggered PROHIBITED_CONTENT cannot be inferred from the finish reason.
+Warning QC allows existing valid images to assemble and publish despite a failed
+content review. The failed artifact from run #36994904577 contains no usable
+panel image, so Resume alone cannot recover it. Keep its terminal receipt and
+USD 0.0007725 in the date budget. Image recovery requires the existing explicit
+new-revision/reconciliation procedure; do not reuse the terminal date/revision
+or infer which exact input caused PROHIBITED_CONTENT from the finish reason.
 
-The historical QC gate requires a reviewed current script and exact panel
-hashes before assembly/publication. Force and narrative-only flags do not
-release it. The current failed artifact has no usable panels, so Resume is
-not an image-recovery mechanism. A clean DB error is not QC approval.
-
-No production DB mutation, provider generation, SNS send or QC approval
-was performed in this review. Attached Kotlin/blog/RSS and investment-os
-sources are outside this repository's incident scope.
+No production DB mutation, provider generation or live SNS/Telegram send was
+performed in this review. Attached Kotlin/blog/RSS and investment-os sources are
+outside this repository's incident scope.
 
 ## Sources
 

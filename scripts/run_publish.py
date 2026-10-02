@@ -473,7 +473,10 @@ def main() -> None:
             (script_dict.get("_state_candidate") or {}).get("previous_episode") or {},
             script_dict.get("_resolution_review"))
         if errors:
-            raise QualityHold("narrative contract failed: " + ",".join(errors))
+            from engine.quality.policy import qc_finding
+
+            qc_finding("publish_narrative", "narrative contract failed: " + ",".join(errors),
+                       error_type=QualityHold)
         if script_dict.get("_state_candidate"):
             from engine.publish.manifest import validate_manifest
             from engine.publish.state_commit import require_state_ready
