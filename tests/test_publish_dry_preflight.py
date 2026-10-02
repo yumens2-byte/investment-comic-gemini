@@ -87,6 +87,13 @@ def test_hold_and_duplicate_are_reported(database):
     assert set(inspect()['block_reasons']) == {'unresolved_publication_hold', 'publication_history_exists'}
 
 
+def test_content_hold_is_reported_before_publication(database):
+    row, *_ = database
+    row['script_json']['_recovery_qc'] = {'status': 'HOLD'}
+    assert 'content_qc_hold' in inspect()['block_reasons']
+    assert inspect()['allowed'] is False
+
+
 def test_missing_disclaimer_and_channel_configuration_are_not_ready(database, monkeypatch):
     row, *_ = database
     row['script_json'] = {}

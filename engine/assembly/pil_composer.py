@@ -111,6 +111,10 @@ def compose_slide(
     if panel_type == "DISCLAIMER":
         return _compose_disclaimer_slide(output_path, narration)
 
+    if panel_type == "TEXT_CARD":
+        return _compose_text_card(output_path, key_text, narration, panel_idx, market_ref,
+                                  render_kind="text_card")
+
     if panel_image_path is None or not panel_image_path.exists():
         if strict:
             raise ValueError(f"Assembly source image missing: panel {panel_idx}")
@@ -202,6 +206,8 @@ def _compose_text_card(
     narration: str,
     panel_idx: int,
     market_ref: str | None,
+    *,
+    render_kind: str = "text_fallback",
 ) -> Path:
     """이미지 없을 때 전체 텍스트 카드 (fallback)."""
     slide = Image.new("RGB", (SLIDE_W, SLIDE_H), (5, 10, 20))
@@ -226,7 +232,7 @@ def _compose_text_card(
         draw.text((50, SLIDE_H - 100), market_ref, font=ref_font, fill=TEXT_AMBER)
 
     metadata = PngInfo()
-    metadata.add_text("icg_render_kind", "text_fallback")
+    metadata.add_text("icg_render_kind", render_kind)
     slide.save(str(output_path), "PNG", optimize=True, pnginfo=metadata)
     return output_path
 
@@ -321,7 +327,9 @@ def validate_panel_sources(panels: list[dict], panel_images: list[Path | None]) 
     if indices != list(range(1, len(panels) + 1)):
         raise ValueError("Assembly panel indices must be contiguous")
     for i, panel in enumerate(panels):
-        if panel.get("panel_type") == "DISCLAIMER":
+        if panel.get("panel_type") in {"DISCLAIMER", "TEXT_CARD"}:
+            if panel.get("characters"):
+                raise ValueError(f"Assembly text panel cannot contain characters: panel {i + 1}")
             continue
         source = panel_images[i] if i < len(panel_images) else None
         if source is None or not source.is_file():

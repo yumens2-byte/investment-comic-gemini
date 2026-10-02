@@ -174,7 +174,8 @@ def test_successful_image_patch_uses_exact_episode(monkeypatch, tmp_path):
     monkeypatch.setattr(gemini_client, "generate_episode", lambda *a: ([Path("valid.png")], 0.01))
     patch = MagicMock()
     monkeypatch.setattr(asset_writer, "patch_by_episode", patch)
-    pipeline.step_image("2026-10-01", "ICG-2026-10-01-007", {"event_type": "CRISIS"}, {}, MagicMock())
+    pipeline.step_image("2026-10-01", "ICG-2026-10-01-007", {"event_type": "CRISIS"},
+                        {"panels": [{"idx": 1, "panel_type": "TENSION"}]}, MagicMock())
     assert patch.call_args.args[:2] == ("2026-10-01", 7)
 
 

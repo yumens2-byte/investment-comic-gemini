@@ -9,13 +9,14 @@ Public repo 노출 방지를 위해 Notion에서 런타임 로드.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 # Fallback 상수 — Notion 로드 실패 시 사용 (최소 보안 수준)
-_FALLBACK_STYLE = "Marvel + DC Hybrid Comic Style, ultra detailed, 8k, dark cinematic"
+_FALLBACK_STYLE = "Korean manhwa-influenced superhero comic, bold ink lines, dark cinematic"
 _FALLBACK_NEGATIVE = "No real people, no copyrighted characters, no nudity, comic style only"
 
 
@@ -24,10 +25,16 @@ def _get_style_block() -> str:
         from engine.common.notion_loader import load_image_prompt_blocks
 
         blocks = load_image_prompt_blocks()
-        return blocks.get("GLOBAL_STYLE_BLOCK", _FALLBACK_STYLE)
+        style = blocks.get("GLOBAL_STYLE_BLOCK", _FALLBACK_STYLE)
     except Exception as exc:
         logger.warning("[prompt_builder] GLOBAL_STYLE_BLOCK Notion 로드 실패: %s", exc)
-        return _FALLBACK_STYLE
+        style = _FALLBACK_STYLE
+    # The runtime page still forbids flat cel shading, contradicting the checked-in
+    # shading=cel canon. Keep staging rules but remove that legacy negative line.
+    style = re.sub(r"(?im)^.*no flat cel[- ]shading.*$", "", style)
+    return (style + "\nCANON RENDERING LOCK: 2D cinematic comic illustration, bold precise ink "
+            "lines, cel-shaded shadows and high-contrast neon accents on a dark background. "
+            "No photorealism, 3D rendering, plastic toy shading or sculpted render surfaces.")
 
 
 def _get_negative_block() -> str:
@@ -141,7 +148,7 @@ def _build_identity_lock(characters: list[dict], char_design_block: str) -> str:
 
     lines = [
         "== CHARACTER IDENTITY LOCK ==",
-        "REFERENCE IMAGES PROVIDED. Maintain EXACT identity from the reference images.",
+        "Use provided reference images for canon characters and the approved visual contract for text-only guests.",
         "DO NOT deviate from appearance in ANY panel. Same design ALWAYS.",
         "",
     ]
@@ -160,6 +167,12 @@ def _build_identity_lock(characters: list[dict], char_design_block: str) -> str:
             facing = "RIGHT" if role == "HERO" else "LEFT"
 
             spec = specs.get(char_id, {})
+            from engine.image.ref_loader import GUEST_CHARACTER_IDS
+
+            if char_id in GUEST_CHARACTER_IDS:
+                from engine.character.guest_visuals import guest_visual_spec
+
+                spec = guest_visual_spec(char_id)
             name = spec.get("name", char_id)
             identifier = spec.get("identifier", "")
             color_rule = spec.get("color_rule", "")
@@ -272,12 +285,17 @@ def _get_char_designs(char_ids: list[str]) -> str:
         specs = {}
     blocks = []
     for char_id in char_ids:
+        if char_id in GUEST_CHARACTER_IDS:
+            from engine.character.guest_visuals import guest_visual_block
+
+            blocks.append(guest_visual_block([char_id]))
+            continue
         spec = specs.get(char_id)
         if spec:
             block = char_design_to_prompt_block(char_id, spec)
         else:
             block = _get_local_canon_designs([char_id])
-        if not block and char_id not in GUEST_CHARACTER_IDS:
+        if not block:
             raise PipelineAborted("prompt", f"Missing character design: {char_id}")
         if block:
             blocks.append(block)

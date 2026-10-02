@@ -69,7 +69,13 @@ def build_guest_character_prompt(
         )
         primary_block += f"\n\n### 배경 캐릭터 (대사 1줄)\n{secondary_lines}"
 
-    return _HEADER.format(guest_block=primary_block)
+    from engine.character.guest_visuals import guest_visual_block
+
+    visuals = guest_visual_block([code for code, _ in guest_characters])
+    return (_HEADER.format(guest_block=primary_block)
+            + "\n## Guest visual identity (mandatory in every action)\n"
+            + visuals
+            + "\nDo not transform guests into other species, robots or holograms.\n")
 
 
 def _build_single_block(char_code: str, role: str, curr_row: dict) -> str:

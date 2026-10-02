@@ -1707,12 +1707,15 @@ def step_image(
                 "ref_image_paths": pp.ref_image_paths,
             }
             for pp in panel_prompts
+            if script_dict["panels"][pp.panel_idx - 1].get("panel_type")
+            not in {"TEXT_CARD", "DISCLAIMER"}
         ]
 
-        panel_paths, total_cost = gemini_generate(panels_input, output_dir)
+        panel_paths, total_cost = (gemini_generate(panels_input, output_dir)
+                                   if panels_input else ([], 0.0))
         if (
-            not panel_paths
-            or len(panel_paths) != len(panel_prompts)
+            not panel_prompts
+            or len(panel_paths) != len(panels_input)
             or any(path is None for path in panel_paths)
         ):
             raise RuntimeError("incomplete image generation; image_generated status forbidden")
@@ -1720,8 +1723,11 @@ def step_image(
         # episode_assets 업데이트 — patch 사용 (기존 script_json 등 보존)
         from engine.persist.asset_writer import patch_by_episode as asset_patch
 
+        path_by_idx = {p["panel_idx"]: path for p, path in zip(panels_input, panel_paths)}
         panels_json = [
-            {"panel_idx": i + 1, "path": str(p) if p else None} for i, p in enumerate(panel_paths)
+            {"panel_idx": pp.panel_idx,
+             "path": str(path_by_idx[pp.panel_idx]) if pp.panel_idx in path_by_idx else None}
+            for pp in panel_prompts
         ]
         image_asset_payload = {
             "panels_json": panels_json,
@@ -1747,11 +1753,11 @@ def step_image(
         # 이미지 경로 로그 출력
         success_paths = [str(p) for p in panel_paths if p]
         fallback_count = sum(1 for p in panel_paths if not p)
-        for i, p in enumerate(panel_paths, 1):
+        for panel_input, p in zip(panels_input, panel_paths):
             if p:
-                logger_inst.info("STEP_6", f"  P{i}: {p}")
+                logger_inst.info("STEP_6", f"  P{panel_input['panel_idx']}: {p}")
             else:
-                logger_inst.info("STEP_6", f"  P{i}: [text_card fallback]")
+                logger_inst.info("STEP_6", f"  P{panel_input['panel_idx']}: [missing image]")
 
         # 이미지 경로 목록 파일 저장
         ep_dir = Path("output") / "episodes" / episode_date
@@ -1772,7 +1778,7 @@ def step_image(
             f"{len(success_paths)}개 이미지 생성 / {fallback_count}개 fallback"
             f" (cost=${total_cost:.4f}) | 로그: {img_log_path}",
         )
-        return panel_paths
+        return [path_by_idx.get(pp.panel_idx) for pp in panel_prompts]
     except Exception as exc:
         logger_inst.step_fail("STEP_6", ts, exc)
         raise

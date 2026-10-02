@@ -69,6 +69,12 @@ def inspect_publish(episode: str | None, requested_date: str | None, channels: s
     if not isinstance(script, dict):
         raise ValueError('Malformed narrative metadata')
     reasons = []
+    from engine.quality.content_qc import require_content_ready
+
+    try:
+        require_content_ready(script, row)
+    except QualityHold:
+        reasons.append('content_qc_hold')
     try:
         guard_legacy_track(script, row)
     except QualityHold:
