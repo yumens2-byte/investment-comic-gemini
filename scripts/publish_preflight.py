@@ -71,10 +71,7 @@ def inspect_publish(episode: str | None, requested_date: str | None, channels: s
     reasons = []
     from engine.quality.content_qc import require_content_ready
 
-    try:
-        require_content_ready(script, row)
-    except QualityHold:
-        reasons.append('content_qc_hold')
+    qc_warnings = require_content_ready(script, row)
     try:
         guard_legacy_track(script, row)
     except QualityHold:
@@ -141,6 +138,7 @@ def inspect_publish(episode: str | None, requested_date: str | None, channels: s
             'episode_status': row.get('status'), 'channels': requested_channels,
             'allowed': ready and not dry_run, 'live_publish_ready': ready,
             'block_reasons': reasons, 'readiness_issues': readiness,
+            'content_qc_warnings': qc_warnings,
             'slides_metadata_present': bool(valid_metadata), 'slides_files_present': files_present,
             'slides_files_valid': files_valid, 'database_writes': 0, 'paid_calls': 0, 'publishes': 0,
             'unverified': ['provider_authentication', 'actual_delivery', 'visual_comic_quality']}

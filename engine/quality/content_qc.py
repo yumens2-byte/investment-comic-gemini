@@ -1,5 +1,8 @@
-"""An unresolved content review cannot be bypassed by assembly or publish flags."""
+"""Content review findings are warnings; delivery and asset validity remain separate."""
 import hashlib
+import json
+import logging
+import os
 import re
 from pathlib import Path
 
@@ -9,7 +12,7 @@ from engine.quality.contracts import QualityHold
 PREFIX = "CONTENT_QC_HOLD:"
 
 
-def require_content_ready(script: dict, row: dict | None = None) -> None:
+def _check_content_ready(script: dict, row: dict | None = None) -> None:
     if not isinstance(script, dict):
         raise QualityHold("content QC: malformed narrative")
     if row and str(row.get("error_message") or "").startswith(PREFIX):
@@ -49,8 +52,8 @@ def require_content_ready(script: dict, row: dict | None = None) -> None:
             raise QualityHold("content QC hold: reviewed panel identity changed")
 
 
-def require_reviewed_sources(script: dict, images: list[Path | None]) -> None:
-    require_content_ready(script)
+def _check_reviewed_sources(script: dict, images: list[Path | None]) -> None:
+    _check_content_ready(script)
     if "_recovery_qc" not in script:
         return
     hashes = script["_recovery_qc"]["panel_hashes"]
@@ -62,3 +65,42 @@ def require_reviewed_sources(script: dict, images: list[Path | None]) -> None:
             raise QualityHold("content QC hold: reviewed source unavailable") from exc
         if actual != expected:
             raise QualityHold("content QC hold: reviewed source bytes changed")
+
+
+logger = logging.getLogger(__name__)
+WARNING_PATH = Path("output/content-qc-warnings.jsonl")
+
+
+def _record_warning(message: str, script: dict, row: dict | None = None) -> list[str]:
+    """Never record a failed review as PASS and never let notification I/O stop work."""
+    record = {"code": "CONTENT_QC_WARNING", "message": message,
+              "episode_id": script.get("episode_id") or (row or {}).get("episode_date"),
+              "run_id": os.environ.get("GITHUB_RUN_ID", "local")}
+    logger.warning("CONTENT_QC_WARNING: %s", message)
+    try:
+        WARNING_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with WARNING_PATH.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except OSError:
+        logger.warning("CONTENT_QC_WARNING: warning evidence write failed")
+    return [message]
+
+
+def require_content_ready(script: dict, row: dict | None = None) -> list[str]:
+    if not isinstance(script, dict):
+        raise ValueError("Malformed narrative: expected an object")
+    try:
+        _check_content_ready(script, row)
+    except QualityHold as exc:
+        return _record_warning(str(exc), script, row)
+    return []
+
+
+def require_reviewed_sources(script: dict, images: list[Path | None]) -> list[str]:
+    if not isinstance(script, dict):
+        raise ValueError("Malformed narrative: expected an object")
+    try:
+        _check_reviewed_sources(script, images)
+    except QualityHold as exc:
+        return _record_warning(str(exc), script)
+    return []
