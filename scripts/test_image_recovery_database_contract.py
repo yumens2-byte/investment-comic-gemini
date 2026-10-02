@@ -91,6 +91,25 @@ def main():
                    [scope, 'd' * 64, scope, 'e' * 64])
         assert db.execute('select icg.image_generation_reserve_v2(%s,6,%s,3)',
                           [scope, new]).fetchone()[0]['hold'] == 'generation budget exhausted'
+        # Cost-overrun terminals can contain an image. Archive its receipted bytes,
+        # rather than treating the restored file as an unreceipted provider result.
+        over_scope = 'output/episodes/2026-10-03/panels'
+        db.execute("insert into icg.episode_assets values('2026-10-03',1,'narrative_done',%s)",
+                   [Jsonb(script)])
+        over_token = db.execute("insert into icg.image_generation_calls"
+                                "(scope,panel,fingerprint,state,cost,revision,output_hash) "
+                                "values(%s,1,%s,'terminal',.12,2,%s) returning token",
+                                [over_scope, old, '7' * 64]).fetchone()[0]
+        assert db.execute('select icg.image_generation_acknowledge_terminal'
+                          '(%s,3,.12,%s,%s,%s)', [over_token, Jsonb(script),
+                                                Jsonb(fingerprints), evidence]).fetchone()[0][
+                                                    'acknowledged'] is True
+        archived = db.execute('select icg.image_generation_inspect_v2(%s,1,%s,3)',
+                              [over_scope, fingerprints['1']]).fetchone()[0]
+        assert archived['prior_hashes'] == ['7' * 64]
+        # An unreviewed target revision cannot use that archival receipt.
+        assert 'hold' in db.execute('select icg.image_generation_inspect_v2(%s,1,%s,4)',
+                                   [over_scope, fingerprints['1']]).fetchone()[0]
         for role in ('anon', 'authenticated'):
             assert not db.execute("select has_function_privilege(%s,"
                                   "'icg.image_generation_acknowledge_terminal(uuid,integer,numeric,jsonb,jsonb,text)',"
@@ -99,7 +118,8 @@ def main():
                                   "'icg.image_generation_recovery_receipts','select')", [role]).fetchone()[0]
         assert not db.execute("select has_table_privilege('service_role',"
                               "'icg.image_generation_recovery_receipts','update')").fetchone()[0]
-        assert db.execute('select script_json from icg.episode_assets').fetchone()[0] == script
+        assert all(row[0] == script for row in db.execute(
+            'select script_json from icg.episode_assets').fetchall())
         print('Recovery PostgreSQL contracts passed: immutable receipts, exact inputs, '
               'known costs, unsettled holds, unchanged ledger, budget caps, service-only access')
 

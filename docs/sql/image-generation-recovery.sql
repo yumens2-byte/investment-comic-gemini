@@ -114,7 +114,11 @@ begin
  select * into r from icg.image_generation_calls where scope=p_scope and panel=p_panel
  and fingerprint=p_fingerprint and state='success' order by created_at desc limit 1;
  if found then return jsonb_build_object('output_hash',r.output_hash); end if;
- return jsonb_build_object('prior_hashes',coalesce((select jsonb_agg(output_hash) from icg.image_generation_calls where scope=p_scope and panel=p_panel and state='success'),'[]'::jsonb));
+ return jsonb_build_object('prior_hashes',coalesce((select jsonb_agg(c.output_hash)
+ from icg.image_generation_calls c where c.scope=p_scope and c.panel=p_panel
+ and c.output_hash ~ '^[0-9a-f]{64}$' and (c.state='success' or (c.state='terminal'
+ and exists(select 1 from icg.image_generation_recovery_receipts a
+ where a.terminal_token=c.token and a.target_revision=p_revision)))), '[]'::jsonb));
 end $$;
 
 revoke all on function icg.image_generation_recovery_preflight(text,integer) from public,anon,authenticated;
