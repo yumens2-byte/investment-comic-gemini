@@ -396,8 +396,10 @@ def _load_recent_scenarios(episode_date: str, limit: int = 7) -> list[str]:
         rows = (
             icg_table("episode_assets")
             .select("scenario_type")
+            .eq("status", "published")
             .lt("episode_date", episode_date)
             .order("episode_date", desc=True)
+            .order("episode_no", desc=True)
             .limit(limit)
             .execute()
         )
@@ -420,8 +422,10 @@ def _load_recent_outcomes(episode_date: str, limit: int = 3) -> list[str]:
         rows = (
             icg_table("episode_assets")
             .select("battle_json")
+            .eq("status", "published")
             .lt("episode_date", episode_date)
             .order("episode_date", desc=True)
+            .order("episode_no", desc=True)
             .limit(limit)
             .execute()
         )
@@ -713,6 +717,24 @@ def _resolve_guest_block(
         return "", {}, []
 
 
+def _load_reusable_analysis(episode_date: str) -> dict | None:
+    from engine.common.supabase_client import icg_table
+    from engine.narrative.episode_decision import validate_saved_decision
+    from engine.persist.asset_writer import load_analysis_ctx
+
+    ctx = load_analysis_ctx(episode_date)
+    if ctx and "episode_decision" in ctx and ctx["episode_decision"] is not None:
+        validate_saved_decision(ctx)
+        return ctx
+    rows = icg_table("episode_assets").select("id").eq(
+        "episode_date", episode_date).limit(1).execute().data
+    if rows:
+        if not ctx:
+            raise ValueError("Existing episode has no analysis context; refusing reanalysis")
+        return ctx  # Legacy generated episodes retain their original decision.
+    return None
+
+
 def step_analysis(episode_date: str, logger_inst) -> dict:
     """STEP 3: 분석 + Battle → icg.daily_analysis. context dict 반환.
 
@@ -725,6 +747,10 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
         3-6/7. outcome + ending_tone 결정
         3-8. ctx에 v2.0 필드 주입 + daily_analysis 별도 업데이트
     """
+    existing = _load_reusable_analysis(episode_date)
+    if existing is not None:
+        logger_inst.info("STEP_3", "Stored analysis reused; no episode reclassification")
+        return existing
     ts = logger_inst.step_start("STEP_3", "분석/Battle 계산")
     try:
         import yaml
@@ -790,23 +816,9 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
             scenario_type_v2 = select_scenario(risk_level_v2, event_type)
             logger.info("[Step 3-3] scenario=%s", scenario_type_v2)
 
-            # ── STEP 3-3b: 스토리라인 중복 완화 (최근 시나리오 연속 반복 방지) ──
-            from engine.narrative.storyline_guard import choose_scenario_with_diversity
-
+            # Published history is newest first. Resolve diversity after v3.
             recent_scenarios = _load_recent_scenarios(episode_date, limit=7)
-            scenario_type_v2, diversity_reason = choose_scenario_with_diversity(
-                base_scenario=scenario_type_v2,
-                risk_level=risk_level_v2,
-                event_type=event_type,
-                recent_scenarios=recent_scenarios,
-                max_same_streak=2,
-            )
-            logger.info(
-                "[Step 3-3b] scenario_diversity scenario=%s recent=%s reason=%s",
-                scenario_type_v2,
-                recent_scenarios[:5],
-                diversity_reason,
-            )
+            episode_decision = None
 
             # -- STEP 3-3c: EPISODE_TYPE_V3 결정 (2026-05-02) ----------------
             _ep_v3 = os.environ.get("EPISODE_TYPE_V3_ENABLED", "false").lower() == "true"
@@ -829,8 +841,16 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                     )
                     _episode_type_v3 = _ep_result.episode_type
                     _form_bonus_v3 = _ep_result.form_bonus
-                    # scenario_type_v2를 역변환값으로 덮어씀 (기존 분기 호환)
-                    scenario_type_v2 = _ep_result.scenario_type
+                    from engine.narrative.episode_decision import resolve_episode_decision
+                    episode_decision = resolve_episode_decision(
+                        _ep_result, risk_level=risk_level_v2, event_type=event_type,
+                        recent_scenarios=recent_scenarios,
+                        has_market_evidence=prev_row is not None,
+                    )
+                    _episode_type_v3 = episode_decision["episode_type"]
+                    _form_bonus_v3 = episode_decision["form_bonus"]
+                    scenario_type_v2 = episode_decision["scenario_type"]
+                    logger.info("[FinalEpisodeDecision] %s", episode_decision)
                     logger.info(
                         "[Step 3-3c] episode_type_v3=%s scenario=%s form_bonus=%d",
                         _episode_type_v3,
@@ -838,7 +858,16 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                         _form_bonus_v3,
                     )
                 except Exception as _ep_exc:
-                    logger.warning("[Step 3-3c] episode_type_v3 판정 실패 (진행): %s", _ep_exc)
+                    logger.error("[Step 3-3c] final episode decision failed: %s", _ep_exc)
+                    raise
+
+            if episode_decision is None:
+                from engine.narrative.storyline_guard import choose_scenario_with_diversity
+                scenario_type_v2, diversity_reason = choose_scenario_with_diversity(
+                    base_scenario=scenario_type_v2, risk_level=risk_level_v2,
+                    event_type=event_type, recent_scenarios=recent_scenarios,
+                    max_same_streak=2)
+                logger.info("[LegacyScenarioDiversity] %s", diversity_reason)
 
             # -- STEP 3-4: 캐릭터 재선정 (scenario별 분기) --------------------
             if scenario_type_v2 == "NO_BATTLE":
@@ -1161,6 +1190,7 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
             # EPISODE_TYPE_V3 신규 필드 (2026-05-02)
             "episode_type_v3": _episode_type_v3,
             "form_bonus": _form_bonus_v3,
+            "episode_decision": episode_decision if _scenario_v2 else None,
             "character_selection": character_selection_trace,
             "signal_pack": signal_pack,
             "risk_trace_v3": risk_trace_v3,
@@ -1297,6 +1327,8 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
 
             save_analysis_ctx(episode_date, event_type, ctx)
         except Exception as _exc:
+            if ctx.get("episode_decision"):
+                raise
             logger.warning("[step_analysis] ctx DB 저장 실패 (진행): %s", _exc)
 
         logger_inst.step_done(
@@ -1414,8 +1446,11 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
                 active_character_cards=ctx.get("active_character_cards"),
                 villain_ids=ctx.get("villain_ids"),
                 continuity_retry_feedback=continuity_retry_feedback,
+                episode_decision=ctx.get("episode_decision"),
             )
             script_dict = script.model_dump()
+            if ctx.get("episode_decision"):
+                script_dict["_episode_decision"] = ctx["episode_decision"]
 
             grounding_warnings = validate_story_grounding(
                 script_dict,
@@ -1607,6 +1642,8 @@ def _build_episode_asset_payload(episode_id: str, ctx: dict, script_dict: dict) 
     from engine.image.generation_guard import generation_revision
 
     script_for_asset["_generation_revision"] = generation_revision()
+    if ctx.get("episode_decision"):
+        script_for_asset["_episode_decision"] = ctx["episode_decision"]
     if ctx.get("_resolution_review"):
         script_for_asset["_resolution_review"] = ctx["_resolution_review"]
     payload = {
@@ -1667,6 +1704,9 @@ def step_image(
     try:
         from engine.image.gemini_client import generate_episode as gemini_generate
         from engine.image.prompt_builder import build_for_episode
+
+        if ctx.get("episode_decision"):
+            script_dict = dict(script_dict, _episode_decision=ctx["episode_decision"])
 
         output_dir = Path("output") / "episodes" / episode_date / "panels"
         output_dir.mkdir(parents=True, exist_ok=True)
