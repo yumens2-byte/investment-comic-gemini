@@ -1,6 +1,7 @@
 version: guest-visuals-1
 source: https://www.notion.so/34a9208cbdc38166b8cbe5c6f6937fa3
 source_title: ICG 신규 캐릭터 4종 상세설계서 v1.0
+# Approved uploaded references (2026-10-02) now fix the remaining facial and color details.
 # Existing guest appearances, translated for image prompts. Readable source
 # tickers/tattoos become abstract lines under the existing no-typography rule.
 characters:
@@ -14,17 +15,17 @@ characters:
     strict: Same adult male identity, short swept-back dark hair, clean-shaven angular face, black-and-white robes and angular yield-curve sword across panels. Never change sex, facial features, hairstyle or weapon geometry. Never replace with a silver robot or a turquoise hologram. Only pose, camera and lighting may change.
   CRYPTO_SHADE:
     name: Crypto Shade, The Underground Broker
-    body: A figure with a half-face mask.
+    body: An adult male with short black hair and a silver angular half-face mask, matching the approved reference and its masked side.
     costume: A dark cloak and half-face mask in every panel.
-    identifier: A data crystal held in hand.
-    strict: Same dark cloak, half-face mask and data crystal across panels.
+    identifier: A pale blue faceted data crystal above an open hand, matching the approved reference.
+    strict: Same male face, black hair, silver half-face mask and masked side, dark cloak and pale blue faceted data crystal across panels. Do not mirror the mask or turn the character into a robot.
   SECTOR_PHANTOM:
     name: Sector Phantom, The Rotation Ghost
-    body: A translucent form with abstract market glyph shapes making up the torso.
+    body: A translucent blue-violet spectral form with a hood-shaped head, cyan glowing eyes and abstract market glyph shapes making up the torso. The lower body tapers into one flowing spectral tail, without legs or feet.
     identifier: Translucent torso made of abstract glyphs, without readable ETF tickers.
-    strict: Same translucent form across panels. No readable typography or numbers.
+    strict: Same blue-violet translucent form, hood-shaped head, cyan eyes, geometric torso and single spectral tail across panels. No human face, legs, feet or opaque robot body. No readable typography or numbers.
   MOMENTUM_RIDER:
     name: Momentum Rider, The Trend Surfer
-    body: A trend surfer with moving-average lines flowing across the body like tattoos.
+    body: An adult male trend surfer with short swept-back dark blue hair, a navy and cyan fitted suit with gold trim, and abstract moving-average lines flowing across the body.
     identifier: A wave-shaped surfboard and abstract moving-average lines.
-    strict: Same wave-shaped board and flowing line markings across panels. No readable typography or numbers.
+    strict: Same male face, dark blue hair, navy-cyan suit with gold trim, blue-white-gold wave-shaped board and flowing cyan line markings across panels. Match the approved reference silhouette. No readable typography or numbers.

@@ -174,7 +174,8 @@ def _generate_one(
             contents.append(
                 types.Part.from_bytes(
                     data=ref_path.read_bytes(),
-                    mime_type="image/png",
+                    mime_type=("image/jpeg" if ref_path.suffix.lower() in {".jpg", ".jpeg"}
+                               else "image/png"),
                 )
             )
         else:

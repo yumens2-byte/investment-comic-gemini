@@ -418,3 +418,22 @@ canon_prompts:
     market_metaphor: ["geopolitical front line", "sanction shock", "war premium"]
     signature_action: ["marks market sectors as battlefronts with red targeting beams"]
     forbidden: ["real country flag claims without evidence", "celebrating real-world harm"]
+
+# Guest reference images supplied and approved in order on 2026-10-02.
+guests:
+  SENTINEL_YIELD:
+    name_en: Sentinel Yield
+    ref: assets/characters/guest_sentinel_yield.jpg
+    sha256: a6a29e9d37cf5b8d7105b52c350869881d358ec27c894108ba14d272261bf694
+  CRYPTO_SHADE:
+    name_en: Crypto Shade
+    ref: assets/characters/guest_crypto_shade.jpg
+    sha256: 05c21a87f4e856fa57c56d5e01f4391e29ce710cd98a50c3f0923d67f7db3ac4
+  SECTOR_PHANTOM:
+    name_en: Sector Phantom
+    ref: assets/characters/guest_sector_phantom.jpg
+    sha256: 699d39508202ac823c73b7254c471e74b32785733f66ccdff065de826d03d006
+  MOMENTUM_RIDER:
+    name_en: Momentum Rider
+    ref: assets/characters/guest_momentum_rider.jpg
+    sha256: 576d91d8b41c44f0fab77d8487ce5c56e4046c0287b9cab17240b6c599321e17

@@ -148,7 +148,8 @@ def _build_identity_lock(characters: list[dict], char_design_block: str) -> str:
 
     lines = [
         "== CHARACTER IDENTITY LOCK ==",
-        "Use provided reference images for canon characters and the approved visual contract for text-only guests.",
+        "Use each character's provided reference image and approved visual contract, including guests.",
+        "Copy character identity only. Never copy reference backgrounds, corner symbols or watermarks.",
         "DO NOT deviate from appearance in ANY panel. Same design ALWAYS.",
         "",
     ]
@@ -537,7 +538,7 @@ def build_for_episode(
         PanelPrompt 리스트 (panels 순서 동일).
     """
     from engine.common.exceptions import CanonLockViolation, PipelineAborted
-    from engine.image.ref_loader import GUEST_CHARACTER_IDS, get_refs_for_panel
+    from engine.image.ref_loader import get_refs_for_panel
 
     panels = episode_script.get("panels", [])
     panel_prompts: list[PanelPrompt] = []
@@ -568,7 +569,7 @@ def build_for_episode(
             logger.error("[prompt_builder] Canon Lock 위반: %s", exc)
             raise
 
-        expected_refs = [c for c in char_ids if c and c not in GUEST_CHARACTER_IDS]
+        expected_refs = [c for c in char_ids if c]
         if len(ref_paths) != len(expected_refs) or any(not path.is_file() for path in ref_paths):
             raise PipelineAborted("prompt", f"Incomplete character references for panel {idx}")
         effective_panel = dict(panel)
