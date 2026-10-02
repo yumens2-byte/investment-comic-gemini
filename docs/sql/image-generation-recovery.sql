@@ -9,7 +9,7 @@ create table icg.image_generation_recovery_receipts (
  primary key(terminal_token,target_revision)
 );
 alter table icg.image_generation_recovery_receipts enable row level security;
-revoke all on icg.image_generation_recovery_receipts from public,anon,authenticated;
+revoke all on icg.image_generation_recovery_receipts from public,anon,authenticated,service_role;
 grant select,insert on icg.image_generation_recovery_receipts to service_role;
 
 create function icg.image_generation_recovery_preflight(p_scope text,p_revision integer)

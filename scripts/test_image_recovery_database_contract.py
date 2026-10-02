@@ -22,6 +22,8 @@ def main():
         for path in ('migrations/20261001132931_image_generation_guard.sql',
                      'docs/sql/image-generation-revision.sql',
                      'docs/sql/image-generation-recovery.sql'):
+            if path.endswith('image-generation-recovery.sql'):
+                db.execute('alter default privileges in schema icg grant all on tables to service_role')
             db.execute(Path(path).read_text())
         scope = 'output/episodes/2026-10-02/panels'
         old, new = 'a' * 64, 'b' * 64
