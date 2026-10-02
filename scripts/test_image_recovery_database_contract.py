@@ -39,7 +39,7 @@ def main():
         evidence = 'run 36941053986: known provider usage, reviewed scene redesign'
 
         def ack(cost=.0005385, fp=None, reviewed=None, note=evidence):
-            return db.execute('select icg.image_generation_acknowledge_terminal(%s,3,%s,%s,%s,%s)',
+            return db.execute('select icg.image_generation_acknowledge_terminal(%s,3,%s::numeric,%s,%s,%s)',
                               [token, cost, Jsonb(reviewed or script),
                                Jsonb(fp or fingerprints), note]).fetchone()[0]
 
@@ -52,6 +52,7 @@ def main():
         assert 'hold' in ack(cost=None)
         assert 'hold' in ack(fp={'1': 'c' * 64, '6': old})
         assert 'hold' in ack(fp={'6': new})
+        assert 'hold' in ack(fp={'1': None, '6': new})
         assert 'hold' in ack(note='unverified')
         assert 'hold' in ack(reviewed=dict(script, title='changed'))
         assert ack()['acknowledged'] is True
@@ -64,6 +65,15 @@ def main():
         db.execute('update icg.episode_assets set script_json=%s', [Jsonb(dict(script, title='drift'))])
         assert 'hold' in inspect()
         db.execute('update icg.episode_assets set script_json=%s', [Jsonb(script)])
+        # A reviewed scene gets one reservation; the old terminal row remains intact.
+        new_token = db.execute('select icg.image_generation_reserve_v2(%s,1,%s,3)',
+                               [scope, fingerprints['1']]).fetchone()[0]['token']
+        result = db.execute("select icg.image_generation_finish(%s,1,%s,%s,'success',.04,%s)",
+                            [scope, fingerprints['1'], new_token, 'd' * 64]).fetchone()[0]
+        assert result['settled'] is True
+        assert db.execute('select to_jsonb(c) from icg.image_generation_calls c where token=%s',
+                          [token]).fetchall() == before
+        assert db.execute('select count(*) from icg.image_generation_calls').fetchone()[0] == 2
         # Every unsettled/new terminal outcome freezes the scope again.
         for state in ('reserved', 'unknown', 'terminal'):
             t = db.execute('insert into icg.image_generation_calls'
