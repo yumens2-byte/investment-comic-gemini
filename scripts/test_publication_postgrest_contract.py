@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import json
 import os
+import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -99,17 +100,35 @@ def seed(db, script_padding: int) -> dict:
     return candidate
 
 
-def wait_until_ready(api_url: str, secret: str, timeout: float = 90.0) -> None:
-    """PostgREST retries its DB connection with backoff; wait until the icg schema is served."""
+def start_postgrest(binary: str, api_url: str, secret: str) -> subprocess.Popen:
+    """Start PostgREST only after bootstrap: the authenticator role must already exist
+    (v12 exits on a failed login) and the first schema cache load sees every table and RPC."""
+    port = urlparse(api_url).port
+    password = os.environ.get("AUTHENTICATOR_TEST_PASSWORD", "local-authenticator")
+    conf = Path(os.environ.get("POSTGREST_TEST_CONF", "/tmp/pgrst.conf"))
+    conf.write_text(
+        f'db-uri = "postgres://authenticator:{password}@localhost:5432/postgres"\n'
+        'db-schemas = "icg"\ndb-anon-role = "anon"\n'
+        f'jwt-secret = "{secret}"\nserver-port = {port}\n')
+    log = open(os.environ.get("POSTGREST_TEST_LOG", "/tmp/postgrest.log"), "w")
+    return subprocess.Popen([binary, str(conf)], stdout=log, stderr=subprocess.STDOUT)
+
+
+def wait_until_ready(api_url: str, secret: str, timeout: float = 60.0) -> None:
+    """Ready only when both a table and a publication RPC are in the schema cache."""
     import httpx
 
     headers = {"Authorization": f"Bearer {_jwt(secret, 'service_role')}",
-               "Accept-Profile": "icg"}
+               "Accept-Profile": "icg", "Content-Profile": "icg"}
+    # Read-only probe: no row has this date, so the RPC only answers ready=false.
+    probe = {"p_date": "1900-01-01", "p_no": 1, "p_candidate": {}}
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            if httpx.get(f"{api_url}/episode_assets?limit=1", headers=headers,
-                         timeout=5).status_code == 200:
+            table = httpx.get(f"{api_url}/episode_assets?limit=1", headers=headers, timeout=5)
+            rpc = httpx.post(f"{api_url}/rpc/publication_state_preflight", headers=headers,
+                             json=probe, timeout=5)
+            if table.status_code == 200 and rpc.status_code == 200:
                 return
         except httpx.HTTPError:
             pass
@@ -153,81 +172,97 @@ def main() -> None:
     from engine.quality.contracts import QualityHold
 
     os.environ["GITHUB_SHA"] = "f" * 40
-    with psycopg.connect(db_url, autocommit=True) as db:
-        bootstrap(db)
-        wait_until_ready(api_url, secret)
-        checks = []
+    binary = os.environ.get("POSTGREST_BIN")
+    server = None
+    try:
+        with psycopg.connect(db_url, autocommit=True) as db:
+            bootstrap(db)
+            if binary:
+                server = start_postgrest(binary, api_url, secret)
+            wait_until_ready(api_url, secret)
+            run_checks(db, claim_publication, finish_publication,
+                       rehearse_publication_requests, record_publish, record_delivery,
+                       require_state_ready, QualityHold)
+    finally:
+        if server is not None:
+            server.terminate()
+            server.wait(timeout=10)
 
-        # 1) Full publication over HTTP with a ~68 KB script (incident size).
-        candidate = seed(db, 66000)
-        row = read_row(db)
-        assert len(json.dumps(row["script_json"], ensure_ascii=False)) > 60000
-        assert rehearse_publication_requests(row, ROW_DATE, 1) == []
-        require_state_ready(ROW_DATE, 1, candidate)
-        token = claim_publication(row, ROW_DATE, 1)
-        record_delivery(ROW_DATE, 1, token, "x", ["2105757754312851782"])
-        record_delivery(ROW_DATE, 1, token, "telegram:@chan", [123])
-        record_publish(episode_date=ROW_DATE, episode_id=f"ICG-{ROW_DATE}-001",
-                       event_type="BATTLE", tweet_ids=["2105757754312851782"],
-                       telegram_sent=True, slide_count=8, gemini_cost_usd=0.2375,
-                       claude_cost_usd=0.0, runtime_sec=12.0, state_candidate=candidate,
-                       telegram_receipts={"@chan": [123]})
-        finish_publication(ROW_DATE, 1, token)
-        done = read_row(db)
-        assert done["status"] == "published" and done["error_message"] is None
-        arc = db.execute("select arc_day, hero_win_streak from icg.arc_state").fetchone()
-        assert arc == (64, 0)
-        history = db.execute("select count(*), max(code_sha) from icg.published_comics"
-                             ).fetchone()
-        assert history == (1, "f" * 40)
-        checks.append("full_publication_large_script")
 
-        # 2) Concurrent claims: exactly one wins.
-        seed(db, 100)
-        row = read_row(db)
+def run_checks(db, claim_publication, finish_publication, rehearse_publication_requests,
+               record_publish, record_delivery, require_state_ready, QualityHold) -> None:
+    checks = []
 
-        def attempt(_):
-            try:
-                return claim_publication(row, ROW_DATE, 1)
-            except QualityHold:
-                return None
+    # 1) Full publication over HTTP with a ~68 KB script (incident size).
+    candidate = seed(db, 66000)
+    row = read_row(db)
+    assert len(json.dumps(row["script_json"], ensure_ascii=False)) > 60000
+    assert rehearse_publication_requests(row, ROW_DATE, 1) == []
+    require_state_ready(ROW_DATE, 1, candidate)
+    token = claim_publication(row, ROW_DATE, 1)
+    record_delivery(ROW_DATE, 1, token, "x", ["2105757754312851782"])
+    record_delivery(ROW_DATE, 1, token, "telegram:@chan", [123])
+    record_publish(episode_date=ROW_DATE, episode_id=f"ICG-{ROW_DATE}-001",
+                   event_type="BATTLE", tweet_ids=["2105757754312851782"],
+                   telegram_sent=True, slide_count=8, gemini_cost_usd=0.2375,
+                   claude_cost_usd=0.0, runtime_sec=12.0, state_candidate=candidate,
+                   telegram_receipts={"@chan": [123]})
+    finish_publication(ROW_DATE, 1, token)
+    done = read_row(db)
+    assert done["status"] == "published" and done["error_message"] is None
+    arc = db.execute("select arc_day, hero_win_streak from icg.arc_state").fetchone()
+    assert arc == (64, 0)
+    history = db.execute("select count(*), max(code_sha) from icg.published_comics"
+                         ).fetchone()
+    assert history == (1, "f" * 40)
+    checks.append("full_publication_large_script")
 
-        with ThreadPoolExecutor(max_workers=6) as pool:
-            winners = [t for t in pool.map(attempt, range(6)) if t]
-        assert len(winners) == 1
-        checks.append("single_claim_under_concurrency")
+    # 2) Concurrent claims: exactly one wins.
+    seed(db, 100)
+    row = read_row(db)
 
-        # 3) Row changed after inspection (version moved): claim refused, row untouched.
-        seed(db, 100)
-        stale = read_row(db)
-        db.execute("update icg.episode_assets set script_json = script_json ||"
-                   " '{\"title\": \"changed\"}'::jsonb where id=1")
+    def attempt(_):
         try:
-            claim_publication(stale, ROW_DATE, 1)
-            raise AssertionError("stale claim acquired")
+            return claim_publication(row, ROW_DATE, 1)
         except QualityHold:
-            pass
-        assert read_row(db)["error_message"] is None
-        checks.append("stale_version_refused")
+            return None
 
-        # 4) Arc moved since generation: finalize refuses, state unchanged.
-        candidate = seed(db, 100)
-        token = claim_publication(read_row(db), ROW_DATE, 1)
-        record_delivery(ROW_DATE, 1, token, "x", ["1"])
-        db.execute("update icg.arc_state set arc_day = 99")
-        try:
-            record_publish(episode_date=ROW_DATE, episode_id=f"ICG-{ROW_DATE}-001",
-                           event_type="BATTLE", tweet_ids=["1"], telegram_sent=False,
-                           slide_count=8, gemini_cost_usd=0.1, claude_cost_usd=0.0,
-                           runtime_sec=1.0, state_candidate=candidate, telegram_receipts={})
-            raise AssertionError("finalize accepted a stale base arc")
-        except AssertionError:
-            raise
-        except Exception:
-            pass
-        assert read_row(db)["status"] == "assembled"
-        assert db.execute("select count(*) from icg.published_comics").fetchone()[0] == 0
-        checks.append("stale_arc_finalize_refused")
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        winners = [t for t in pool.map(attempt, range(6)) if t]
+    assert len(winners) == 1
+    checks.append("single_claim_under_concurrency")
+
+    # 3) Row changed after inspection (version moved): claim refused, row untouched.
+    seed(db, 100)
+    stale = read_row(db)
+    db.execute("update icg.episode_assets set script_json = script_json ||"
+               " '{\"title\": \"changed\"}'::jsonb where id=1")
+    try:
+        claim_publication(stale, ROW_DATE, 1)
+        raise AssertionError("stale claim acquired")
+    except QualityHold:
+        pass
+    assert read_row(db)["error_message"] is None
+    checks.append("stale_version_refused")
+
+    # 4) Arc moved since generation: finalize refuses, state unchanged.
+    candidate = seed(db, 100)
+    token = claim_publication(read_row(db), ROW_DATE, 1)
+    record_delivery(ROW_DATE, 1, token, "x", ["1"])
+    db.execute("update icg.arc_state set arc_day = 99")
+    try:
+        record_publish(episode_date=ROW_DATE, episode_id=f"ICG-{ROW_DATE}-001",
+                       event_type="BATTLE", tweet_ids=["1"], telegram_sent=False,
+                       slide_count=8, gemini_cost_usd=0.1, claude_cost_usd=0.0,
+                       runtime_sec=1.0, state_candidate=candidate, telegram_receipts={})
+        raise AssertionError("finalize accepted a stale base arc")
+    except AssertionError:
+        raise
+    except Exception:
+        pass
+    assert read_row(db)["status"] == "assembled"
+    assert db.execute("select count(*) from icg.published_comics").fetchone()[0] == 0
+    checks.append("stale_arc_finalize_refused")
 
     print(json.dumps({"status": "pass", "checks": checks}))
 
