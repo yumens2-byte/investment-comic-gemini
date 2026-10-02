@@ -13,7 +13,11 @@ def require_content_ready(script: dict, row: dict | None = None) -> None:
     if not isinstance(script, dict):
         raise QualityHold("content QC: malformed narrative")
     if row and str(row.get("error_message") or "").startswith(PREFIX):
-        raise QualityHold("content QC hold: repair and review before assembly/publication")
+        reason = str(row["error_message"])[len(PREFIX):].strip()
+        reason = " ".join(reason.split())[:500] or "review required"
+        raise QualityHold(
+            f"content QC hold: {reason}; repair and review before assembly/publication"
+        )
     if "_recovery_qc" not in script:
         return  # Existing episodes without a recovery review retain their contract.
     qc = script["_recovery_qc"]

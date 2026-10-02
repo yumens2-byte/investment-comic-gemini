@@ -197,3 +197,29 @@ def test_completed_retry_then_success_preserves_fingerprinted_inputs(setup):
     assert gen.call_args_list[0].args == gen.call_args_list[1].args
     assert gen.call_args_list[0].kwargs == gen.call_args_list[1].kwargs
     assert [c.kwargs["state"] for c in guard.finish.call_args_list] == ["failed", "success"]
+
+
+def test_provider_rejection_survives_ledger_hold(setup, caplog):
+    run, guard, gen, root = setup
+    gen.side_effect = adapter.NoImageResponse("FinishReason.PROHIBITED_CONTENT", 2575, 0)
+    guard.finish.side_effect = GenerationHold("provider outcome or cost requires reconciliation")
+    with pytest.raises(GenerationHold, match="PROHIBITED_CONTENT.*panel=1.*0.0007725"):
+        run()
+    assert gen.call_count == 1
+    assert guard.reserve.call_count == 1
+    assert guard.finish.call_args.kwargs == {"state": "terminal", "actual_cost": 0.0007725}
+    record = json.loads((root / "run.log").read_text())
+    assert record["finish_reason"] == "FinishReason.PROHIBITED_CONTENT"
+    assert record["prompt_tokens"] == 2575
+    assert record["output_tokens"] == 0
+    assert "PROHIBITED_CONTENT" in caplog.text
+    assert not (root / "panels/P1.png").exists()
+
+
+def test_missing_usage_hold_keeps_noimage_reason(setup):
+    run, guard, gen, _ = setup
+    gen.side_effect = adapter.NoImageResponse("STOP", 0, 0)
+    guard.finish.side_effect = GenerationHold("billing unknown")
+    with pytest.raises(GenerationHold, match="STOP.*cost_usd=None.*billing unknown"):
+        run()
+    assert gen.call_count == 1

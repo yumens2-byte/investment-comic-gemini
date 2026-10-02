@@ -324,9 +324,22 @@ def generate_panel(
             ) else None
             terminal = _terminal_error(exc)
             record.update(status="terminal" if terminal else "failed", cost_usd=known_cost,
+                          finish_reason=exc.reason, prompt_tokens=exc.prompt_tokens,
+                          output_tokens=exc.output_tokens,
                           error=str(exc), latency_sec=round(time.monotonic() - started, 2))
             _write_jsonl_log(log_path, record)
-            guard.finish(token, state="terminal" if terminal else "failed", actual_cost=known_cost)
+            logger.error("Gemini no-image response: panel=%s finish_reason=%s cost_usd=%s "
+                         "terminal=%s; evidence=%s", panel_idx, exc.reason, known_cost,
+                         terminal, log_path)
+            try:
+                guard.finish(token, state="terminal" if terminal else "failed",
+                             actual_cost=known_cost)
+            except GenerationHold as hold:
+                raise GenerationHold(
+                    f"{exc}; panel={panel_idx}; cost_usd={known_cost}; ledger_hold={hold}; "
+                    f"evidence={log_path}. Review provider outcome and existing receipt "
+                    "before recovery; do not automatically retry."
+                ) from hold
             if terminal:
                 raise GenerationHold(str(exc)) from exc
             total_cost += known_cost if known_cost is not None else _calc_cost(
