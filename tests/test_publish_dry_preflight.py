@@ -41,6 +41,9 @@ def database(monkeypatch, tmp_path):
             return SimpleNamespace(data=value)
 
     monkeypatch.setattr(supabase_client, 'icg_table', Query)
+    # Request rehearsal needs real postgrest builders; covered in test_publish_request_shapes.
+    from engine.publish import claim_guard
+    monkeypatch.setattr(claim_guard, 'rehearse_publication_requests', lambda *a: [])
     log = MagicMock(side_effect=AssertionError('must not log to DB'))
     monkeypatch.setattr(logger, 'StepLogger', log)
     monkeypatch.setenv('DRY_RUN', 'true')

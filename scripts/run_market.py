@@ -842,10 +842,13 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                     _episode_type_v3 = _ep_result.episode_type
                     _form_bonus_v3 = _ep_result.form_bonus
                     from engine.narrative.episode_decision import resolve_episode_decision
+                    from engine.narrative.path_readiness import combat_path_ready
+
                     episode_decision = resolve_episode_decision(
                         _ep_result, risk_level=risk_level_v2, event_type=event_type,
                         recent_scenarios=recent_scenarios,
                         has_market_evidence=prev_row is not None,
+                        combat_path_ready=lambda: combat_path_ready(episode_date),
                     )
                     _episode_type_v3 = episode_decision["episode_type"]
                     _form_bonus_v3 = episode_decision["form_bonus"]
@@ -863,10 +866,18 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
 
             if episode_decision is None:
                 from engine.narrative.storyline_guard import choose_scenario_with_diversity
+                _base_scenario = scenario_type_v2
                 scenario_type_v2, diversity_reason = choose_scenario_with_diversity(
                     base_scenario=scenario_type_v2, risk_level=risk_level_v2,
                     event_type=event_type, recent_scenarios=recent_scenarios,
                     max_same_streak=2)
+                if _base_scenario == "NO_BATTLE" and scenario_type_v2 == "ONE_VS_ONE":
+                    from engine.narrative.path_readiness import combat_path_ready
+
+                    _ready, _evidence = combat_path_ready(episode_date)
+                    if not _ready:
+                        scenario_type_v2 = _base_scenario
+                        diversity_reason = f"dormant_path_unverified:{_evidence}"
                 logger.info("[LegacyScenarioDiversity] %s", diversity_reason)
 
             # -- STEP 3-4: 캐릭터 재선정 (scenario별 분기) --------------------
@@ -1734,6 +1745,17 @@ def step_image(
                     "performance quality strict gate failed: "
                     + ",".join(issue.code for issue in performance_quality.issues)
                 )
+
+        from engine.image.action_safety import check_script_actions
+        from engine.image.generation_guard import GenerationHold
+
+        unsafe_actions = check_script_actions(script_dict)
+        if unsafe_actions:
+            # Stop before any reservation or paid provider call; narrative must be revised.
+            raise GenerationHold(
+                "action safety precheck failed; revise narrative before image: "
+                + "; ".join(f"P{v.panel_idx} {v.rule}" for v in unsafe_actions)
+            )
 
         from engine.image.reviewed_inputs import reviewed_panel_prompts
 

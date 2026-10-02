@@ -8,10 +8,20 @@ def test_tactical_action_has_no_combat_or_market_fabrication():
     assert "Keep supplied market facts" in contract
 
 
-def test_protected_observation_and_combat_have_no_tactical_override():
+def test_protected_observation_has_no_contract_and_combat_has_no_tactical_override():
     assert narrative_action_contract(None) == ""
     assert narrative_action_contract({"action_mode": "OBSERVATION"}) == ""
-    assert narrative_action_contract({"action_mode": "COMBAT"}) == ""
+    combat = narrative_action_contract({"action_mode": "COMBAT"})
+    assert "evacuation, rescue, tracking" not in combat
+
+
+def test_combat_contract_requires_image_safe_clash_and_keeps_outcome():
+    from engine.narrative.episode_decision import COMBAT_ACTION_CONTRACT
+
+    combat = narrative_action_contract({"action_mode": "COMBAT"})
+    assert combat == COMBAT_ACTION_CONTRACT
+    assert "never fired at" in combat and "No wounds, blood" in combat
+    assert "battle outcome" in combat and "canon appearance" in combat
 
 
 def test_actual_narrative_request_contains_action_contract(monkeypatch):

@@ -1,4 +1,5 @@
 """Resolve editorial diversity once, without changing market or awakening rules."""
+from collections.abc import Callable
 from dataclasses import asdict
 from typing import get_args
 
@@ -12,7 +13,9 @@ _PROTECTED_STEPS = {"MANUAL_OVERRIDE", "STEP_0", "STEP_0_5", "STEP_1", "STEP_2"}
 
 def resolve_episode_decision(candidate: EpisodeTypeResult, *, risk_level: str,
                              event_type: str, recent_scenarios: list[str],
-                             has_market_evidence: bool) -> dict:
+                             has_market_evidence: bool,
+                             combat_path_ready: Callable[[], tuple[bool, str]] | None = None,
+                             ) -> dict:
     if candidate.episode_type not in get_args(EpisodeType):
         raise ValueError("Unknown candidate episode type")
     if candidate.scenario_type != to_scenario_type(candidate.episode_type):
@@ -33,6 +36,15 @@ def resolve_episode_decision(candidate: EpisodeTypeResult, *, risk_level: str,
         return result
     battle_allowed = (has_market_evidence and risk_level in {"MEDIUM", "HIGH"}
                       and event_type in {"BATTLE", "SHOCK"})
+    if battle_allowed and combat_path_ready is not None:
+        ready, evidence = combat_path_ready()
+        result["path_readiness"] = evidence
+        if not ready:
+            # A dormant combat path is re-enabled only after a canary or recent publication.
+            result.update(episode_type="TACTICAL", scenario_type="NO_BATTLE", form_bonus=0,
+                          slide_count=8, policy_applied=True, action_mode="TACTICAL_ACTION",
+                          reason="dormant_path_unverified")
+            return result
     result.update(episode_type="BATTLE" if battle_allowed else "TACTICAL",
                   scenario_type="ONE_VS_ONE" if battle_allowed else "NO_BATTLE",
                   form_bonus=0, slide_count=8, policy_applied=True,
@@ -55,7 +67,18 @@ def validate_saved_decision(ctx: dict) -> None:
         raise ValueError("Stored episode decision disagrees with analysis context")
 
 
+COMBAT_ACTION_CONTRACT = (
+    "COMBAT ACTION CONTRACT: Every panel action is an image-generation brief. Depict conflict as "
+    "clashes of powers, shields, barriers, energy and symbolic financial forces meeting in the "
+    "space between characters. Canon weapons stay carried as fixed gear but are never fired at, "
+    "swung into or landing on a character, and no attack connects with a body. No wounds, blood "
+    "or injury. Keep the approved cast, canon appearance, market facts and the battle outcome."
+)
+
+
 def narrative_action_contract(decision: dict | None) -> str:
+    if decision and decision.get("action_mode") == "COMBAT":
+        return COMBAT_ACTION_CONTRACT
     if not decision or decision.get("action_mode") != "TACTICAL_ACTION":
         return ""
     return ("FINAL ACTION CONTRACT: NO_BATTLE means no combat verdict, not absence of action. "

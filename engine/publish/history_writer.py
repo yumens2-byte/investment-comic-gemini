@@ -10,6 +10,23 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _record_code_sha(episode_date: str, episode_no: int) -> None:
+    """Best-effort evidence for the scheduled-publish code guard; never fails a delivery."""
+    import os
+    import re
+
+    sha = os.environ.get("GITHUB_SHA", "")
+    if not re.fullmatch(r"[0-9a-f]{40}", sha):
+        return
+    try:
+        from engine.common.supabase_client import icg_table
+
+        icg_table("published_comics").update({"code_sha": sha}).eq(
+            "publish_date", episode_date).eq("episode_no", episode_no).execute()
+    except Exception as exc:  # column may not exist before the migration is applied
+        logger.warning("[history_writer] code_sha 기록 생략: %s", type(exc).__name__)
+
+
 def record_publish(
     episode_date: str,
     episode_id: str,
@@ -49,6 +66,7 @@ def record_publish(
         }).execute().data
         if not isinstance(receipt, dict) or receipt.get("committed") is not True:
             raise RuntimeError("publication state commit unconfirmed; reconcile without resending")
+        _record_code_sha(episode_date, int(episode_id.split("-")[-1]))
         return
 
     # 1. published_comics 기록
@@ -66,6 +84,7 @@ def record_publish(
             }
         ).execute()
         logger.info("[history_writer] published_comics 기록 완료: %s", episode_id)
+        _record_code_sha(episode_date, int(episode_id.split("-")[-1]))
     except Exception as exc:
         logger.error("[history_writer] published_comics 기록 실패: %s", exc)
         raise

@@ -113,13 +113,23 @@ def inspect_publish(episode: str | None, requested_date: str | None, channels: s
         from engine.publish.manifest import validate_manifest
         from engine.publish.state_commit import require_state_ready
 
+        # Report manifest and state separately; a missing slide is not a state failure.
+        if files_present:
+            try:
+                validate_manifest(script, paths)
+            except (ValueError, OSError):
+                readiness.append('assembly_manifest_mismatch')
         try:
-            validate_manifest(script, paths)
             require_state_ready(episode_date, episode_no, script["_state_candidate"])
-        except (ValueError, QualityHold, OSError):
+        except QualityHold:
             readiness.append('narrative_state_contract_not_ready')
     if not files_valid:
         readiness.append('slides_missing_or_invalid')
+    if not reasons:
+        from engine.publish.claim_guard import rehearse_publication_requests
+
+        for issue in rehearse_publication_requests(row, episode_date, episode_no):
+            readiness.append('publish_request_invalid:' + issue)
     if 'x' in requested_channels:
         from engine.common.exceptions import DisclaimerMissing
         from engine.publish.x_publisher import _guard_disclaimer

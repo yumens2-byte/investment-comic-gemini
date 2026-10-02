@@ -218,6 +218,21 @@ class NoImageResponse(RuntimeError):
         self.output_tokens = output_tokens
 
 
+PROVIDER_REFUSAL_PATH = Path("output/provider-refusals.jsonl")
+
+
+def _record_provider_refusal(panel_idx: int, reason: str, cost: float | None) -> None:
+    """Best-effort evidence for failure alerts; never changes ledger or billing outcome."""
+    record = {"code": "PROVIDER_REFUSAL", "panel": panel_idx, "finish_reason": str(reason),
+              "cost_usd": cost, "run_id": os.environ.get("GITHUB_RUN_ID", "local")}
+    try:
+        PROVIDER_REFUSAL_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with PROVIDER_REFUSAL_PATH.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except OSError:
+        logger.warning("[gemini] provider refusal evidence write failed")
+
+
 def _terminal_error(exc: Exception) -> bool:
     status = getattr(exc, "code", None) or getattr(exc, "status_code", None)
     if str(status) in {"400", "401", "403", "404", "429"}:
@@ -326,9 +341,19 @@ def generate_panel(
             record.update(status="terminal" if terminal else "failed", cost_usd=known_cost,
                           error=str(exc), latency_sec=round(time.monotonic() - started, 2))
             _write_jsonl_log(log_path, record)
-            guard.finish(token, state="terminal" if terminal else "failed", actual_cost=known_cost)
+            refusal = f"provider_reason={exc.reason}; panel={panel_idx}"
+            # Surface the provider's reason before settlement can replace it with a hold text.
+            logger.warning("[gemini] PROVIDER_REFUSAL %s terminal=%s cost=%s",
+                           refusal, terminal, known_cost)
             if terminal:
-                raise GenerationHold(str(exc)) from exc
+                _record_provider_refusal(panel_idx, exc.reason, known_cost)
+            try:
+                guard.finish(token, state="terminal" if terminal else "failed",
+                             actual_cost=known_cost)
+            except GenerationHold as hold:
+                raise GenerationHold(f"{hold}; {refusal}") from exc
+            if terminal:
+                raise GenerationHold(f"provider refused image; {refusal}") from exc
             total_cost += known_cost if known_cost is not None else _calc_cost(
                 _estimate_prompt_tokens(prompt, ref_paths), _ESTIMATED_IMAGE_OUTPUT_TOKENS
             )

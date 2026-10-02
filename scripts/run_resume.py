@@ -86,6 +86,21 @@ def _latest_episode_id(
     return None
 
 
+COMPOSITOR_PANEL_TYPES = frozenset({"TEXT_CARD", "DISCLAIMER"})
+
+
+def count_missing_paid_sources(panels: list[dict], panel_images: list) -> int:
+    """Count missing generated sources; compositor-rendered cards never have one."""
+    missing = 0
+    for i, panel in enumerate(panels):
+        if panel.get("panel_type") in COMPOSITOR_PANEL_TYPES:
+            continue
+        source = panel_images[i] if i < len(panel_images) else None
+        if source is None or not source.exists():
+            missing += 1
+    return missing
+
+
 def guard_resume_status(status: str, *, force: bool, allow_narrative_only: bool) -> None:
     """Resume 대상 status 검증.
 
@@ -279,8 +294,7 @@ def main() -> None:
 
         script_dict["_assembly_manifest"] = build_manifest(script_dict, slides)
 
-        fallback_count = sum(1 for p in panel_images if p is None or not p.exists())
-        fallback_count += max(0, len(panels) - len(panel_images))
+        fallback_count = count_missing_paid_sources(panels, panel_images)
 
         # episode_no 기준 patch — script_json 등 기존 컬럼 보존, 동일 event_type row 덮어쓰기 방지
         asset_patch_by_episode(

@@ -1,0 +1,42 @@
+{
+  "version": "path-canary-1",
+  "path_key": "ONE_VS_ONE:COMBAT",
+  "battle_outcome": "DRAW",
+  "note": "Representative combat brief from ICG-2026-10-03-001 revision 2 panel 3 (provider-accepted). Only panel 1 is generated.",
+  "script": {
+    "date": "CANARY",
+    "episode_id": "ICG-CANARY-001",
+    "event_type": "BATTLE",
+    "_episode_decision": {
+      "action_mode": "COMBAT",
+      "scenario_type": "ONE_VS_ONE",
+      "episode_type": "BATTLE"
+    },
+    "panels": [
+      {
+        "idx": 1,
+        "action": "Debt Titan rises out of the ledger stacks and sends a surging stream of glowing debt-bond chains across the vault corridor; Iron Securities Nuna braces behind her raised ETF hexagonal shield as the chains spark harmlessly off its glowing surface",
+        "camera": "LOW_ANGLE",
+        "setting": "Digital coin vault corridor, towering stacks of debt ledgers blocking the exit",
+        "key_text": "쌓이는 것이 곧 힘이다—두려워하라!",
+        "narration": "데트 타이탄의 목소리는 금고 벽을 울렸다. 부채의 산이 높아질수록 그의 형체는 더 짙어졌다. 그녀의 방패가 처음으로 흔들렸다.",
+        "characters": [
+          {
+            "form": "form1",
+            "role": "hero",
+            "char_id": "CHAR_HERO_002",
+            "position": "LEFT"
+          },
+          {
+            "form": null,
+            "role": "villain",
+            "char_id": "CHAR_VILLAIN_001",
+            "position": "RIGHT"
+          }
+        ],
+        "market_ref": "VIX 15.69 (-1.9375%)",
+        "panel_type": "BATTLE"
+      }
+    ]
+  }
+}

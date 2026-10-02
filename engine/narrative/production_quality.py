@@ -361,6 +361,13 @@ def validate_production_episode(
             )
         )
 
+    from engine.image.action_safety import check_script_actions
+
+    for item in check_script_actions(script):
+        violations.append(
+            ProductionViolation(item.rule, f"panel {item.panel_idx}: '{item.detail}'")
+        )
+
     # Stable order and no duplicate messages make logs/test fixtures useful.
     violations = list(dict.fromkeys(violations))
     if violations and strict:
@@ -464,6 +471,13 @@ def build_production_retry_feedback(
             "- ALGORITHM WORDING BAN: unless an evidence card explicitly mentions algorithmic "
             "trading, do not place 'algorithm', '알고리즘', or '알고' in key_text, narration, "
             "market_ref, or captions at all. This includes fictional metaphors in those fields."
+        )
+    if codes & {"ACTION_ATTACK_ON_CHARACTER", "ACTION_FIREARM_DISCHARGE", "ACTION_GRAPHIC_INJURY"}:
+        lines.append(
+            "- COMBAT IMAGE FIX: rewrite only the listed panel actions. Show the clash as powers, "
+            "shields, barriers or energy meeting between the characters; canon weapons stay "
+            "carried, never fired at or landing on anyone; no wounds or blood. Keep dialogue, "
+            "narration, cast, market facts and the outcome unchanged."
         )
     if "STATIC_ACTION_STREAK" in codes:
         lines.append(

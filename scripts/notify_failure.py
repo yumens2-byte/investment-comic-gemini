@@ -44,6 +44,27 @@ def _send_telegram(token: str, channel_id: str, text: str) -> bool:
         return False
 
 
+def _provider_refusals() -> list[dict]:
+    """Read provider refusal evidence written by the image client in this run."""
+    from engine.image.gemini_client import PROVIDER_REFUSAL_PATH
+
+    run_id = os.environ.get("GITHUB_RUN_ID", "local")
+    found = []
+    try:
+        lines = Path(PROVIDER_REFUSAL_PATH).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    for line in lines:
+        try:
+            item = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(item, dict) and item.get("code") == "PROVIDER_REFUSAL" and (
+                item.get("run_id") == run_id):
+            found.append(item)
+    return found
+
+
 def main() -> None:
     """파이프라인 실패 알림 메인 로직."""
     parser = argparse.ArgumentParser()
@@ -88,6 +109,12 @@ def main() -> None:
         f"🔗 <a href='{run_url}'>Actions 로그 확인</a>\n\n"
         "수동 확인 후 재실행하거나 Supabase icg.episode_assets.status 점검 필요."
     )
+
+    refusals = _provider_refusals()
+    if refusals and not args.qc_warnings:
+        message += "\n\n<b>Gemini 이미지 거절</b>\n" + "\n".join(
+            html.escape(f"P{r.get('panel')}: {r.get('finish_reason')}") for r in refusals[:5]
+        )
 
     if args.qc_warnings:
         details = "\n".join(html.escape(value[:100]) for value in list(dict.fromkeys(findings))[:5])
