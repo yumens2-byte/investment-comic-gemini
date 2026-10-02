@@ -3,7 +3,14 @@
 import pytest
 
 from engine.common.exceptions import UnknownCharacterError
-from engine.image.ref_loader import GUEST_CHARACTER_IDS, get_refs_for_panel
+from engine.image.ref_loader import GUEST_CHARACTER_IDS, get_refs_for_panel, invalidate_cache
+
+
+@pytest.fixture(autouse=True)
+def fresh_canon():
+    invalidate_cache()
+    yield
+    invalidate_cache()
 
 
 def test_guest_character_does_not_crash_step6() -> None:
