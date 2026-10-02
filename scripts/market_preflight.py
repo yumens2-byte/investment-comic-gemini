@@ -25,8 +25,19 @@ def assert_image_ledger_allowed(episode_date: str, episode_id: str, stage: str) 
         for row in calls
     ):
         raise RuntimeError('Invalid image reservation response')
-    if any(row['state'] in {'reserved', 'unknown', 'terminal'} for row in calls):
+    if any(row['state'] in {'reserved', 'unknown'} for row in calls):
         raise GenerationBlocked(episode_id, 'image_generation_reconciliation_hold')
+    if any(row['state'] == 'terminal' for row in calls):
+        from engine.image.generation_guard import GenerationHold
+        from engine.image.recovery import require_terminal_recovery
+
+        # A receipt binds persisted inputs; regenerating narrative would invalidate it.
+        if stage != 'image' or revision < 2:
+            raise GenerationBlocked(episode_id, 'image_generation_reconciliation_hold')
+        try:
+            require_terminal_recovery(f'output/episodes/{episode_date}/panels', revision)
+        except GenerationHold as exc:
+            raise GenerationBlocked(episode_id, 'image_generation_reconciliation_hold') from exc
     if stage in {'all', 'narrative', 'persist', 'recovery'} and any(
         row.get('revision', 1) >= revision for row in calls
     ):
