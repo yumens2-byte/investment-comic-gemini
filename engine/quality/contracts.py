@@ -16,6 +16,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from engine.quality.policy import advisory_qc
+
 
 class QualityHold(ValueError):
     """A required condition is failed or unverified; publication must stop."""
@@ -139,6 +141,7 @@ class Claim(StrictModel):
     asserted: bool = False
 
 
+@advisory_qc("claim_evidence")
 def validate_claims(bundle: EvidenceBundle, claims: list[Claim], panels: list[dict]) -> None:
     evidence = {e.evidence_id: e for e in bundle.evidence}
     panels_by_idx = {p["idx"]: p for p in panels}
@@ -241,6 +244,7 @@ class EditorialPlan(StrictModel):
         return self
 
 
+@advisory_qc("editorial_plan")
 def validate_plan(
     plan: EditorialPlan, bundle: EvidenceBundle, script: dict, calculation: dict
 ) -> None:

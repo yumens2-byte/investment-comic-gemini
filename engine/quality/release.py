@@ -10,6 +10,7 @@ from pydantic import Field
 
 from engine.quality.canon import file_hash, safe_asset
 from engine.quality.contracts import QualityHold, StrictModel, digest
+from engine.quality.policy import qc_finding
 
 RUBRIC = {
     "facts": ("trading_day", "provenance", "numbers", "claim_evidence", "fact_metaphor"),
@@ -56,29 +57,31 @@ class QualityReport(StrictModel):
     def approve(self, now: datetime | None = None) -> int:
         now = now or datetime.now(timezone.utc)
         if self.critical_findings or self.major_findings:
-            raise QualityHold("blocking QC findings")
+            qc_finding("release_review", "blocking QC findings: " + ",".join(
+                (*self.critical_findings, *self.major_findings)), error_type=QualityHold)
         if set(self.checks) != REQUIRED_CHECKS or any(v != "pass" for v in self.checks.values()):
-            raise QualityHold("failed or unverified required checks")
+            qc_finding("release_review", "failed or unverified required checks", error_type=QualityHold)
         expected = {(domain, item) for domain, items in RUBRIC.items() for item in items}
         actual = [(i.domain, i.criterion) for i in self.items]
         if set(actual) != expected or len(actual) != len(expected):
-            raise QualityHold("rubric coverage missing or duplicated")
+            qc_finding("release_review", "rubric coverage missing or duplicated", error_type=QualityHold)
         for domain, floor in FLOORS.items():
             if sum(i.score for i in self.items if i.domain == domain) < floor:
-                raise QualityHold(f"domain below floor: {domain}")
+                qc_finding("release_review", f"domain below floor: {domain}", error_type=QualityHold)
         if {r.role for r in self.roles} != ROLES or len(self.roles) != len(ROLES):
-            raise QualityHold("ten role reviews required")
+            qc_finding("release_review", "ten role reviews required", error_type=QualityHold)
         for r in self.roles:
             if r.verdict != "pass" or r.reviewed_at.tzinfo is None or r.reviewed_at > now:
-                raise QualityHold("invalid role review")
+                qc_finding("release_review", "invalid role review", error_type=QualityHold)
             if r.role in {"market", "editor", "writer", "canon", "art", "ux", "qa"}:
                 if r.method != "human":
-                    raise QualityHold(
-                        "actual content needs human inspection; model score is insufficient"
+                    qc_finding("release_review",
+                        "actual content needs human inspection; model score is insufficient",
+                        error_type=QualityHold
                     )
         score = sum(i.score for i in self.items)
         if score < 80:
-            raise QualityHold("overall score below 80")
+            qc_finding("release_review", "overall score below 80", error_type=QualityHold)
         return score
 
 

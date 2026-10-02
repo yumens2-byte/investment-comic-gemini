@@ -363,10 +363,12 @@ def validate_production_episode(
 
     # Stable order and no duplicate messages make logs/test fixtures useful.
     violations = list(dict.fromkeys(violations))
-    if violations and strict:
-        raise ProductionQualityError(
-            "; ".join(f"{item.code}: {item.detail}" for item in violations)
-        )
+    from engine.quality.policy import qc_finding, qc_is_strict
+
+    if violations and (strict or not qc_is_strict()):
+        qc_finding("production_quality",
+                   "; ".join(f"{item.code}: {item.detail}" for item in violations),
+                   error_type=ProductionQualityError)
     return violations
 
 

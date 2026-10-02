@@ -52,6 +52,13 @@ def test_content_prefix_alone_blocks_claim():
         require_content_ready({}, {"error_message": "CONTENT_QC_HOLD:visual mismatch"})
 
 
+def test_content_hold_exposes_bounded_reason_without_bypass():
+    with pytest.raises(QualityHold, match="content QC hold: visual mismatch") as caught:
+        require_content_ready({}, {"error_message": "CONTENT_QC_HOLD:visual\n mismatch " + "x" * 1000})
+    assert "\n" not in str(caught.value)
+    assert len(str(caught.value)) < 600
+
+
 def test_review_binds_narrative_revision_and_source_bytes(tmp_path):
     script, row, source = reviewed_script(tmp_path)
     require_content_ready(script, row)

@@ -154,8 +154,10 @@ def validate_story_continuity(
             % (score.total_score, score.status, ",".join(score.missing_requirements) or "none")
         )
 
-    if warnings and strict:
-        raise StoryContinuityError("; ".join(warnings))
+    from engine.quality.policy import qc_finding, qc_is_strict
+
+    if warnings and (strict or not qc_is_strict()):
+        qc_finding("story_continuity", "; ".join(warnings), error_type=StoryContinuityError)
     return warnings
 
 
@@ -217,6 +219,8 @@ def validate_story_grounding(
                 )
                 break
 
-    if warnings and strict:
-        raise StoryGroundingError("; ".join(warnings))
+    from engine.quality.policy import qc_finding, qc_is_strict
+
+    if warnings and (strict or not qc_is_strict()):
+        qc_finding("story_grounding", "; ".join(warnings), error_type=StoryGroundingError)
     return warnings

@@ -58,6 +58,7 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger("icg.run_market")
+from engine.quality.policy import qc_finding, qc_is_strict  # noqa: E402
 
 
 def _today() -> str:
@@ -207,8 +208,9 @@ def _assert_image_stage_inputs(episode_date: str, episode_id: str, ctx: dict) ->
     previous = ctx.get("previous_episode") or (ctx.get("narrative_context_pack") or {}).get("previous_episode") or {}
     errors = validate_thread_transitions(script, previous, script.get("_resolution_review"))
     if errors:
-        raise GenerationHold(
-            "cached narrative predates current thread contract; run recovery: " + ",".join(errors)
+        qc_finding("cached_narrative",
+            "cached narrative predates current thread contract; run recovery: " + ",".join(errors),
+            error_type=GenerationHold
         )
     return script
 
@@ -222,7 +224,9 @@ def _production_quality_strict_enabled(*, continuity_strict: bool | None = None)
     """Production violations are fail-closed whenever continuity is strict."""
     if continuity_strict is None:
         continuity_strict = _env_flag_enabled("CONTINUITY_STRICT_ENABLED")
-    return bool(continuity_strict) or _env_flag_enabled("SERIAL_NARRATIVE_P0_ENABLED")
+    return qc_is_strict() and (
+        bool(continuity_strict) or _env_flag_enabled("SERIAL_NARRATIVE_P0_ENABLED")
+    )
 
 
 def _quality_attempt_limit(*, continuity_strict: bool, production_strict: bool) -> int:
@@ -298,27 +302,27 @@ def _validate_narrative_quality_inputs(ctx: dict) -> dict[str, int | bool]:
     story_plan = ctx.get("story_beat_plan") or {}
 
     if narrative_enabled and not context_pack:
-        raise RuntimeError(
+        qc_finding("narrative_inputs",
             "NARRATIVE_CONTEXT_ENABLED=true 이지만 analysis_ctx_json에 "
-            "narrative_context_pack이 없습니다." + _quality_gate_context(ctx)
+            "narrative_context_pack이 없습니다." + _quality_gate_context(ctx), error_type=RuntimeError
         )
     if planner_enabled and not story_plan:
-        raise RuntimeError(
+        qc_finding("narrative_inputs",
             "STORY_PLANNER_ENABLED=true 이지만 analysis_ctx_json에 story_beat_plan이 없습니다."
-            + _quality_gate_context(ctx)
+            + _quality_gate_context(ctx), error_type=RuntimeError
         )
 
     evidence_count = len(context_pack.get("top_evidence") or [])
     beat_count = len(story_plan.get("panel_beats") or [])
     if narrative_enabled and evidence_count == 0:
-        raise RuntimeError(
+        qc_finding("narrative_inputs",
             "Narrative Context Pack은 생성됐지만 top_evidence가 0개입니다. "
-            "시장 데이터 품질을 확인하세요." + _quality_gate_context(ctx)
+            "시장 데이터 품질을 확인하세요." + _quality_gate_context(ctx), error_type=RuntimeError
         )
     if planner_enabled and beat_count != 8:
-        raise RuntimeError(
+        qc_finding("narrative_inputs",
             f"Story Beat Plan panel_beats는 8개여야 합니다. 현재 {beat_count}개입니다."
-            + _quality_gate_context(ctx)
+            + _quality_gate_context(ctx), error_type=RuntimeError
         )
 
     return {
@@ -1389,12 +1393,8 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
             validate_story_grounding,
         )
 
-        strict_continuity = _env_flag_enabled("CONTINUITY_STRICT_ENABLED")
-        # Continuity strict is the production rollout's fail-closed umbrella.
-        # The 2026-08-28 run had continuity strict enabled but omitted the new
-        # serial flag from workflow env, so five production violations were
-        # logged and then persisted.  Never downgrade them to warnings in a
-        # strict continuity run.
+        strict_continuity = qc_is_strict() and _env_flag_enabled("CONTINUITY_STRICT_ENABLED")
+        # Global advisory policy takes precedence over legacy strict feature flags.
         strict_production = _production_quality_strict_enabled(continuity_strict=strict_continuity)
         # Serial fields are a separate rollout contract. Continuity strict keeps
         # factual/action quality fail-closed, but must not silently enable P0.
@@ -1635,7 +1635,8 @@ def _build_episode_asset_payload(episode_id: str, ctx: dict, script_dict: dict) 
         script_dict, ctx.get("previous_episode") or (ctx.get("narrative_context_pack") or {}).get("previous_episode") or {},
         ctx.get("_resolution_review"))
     if contract_errors:
-        raise ValueError("narrative thread contract failed: " + ",".join(contract_errors))
+        qc_finding("narrative_threads",
+                   "narrative thread contract failed: " + ",".join(contract_errors))
 
     script_for_asset["_state_candidate"] = build_state_candidate(
         episode_id[4:14], ctx, script_dict)
@@ -1729,10 +1730,11 @@ def step_image(
                 f"score={performance_quality.score} "
                 f"issues={[issue.code for issue in performance_quality.issues]}",
             )
-            if mode == "strict" and performance_quality.status == "FAIL":
-                raise RuntimeError(
+            if performance_quality.status == "FAIL" and (mode == "strict" or not qc_is_strict()):
+                qc_finding("image_performance",
                     "performance quality strict gate failed: "
-                    + ",".join(issue.code for issue in performance_quality.issues)
+                    + ",".join(issue.code for issue in performance_quality.issues),
+                    error_type=RuntimeError
                 )
 
         from engine.image.reviewed_inputs import reviewed_panel_prompts

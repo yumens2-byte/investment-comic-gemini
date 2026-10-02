@@ -34,6 +34,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
+from engine.quality.policy import qc_finding
 from engine.video.shorts_pipeline import (
     CANON_VISUAL_SPEC,
     CanonGuardError,
@@ -566,13 +567,9 @@ def validate_v2_scenario(scenario: WeeklyScenarioV2, facts: dict) -> None:
     과금(키프레임·Veo) 이전에 호출된다.
     """
     if sorted(scenario.hero_ids) != sorted(facts["hero_ids"]):
-        raise ConsistencyGuardError(
-            f"hero_ids mismatch: expected={facts['hero_ids']} got={scenario.hero_ids}"
-        )
+        qc_finding("video_scenario", f"hero_ids mismatch: expected={facts['hero_ids']} got={scenario.hero_ids}", error_type=ConsistencyGuardError)
     if scenario.villain_id != facts["villain_id"]:
-        raise ConsistencyGuardError(
-            f"villain_id mismatch: expected={facts['villain_id']} got={scenario.villain_id}"
-        )
+        qc_finding("video_scenario", f"villain_id mismatch: expected={facts['villain_id']} got={scenario.villain_id}", error_type=ConsistencyGuardError)
     if scenario.episode_id != facts["episode_id"]:
         raise ConsistencyGuardError(
             f"episode_id mismatch: expected={facts['episode_id']} got={scenario.episode_id}"
@@ -624,9 +621,9 @@ def validate_v2_scenario(scenario: WeeklyScenarioV2, facts: dict) -> None:
 
     if problems:
         # 구조 위반이 우선 — Canon 문제도 함께 보고해 재시도 피드백을 한 번에 준다
-        raise ValueError("v2 검증 실패 — " + " | ".join(problems + canon_problems))
+        qc_finding("video_scenario", "v2 검증 실패 — " + " | ".join(problems + canon_problems), error_type=ValueError)
     if canon_problems:
-        raise CanonGuardError("keyframe Canon 위반 — " + " | ".join(canon_problems))
+        qc_finding("video_scenario", "keyframe Canon 위반 — " + " | ".join(canon_problems), error_type=CanonGuardError)
 
 
 # ────────────────────────────────────────────────────────

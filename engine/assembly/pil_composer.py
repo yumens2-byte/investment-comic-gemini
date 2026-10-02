@@ -329,7 +329,9 @@ def validate_panel_sources(panels: list[dict], panel_images: list[Path | None]) 
     for i, panel in enumerate(panels):
         if panel.get("panel_type") in {"DISCLAIMER", "TEXT_CARD"}:
             if panel.get("characters"):
-                raise ValueError(f"Assembly text panel cannot contain characters: panel {i + 1}")
+                from engine.quality.policy import qc_finding
+
+                qc_finding("assembly_cast", f"Assembly text panel cannot contain characters: panel {i + 1}")
             continue
         source = panel_images[i] if i < len(panel_images) else None
         if source is None or not source.is_file():

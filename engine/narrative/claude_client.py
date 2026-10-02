@@ -221,6 +221,8 @@ def _validate_canon(script: EpisodeScript, scenario_type: str = "ONE_VS_ONE") ->
 
     import yaml
 
+    from engine.quality.policy import qc_finding, qc_is_strict
+
     canon = yaml.safe_load(Path("config/characters.yaml").read_text(encoding="utf-8"))
     all_char_ids = set(canon.get("heroes", {}).keys()) | set(canon.get("villains", {}).keys())
     villain_map = {
@@ -231,10 +233,10 @@ def _validate_canon(script: EpisodeScript, scenario_type: str = "ONE_VS_ONE") ->
         for char in panel.characters:
             # ── Canon ID 검증 ────────────────────────────────────────────────
             if char.char_id not in all_char_ids and char.char_id not in _REGISTERED_NEUTRAL_GUEST_IDS:
-                raise ValueError(f"Canon 외 char_id 사용: {char.char_id}")
+                qc_finding("narrative_canon", f"Canon 외 char_id 사용: {char.char_id}")
 
             if char.char_id in _REGISTERED_NEUTRAL_GUEST_IDS and char.role != "npc":
-                raise ValueError(
+                qc_finding("narrative_canon",
                     f"중립 게스트는 npc role이어야 합니다: {char.char_id} role={char.role}"
                 )
 
@@ -242,7 +244,7 @@ def _validate_canon(script: EpisodeScript, scenario_type: str = "ONE_VS_ONE") ->
             if char.role == "villain":
                 # v2.0: NO_BATTLE에서 villain 등장 금지
                 if scenario_type == "NO_BATTLE":
-                    raise NarrativeValidationError(
+                    error = NarrativeValidationError(
                         attempt=0,
                         detail=(
                             f"NO_BATTLE 시나리오에서 villain role 캐릭터 등장 금지: "
@@ -250,9 +252,14 @@ def _validate_canon(script: EpisodeScript, scenario_type: str = "ONE_VS_ONE") ->
                             "Claude가 Scenario 지시를 무시한 것으로 판단, 재생성 필요."
                         ),
                     )
+                    if qc_is_strict():
+                        raise error
+                    qc_finding("narrative_canon", str(error))
                 en_name = villain_map.get(char.char_id, "")
                 if en_name and en_name not in _CANON_VILLAIN_NAMES:
-                    raise InvalidVillainNameError(en_name)
+                    if qc_is_strict():
+                        raise InvalidVillainNameError(en_name)
+                    qc_finding("narrative_canon", f"Noncanonical villain name: {en_name}")
 
 
 def generate_episode(

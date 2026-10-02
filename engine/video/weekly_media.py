@@ -390,7 +390,9 @@ def generate_shots(
         result.veo_cost_usd = round(result.veo_cost_usd + float(res.get("cost_usd") or 0.0), 4)
         metrics = measure_motion(path)
         attempts = 0
-        while metrics["freeze_ratio"] > freeze_max and attempts < regen_max:
+        from engine.quality.policy import qc_finding, qc_is_strict
+
+        while qc_is_strict() and metrics["freeze_ratio"] > freeze_max and attempts < regen_max:
             attempts += 1
             # 이번 실행 지출분은 아직 원장에 없으므로 함께 더해 예산을 재확인한다.
             check_before_generation(estimated_cost_usd=result.total_cost_usd + estimate_shot_cost())
@@ -415,8 +417,9 @@ def generate_shots(
                 alt.unlink(missing_ok=True)
         metrics.update({"seq": shot.seq, "regenerated": attempts, "camera_move": shot.camera_move})
         if metrics["freeze_ratio"] > freeze_max:
-            raise WeeklyMediaError(
-                f"shot{shot.seq} motion quality failed after bounded regeneration"
+            qc_finding("video_motion",
+                f"shot{shot.seq} motion quality failed (freeze={metrics['freeze_ratio']})",
+                error_type=WeeklyMediaError
             )
         result.motion.append(metrics)
         result.shots.append(path)

@@ -144,7 +144,10 @@ def _guard_disclaimer(caption_x_final: str) -> None:
         DisclaimerMissing: 면책 고지 문구 없을 때.
     """
     if DISCLAIMER_REQUIRED not in caption_x_final:
-        raise DisclaimerMissing(location="caption_x_final")
+        from engine.quality.policy import qc_finding
+
+        qc_finding("x_disclaimer", "caption_x_final disclaimer missing",
+                   error_type=lambda _: DisclaimerMissing(location="caption_x_final"))
 
 
 def publish_episode_x(

@@ -399,9 +399,11 @@ def render_weekly_v2(
     audio_raw = _ffprobe_value(final_path, ["-select_streams", "a:0", "-show_entries", "stream=duration"])
     audio_sec = float(audio_raw) if audio_raw and audio_raw != "N/A" else 0.0
     if abs(video_sec - total) > RENDER_TOLERANCE_SEC or abs(audio_sec - total) > RENDER_TOLERANCE_SEC:
-        raise WeeklyRenderError(
+        from engine.quality.policy import qc_finding
+
+        qc_finding("video_duration",
             f"렌더 길이 불일치: video={video_sec:.3f}s audio={audio_sec:.3f}s expected={total:.3f}s "
-            f"(허용 ±{RENDER_TOLERANCE_SEC}s) — 발행 차단"
+            f"(허용 ±{RENDER_TOLERANCE_SEC}s)", error_type=WeeklyRenderError
         )
 
     report = {

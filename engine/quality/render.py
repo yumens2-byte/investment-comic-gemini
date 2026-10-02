@@ -9,6 +9,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 from pydantic import Field, model_validator
 
 from engine.quality.contracts import QualityHold, StrictModel
+from engine.quality.policy import qc_finding
 
 SIZE = (1080, 1350)
 
@@ -40,7 +41,7 @@ def wrap_pixels(text: str, font: ImageFont.FreeTypeFont, width: int) -> list[str
         line = ""
         for char in paragraph:
             if font.getlength(char) > width:
-                raise QualityHold("glyph exceeds available width")
+                qc_finding("mobile_render", "glyph exceeds available width", error_type=QualityHold)
             if line and font.getlength(line + char) > width:
                 lines.append(line)
                 line = char
@@ -62,17 +63,20 @@ def compose_quality_panel(
     margin: int = 20,
 ) -> dict:
     if font_size < math.ceil(14 * SIZE[0] / 360):
-        raise QualityHold("body font below 14px equivalent at 360px display")
+        qc_finding("mobile_render", "body font below 14px equivalent at 360px display",
+                   error_type=QualityHold)
     if margin < 0 or text_area.width <= 2 * margin or text_area.height <= 2 * margin:
         raise QualityHold("invalid text margins")
     if any(text_area.intersects(r) for r in protected):
-        raise QualityHold("text would cover a protected face, prop or contact")
+        qc_finding("mobile_render", "text would cover a protected face, prop or contact",
+                   error_type=QualityHold)
     font = ImageFont.truetype(str(font_path), font_size)
     lines = wrap_pixels(text, font, text_area.width - 2 * margin)
     ascent, descent = font.getmetrics()
     line_height = ascent + descent + 6
     if len(lines) * line_height > text_area.height - 2 * margin:
-        raise QualityHold("text overflow; edit copy or layout, do not shrink font")
+        qc_finding("mobile_render", "text overflow; edit copy or layout, do not shrink font",
+                   error_type=QualityHold)
     canvas = Image.new("RGB", SIZE, (5, 10, 20))
     if image_path is not None:
         with Image.open(image_path) as original:
@@ -115,6 +119,9 @@ def compose_quality_panel(
         "font_size": font_size,
         "display_font_px": font_size * 360 / SIZE[0],
         "text_area": text_area.model_dump(),
-        "geometry_check": "pass",
+        "geometry_check": "warning" if (font_size < math.ceil(14 * SIZE[0] / 360)
+            or any(text_area.intersects(r) for r in protected)
+            or any(font.getlength(c) > text_area.width - 2 * margin for c in text)
+            or len(lines) * line_height > text_area.height - 2 * margin) else "pass",
         "human_readability": "unverified",
     }

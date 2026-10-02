@@ -30,6 +30,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
+from engine.quality.policy import qc_finding
+
 VERSION = "1.6.0"
 logger = logging.getLogger(__name__)
 
@@ -356,17 +358,11 @@ def enforce_consistency(
     (이미지/영상 트랙 간 승패·캐스팅 어긋남 방지 — 상세설계 3.2)
     """
     if scenario.outcome != outcome:
-        raise ConsistencyGuardError(
-            f"outcome mismatch: expected={outcome} got={scenario.outcome}"
-        )
+        qc_finding("video_consistency", f"outcome mismatch: expected={outcome} got={scenario.outcome}", error_type=ConsistencyGuardError)
     if sorted(scenario.hero_ids) != sorted(hero_ids):
-        raise ConsistencyGuardError(
-            f"hero_ids mismatch: expected={hero_ids} got={scenario.hero_ids}"
-        )
+        qc_finding("video_consistency", f"hero_ids mismatch: expected={hero_ids} got={scenario.hero_ids}", error_type=ConsistencyGuardError)
     if scenario.villain_id != villain_id:
-        raise ConsistencyGuardError(
-            f"villain_id mismatch: expected={villain_id} got={scenario.villain_id}"
-        )
+        qc_finding("video_consistency", f"villain_id mismatch: expected={villain_id} got={scenario.villain_id}", error_type=ConsistencyGuardError)
 
 
 # ────────────────────────────────────────────────────────
@@ -594,13 +590,11 @@ def enforce_canon_visuals(scenario: "ShortsScenario") -> None:
             problems.append(f"{cid}: 식별 요소 누락(1개 이상 필요: {'/'.join(features)})")
 
     if problems:
-        raise CanonGuardError("video_prompt Canon 위반 — " + " | ".join(problems))
+        qc_finding("video_canon", "video_prompt Canon 위반 — " + " | ".join(problems), error_type=CanonGuardError)
 
     # ALLIANCE 는 히어로 전원이 최소 1컷에 등장해야 한다 (위 루프에서 이미 검사됨).
     if scenario.scenario_type.upper() == "ALLIANCE" and len(scenario.hero_ids) < 2:
-        raise CanonGuardError(
-            f"ALLIANCE 인데 hero_ids 가 {len(scenario.hero_ids)}명 — 최소 2명 필요"
-        )
+        qc_finding("video_canon", f"ALLIANCE 인데 hero_ids 가 {len(scenario.hero_ids)}명 — 최소 2명 필요", error_type=CanonGuardError)
 
 
 def _extract_json(text: str) -> str:
