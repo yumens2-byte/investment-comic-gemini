@@ -1695,11 +1695,15 @@ def step_image(
                     + ",".join(issue.code for issue in performance_quality.issues)
                 )
 
-        panel_prompts = build_for_episode(
-            script_dict,
-            performance_specs=performance_specs,
-            battle_outcome=(ctx.get("battle_result") or {}).get("outcome"),
-        )
+        from engine.image.reviewed_inputs import reviewed_panel_prompts
+
+        panel_prompts = reviewed_panel_prompts(script_dict, performance_specs=performance_specs)
+        if panel_prompts is None:
+            panel_prompts = build_for_episode(
+                script_dict,
+                performance_specs=performance_specs,
+                battle_outcome=(ctx.get("battle_result") or {}).get("outcome"),
+            )
         panels_input = [
             {
                 "panel_idx": pp.panel_idx,
