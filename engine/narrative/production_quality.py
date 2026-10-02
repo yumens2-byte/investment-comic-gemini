@@ -232,6 +232,13 @@ def validate_production_episode(
 ) -> list[ProductionViolation]:
     """Validate facts, cast, serial state, scenario semantics, and action variety."""
     violations: list[ProductionViolation] = []
+    from engine.narrative.thread_contracts import validate_thread_transitions
+
+    for error in validate_thread_transitions(
+        script, (context_pack or {}).get("previous_episode") or {},
+        (context_pack or {}).get("_resolution_review"),
+    ):
+        violations.append(ProductionViolation(error.upper(), "thread contract failed"))
     story_text = _all_story_text(script)
 
     # A percentage this large in publishable copy is nearly always a unit

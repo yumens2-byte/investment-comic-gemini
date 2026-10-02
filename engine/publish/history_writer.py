@@ -20,6 +20,9 @@ def record_publish(
     gemini_cost_usd: float,
     claude_cost_usd: float,
     runtime_sec: float,
+    *,
+    state_candidate: dict | None = None,
+    telegram_receipts: dict | None = None,
 ) -> None:
     """
     발행 완료 후 이력 기록.
@@ -28,7 +31,25 @@ def record_publish(
     2. icg.episode_assets.status = published 업데이트
     """
     from engine.common.supabase_client import icg_table
-    from engine.persist.asset_writer import patch as asset_patch
+    from engine.persist.asset_writer import patch_by_episode as asset_patch
+
+    if not tweet_ids and not telegram_sent:
+        raise ValueError("cannot record publication without a successful channel")
+
+    if state_candidate is not None:
+        from engine.common.supabase_client import get_client, get_schema
+
+        if telegram_sent and not telegram_receipts:
+            raise ValueError("Telegram delivery receipt required")
+        receipt = get_client().schema(get_schema()).rpc("finalize_episode_publication", {
+            "p_date": episode_date, "p_no": int(episode_id.split("-")[-1]),
+            "p_candidate": state_candidate, "p_tweet_ids": tweet_ids,
+            "p_telegram": telegram_receipts or {}, "p_slide_count": slide_count,
+            "p_cost": round(gemini_cost_usd + claude_cost_usd, 6), "p_runtime": runtime_sec,
+        }).execute().data
+        if not isinstance(receipt, dict) or receipt.get("committed") is not True:
+            raise RuntimeError("publication state commit unconfirmed; reconcile without resending")
+        return
 
     # 1. published_comics 기록
     try:
@@ -46,13 +67,14 @@ def record_publish(
         ).execute()
         logger.info("[history_writer] published_comics 기록 완료: %s", episode_id)
     except Exception as exc:
-        logger.warning("[history_writer] published_comics 기록 실패: %s", exc)
+        logger.error("[history_writer] published_comics 기록 실패: %s", exc)
+        raise
 
     # 2. episode_assets status → published (UPDATE only, script_json 같은 NOT NULL 필드 보존)
     try:
         asset_patch(
             episode_date,
-            event_type,
+            int(episode_id.split("-")[-1]),
             {
                 "status": "published",
                 "total_runtime_sec": runtime_sec,
@@ -60,4 +82,5 @@ def record_publish(
         )
         logger.info("[history_writer] episode_assets status=published")
     except Exception as exc:
-        logger.warning("[history_writer] episode_assets 업데이트 실패: %s", exc)
+        logger.error("[history_writer] episode_assets 업데이트 실패: %s", exc)
+        raise

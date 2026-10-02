@@ -125,6 +125,7 @@ def update_after_episode(
     guest_characters: list[tuple[str, str]],
     outcome: str,
     vix: float,
+    episode_date: str | None = None,
 ) -> dict:
     """
     에피소드 완료 후 story_state 업데이트.
@@ -136,7 +137,10 @@ def update_after_episode(
         vix: 오늘 VIX 값
     """
     state = copy.deepcopy(story_state)
-    today_str = datetime.now(tz=timezone.utc).date().isoformat()
+    today_str = episode_date or datetime.now(tz=timezone.utc).date().isoformat()
+    if state.get("last_episode_date") == today_str:
+        return state
+    state["last_episode_date"] = today_str
 
     # 게스트 캐릭터 상태 갱신
     char_states: dict = state.setdefault("character_states", {})
