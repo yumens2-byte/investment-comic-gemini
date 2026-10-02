@@ -18,8 +18,7 @@ import yaml
 
 from engine.common.exceptions import CanonLockViolation, UnknownCharacterError
 
-# 게스트(비-canon) 캐릭터 — engine/character/character_engine.py의 후보 체계와 동일.
-# canon 검증·REF 자산 대상이 아니며, 등장 시 텍스트 서술 기반으로 렌더링한다.
+# Registered guest identities use approved references and the same SHA256 lock as heroes.
 GUEST_CHARACTER_IDS = frozenset(
     {"SENTINEL_YIELD", "CRYPTO_SHADE", "SECTOR_PHANTOM", "MOMENTUM_RIDER"}
 )
@@ -54,7 +53,7 @@ def _get_char_entry(char_id: str) -> tuple[str, dict]:
         UnknownCharacterError: char_id가 Canon에 없을 때.
     """
     canon = _load_canon()
-    for group in ("heroes", "villains"):
+    for group in ("heroes", "villains", "guests"):
         if char_id in canon.get(group, {}):
             return group, canon[group][char_id]
     raise UnknownCharacterError(char_id)
@@ -143,17 +142,6 @@ def get_refs_for_panel(char_ids: list[str]) -> list[Path]:
     """
     refs: list[Path] = []
     for char_id in char_ids:
-        # 게스트 캐릭터(비-canon)는 REF 자산과 canon 레지스트리가 없다.
-        # 2026-09-04: narrative가 required cast로 게스트를 캐스팅하자
-        # verify_canon이 UnknownCharacterError로 STEP_6을 즉사시킴.
-        # 게스트는 REF 없이 진행(패널 텍스트 서술 기반 렌더링),
-        # 화이트리스트 외 비정상 ID는 기존대로 치명 에러 유지(오타 방어).
-        if char_id in GUEST_CHARACTER_IDS:
-            logger.info(
-                "[ref_loader] 게스트 캐릭터 %s — REF 없이 진행 (텍스트 서술 기반)",
-                char_id,
-            )
-            continue
         try:
             verify_canon(char_id)
             path = get_ref_path(char_id)

@@ -208,10 +208,10 @@ class MediaResult:
 def _load_character_refs(scenario: ShortsScenario) -> list:
     """Require every registered cast reference before any paid bookend request."""
     try:
-        from engine.image.ref_loader import GUEST_CHARACTER_IDS, get_refs_for_panel
+        from engine.image.ref_loader import get_refs_for_panel
 
         cast = list(dict.fromkeys([*scenario.hero_ids, scenario.villain_id]))
-        required = [character for character in cast if character not in GUEST_CHARACTER_IDS]
+        required = cast
         refs = get_refs_for_panel(cast)
         if len(refs) != len(required) or any(not Path(ref).is_file() for ref in refs):
             raise ShortsMediaError("Required bookend cast references unavailable")
