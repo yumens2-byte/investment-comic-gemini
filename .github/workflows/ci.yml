@@ -32,6 +32,9 @@ jobs:
       - run: python scripts/test_narrative_database_contract.py
         env:
           DATABASE_TEST_URL: postgresql://postgres:local-contract-test@localhost:5432/postgres
+      - run: python scripts/test_image_recovery_database_contract.py
+        env:
+          DATABASE_TEST_URL: postgresql://postgres:local-contract-test@localhost:5432/postgres
   lint-test:
     name: Lint & Test
     runs-on: ubuntu-latest
