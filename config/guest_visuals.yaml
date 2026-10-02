@@ -6,10 +6,12 @@ source_title: ICG 신규 캐릭터 4종 상세설계서 v1.0
 characters:
   SENTINEL_YIELD:
     name: Sentinel Yield, The Rate Warden
-    body: A neutral rate warden wearing black-and-white judge robes.
+    # Continuity decision: retain the masculine appearance reviewed in P1/P2/P4
+    # on 2026-10-02. This adds detail to the source's neutral rate-warden role.
+    body: An adult male rate warden with short swept-back dark hair, a clean-shaven angular face, and black-and-white judge robes.
     costume: Black-and-white judge robes in every panel.
-    weapon: A sword shaped like a yield curve, carried in hand.
-    strict: Same robes and yield-curve sword across panels. Never replace with a silver robot or a turquoise hologram.
+    weapon: One rigid angular sword shaped like a yield curve, carried in hand. Never a curved saber.
+    strict: Same adult male identity, short swept-back dark hair, clean-shaven angular face, black-and-white robes and angular yield-curve sword across panels. Never change sex, facial features, hairstyle or weapon geometry. Never replace with a silver robot or a turquoise hologram. Only pose, camera and lighting may change.
   CRYPTO_SHADE:
     name: Crypto Shade, The Underground Broker
     body: A figure with a half-face mask.

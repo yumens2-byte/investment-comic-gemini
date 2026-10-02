@@ -153,47 +153,38 @@ def _build_identity_lock(characters: list[dict], char_design_block: str) -> str:
         "",
     ]
 
-    # CHAR_DESIGN_SPECS에서 핵심 정보 추출해서 간결하게 재정리
+    from engine.character.guest_visuals import guest_visual_spec
+    from engine.common.notion_loader import load_char_design_blocks
+    from engine.image.ref_loader import GUEST_CHARACTER_IDS
+
+    # A runtime lookup failure must never remove a guest's local identity lock.
+    canon_ids = [ch.get("char_id") for ch in characters
+                 if ch.get("char_id") and ch["char_id"] not in GUEST_CHARACTER_IDS]
     try:
-        from engine.common.notion_loader import load_char_design_blocks
-
-        char_ids = [ch.get("char_id", "") for ch in characters if ch.get("char_id")]
-        specs = load_char_design_blocks(char_ids)
-
-        for ch in characters:
-            char_id = ch.get("char_id", "")
-            role = ch.get("role", "").upper()
-            position = ch.get("position", "CENTER")
-            facing = "RIGHT" if role == "HERO" else "LEFT"
-
-            spec = specs.get(char_id, {})
-            from engine.image.ref_loader import GUEST_CHARACTER_IDS
-
-            if char_id in GUEST_CHARACTER_IDS:
-                from engine.character.guest_visuals import guest_visual_spec
-
-                spec = guest_visual_spec(char_id)
-            name = spec.get("name", char_id)
-            identifier = spec.get("identifier", "")
-            color_rule = spec.get("color_rule", "")
-            strict = spec.get("strict", "Same design every panel.")
-
-            lines.append(f"CHARACTER {role} — {name}")
-            lines.append(f"  Position: {position} side of frame | Facing: {facing}")
-            if identifier:
-                lines.append(f"  MANDATORY IDENTIFIER: {identifier}")
-            if color_rule:
-                lines.append(f"  COLOR STRICT: {color_rule}")
-            lines.append(f"  CONSISTENCY RULE: {strict}")
-            lines.append("")
-
+        specs = load_char_design_blocks(canon_ids) if canon_ids else {}
     except Exception as exc:
-        logger.warning("[prompt_builder] Identity Lock 생성 실패 (fallback): %s", exc)
-        for ch in characters:
-            role = ch.get("role", "").upper()
-            position = ch.get("position", "CENTER")
-            lines.append(f"CHARACTER {role}: {position} side. Maintain exact reference identity.")
-            lines.append("")
+        logger.warning("[prompt_builder] Canon identity lookup unavailable: %s", exc)
+        specs = {}
+
+    for ch in characters:
+        char_id = ch.get("char_id", "")
+        role = ch.get("role", "").upper()
+        position = ch.get("position", "CENTER")
+        facing = "RIGHT" if role == "HERO" else "LEFT"
+        # Validate outside the runtime fallback: a missing guest contract is fatal.
+        spec = guest_visual_spec(char_id) if char_id in GUEST_CHARACTER_IDS else specs.get(char_id, {})
+        lines.append(f"CHARACTER {role} — {char_id}: {spec.get('name', char_id)}")
+        lines.append(f"  Position: {position} side of frame | Facing: {facing}")
+        for key, label in (("body", "FIXED BODY AND FACE"),
+                           ("costume", "FIXED COSTUME"),
+                           ("weapon", "FIXED WEAPON"),
+                           ("identifier", "MANDATORY IDENTIFIER"),
+                           ("color_rule", "COLOR STRICT")):
+            if spec.get(key):
+                lines.append(f"  {label}: {spec[key]}")
+        lines.append(f"  CONSISTENCY RULE: {spec.get('strict', 'Maintain exact reference identity.')}")
+        lines.append("  Preserve identity across all panels. Only pose, camera and lighting may change.")
+        lines.append("")
 
     lines.append("== END IDENTITY LOCK ==")
     return "\n".join(lines)
