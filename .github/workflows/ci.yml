@@ -35,6 +35,52 @@ jobs:
       - run: python scripts/test_image_recovery_database_contract.py
         env:
           DATABASE_TEST_URL: postgresql://postgres:local-contract-test@localhost:5432/postgres
+  publication-postgrest-contract:
+    name: Publication PostgREST Contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: local-contract-test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PYTHONPATH: .
+      DRY_RUN: 'true'
+      DATABASE_TEST_URL: postgresql://postgres:local-contract-test@localhost:5432/postgres
+      POSTGREST_TEST_URL: http://localhost:53000
+      POSTGREST_TEST_JWT_SECRET: local-contract-test-secret-at-least-32-chars
+      AUTHENTICATOR_TEST_PASSWORD: local-authenticator
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt 'psycopg[binary]==3.3.6'
+      - name: Start PostgREST (local, test credentials only)
+        run: |
+          curl -fsSL -o /tmp/postgrest.tar.xz \
+            https://github.com/PostgREST/postgrest/releases/download/v12.2.3/postgrest-v12.2.3-linux-static-x64.tar.xz
+          tar -xf /tmp/postgrest.tar.xz -C /tmp
+          cat > /tmp/pgrst.conf <<CONF
+          db-uri = "postgres://authenticator:${AUTHENTICATOR_TEST_PASSWORD}@localhost:5432/postgres"
+          db-schemas = "icg"
+          db-anon-role = "anon"
+          jwt-secret = "${POSTGREST_TEST_JWT_SECRET}"
+          server-port = 53000
+          CONF
+          nohup /tmp/postgrest /tmp/pgrst.conf > /tmp/postgrest.log 2>&1 &
+      - run: python scripts/test_publication_postgrest_contract.py
+      - if: failure()
+        run: cat /tmp/postgrest.log
   lint-test:
     name: Lint & Test
     runs-on: ubuntu-latest

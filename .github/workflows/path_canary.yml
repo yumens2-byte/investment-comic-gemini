@@ -1,0 +1,56 @@
+name: Path Canary (manual, max one paid panel)
+on:
+  workflow_dispatch:
+    inputs:
+      path_key:
+        description: 'Dormant path to verify'
+        type: choice
+        options: ['ONE_VS_ONE:COMBAT']
+        default: 'ONE_VS_ONE:COMBAT'
+      dry_run:
+        description: 'true = compile prompt and fingerprint only (no paid call)'
+        type: choice
+        options: ['true', 'false']
+        default: 'true'
+permissions:
+  contents: read
+concurrency:
+  group: path-canary
+  cancel-in-progress: false
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      NOTION_IMAGE_PROMPTS_ID: '3439208cbdc3817191e1c2cccd3865cc'
+      NOTION_REF_PROMPTS_ID: '3439208cbdc381ccb85cf8e177a1a3d2'
+      NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      SUPABASE_SCHEMA: icg
+      GEMINI_API_SUB_PAY_KEY: ${{ secrets.GEMINI_API_SUB_PAY_KEY }}
+      PATH_KEY: ${{ inputs.path_key }}
+      CANARY_DRY_RUN: ${{ inputs.dry_run }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Canary
+        run: |
+          if [ "$CANARY_DRY_RUN" = "true" ]; then
+            python -m scripts.run_path_canary --path-key "$PATH_KEY" --dry-run
+          else
+            python -m scripts.run_path_canary --path-key "$PATH_KEY"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: path-canary-${{ github.run_id }}
+          path: |
+            output/path-canary/
+            output/canary/
+          if-no-files-found: warn
+          retention-days: 14

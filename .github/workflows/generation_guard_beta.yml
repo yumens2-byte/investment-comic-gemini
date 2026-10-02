@@ -28,7 +28,8 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           GEMINI_API_SUB_PAY_KEY: ${{ secrets.GEMINI_API_SUB_PAY_KEY }}
-          GUARD_BETA_LIVE_IMAGE: 'true'
+          # Paid live smoke only on explicit manual dispatch, never on push.
+          GUARD_BETA_LIVE_IMAGE: ${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}
         run: python -m scripts.run_generation_guard_beta
       - uses: actions/upload-artifact@v4
         if: always()
