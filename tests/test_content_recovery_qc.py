@@ -75,6 +75,7 @@ def test_claim_fences_script_changed_after_inspection(tmp_path, monkeypatch):
     table.row["script_json"] = {}  # Legacy episode, read before another worker's HOLD.
     before = copy.deepcopy(table.row)
     table.row["script_json"] = script
+    table.row["updated_at"] = "2026-09-25T00:00:59+00:00"  # trigger-maintained version moved
     monkeypatch.setattr(supabase_client, "icg_table", lambda _: table)
     with pytest.raises(QualityHold, match="claim not acquired"):
         claim_publication(before, "2026-09-25", 2)

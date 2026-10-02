@@ -23,9 +23,11 @@ from engine.quality.publish_guard import guard_legacy_track, normalize_channels
 class AtomicFakeTable:
     def __init__(self):
         self.row = dict(
-            episode_date="2026-09-25", episode_no=2, status="assembled", error_message=None
+            episode_date="2026-09-25", episode_no=2, status="assembled", error_message=None,
+            updated_at="2026-09-25T00:00:00+00:00",
         )
         self.lock = threading.Lock()
+        self.version = 0
 
     def update(self, values):
         owner = self
@@ -46,6 +48,9 @@ class AtomicFakeTable:
                 with owner.lock:
                     if all(owner.row.get(k) == v for k, v in self.filters.items()):
                         owner.row.update(values)
+                        # Mirrors icg.touch_updated_at: every UPDATE moves the row version.
+                        owner.version += 1
+                        owner.row["updated_at"] = f"2026-09-25T00:00:{owner.version:02d}+00:00"
                         return SimpleNamespace(data=[dict(owner.row)])
                     return SimpleNamespace(data=[])
 

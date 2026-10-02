@@ -35,8 +35,12 @@ def claim_publication(row: dict, episode_date: str, episode_no: int) -> str:
         .eq("status", row.get("status"))
     )
     old = row.get("error_message")
-    if "script_json" in row:
-        query = query.eq("script_json", row["script_json"])
+    # Fence on the trigger-maintained row version. A jsonb equality filter cannot be
+    # sent as a URL parameter (dict repr is not JSON and large scripts exceed URL limits).
+    version = row.get("updated_at")
+    if not isinstance(version, str) or not version:
+        raise QualityHold("publication claim requires the episode row version; no external send")
+    query = query.eq("updated_at", version)
     query = query.is_("error_message", "null") if old is None else query.eq("error_message", old)
     response = query.execute()
     rows = response.data
