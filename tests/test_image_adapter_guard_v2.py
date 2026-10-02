@@ -74,6 +74,7 @@ def test_completed_noimage_retry_bounded_and_costed(setup):
     result, cost = run()
     assert result is None
     assert gen.call_count == 3
+    assert all(c.args[1] == "hero and villain" for c in gen.call_args_list)
     assert cost == pytest.approx(3 * adapter._calc_cost(100, 30))
     assert all(c.kwargs["actual_cost"] > 0 for c in guard.finish.call_args_list)
 
@@ -94,6 +95,7 @@ def test_corrupted_provider_data_not_persisted(setup):
     assert not (root / "panels/P1.png").exists()
     assert gen.call_count == 3
     assert all(c.kwargs["state"] == "failed" for c in guard.finish.call_args_list)
+    assert all(c.args[1] == "hero and villain" for c in gen.call_args_list)
 
 
 def test_missing_reference_precedes_paid_call(setup):
@@ -184,3 +186,14 @@ def test_invalid_token_response_metadata_is_not_zero_cost_success(setup):
     record = json.loads((root / "run.log").read_text())
     assert record["cost_usd"] is None
     assert record["estimated_cost_usd"] > 0
+
+
+def test_completed_retry_then_success_preserves_fingerprinted_inputs(setup):
+    run, guard, gen, _ = setup
+    gen.side_effect = [adapter.NoImageResponse("STOP", 100, 30), (png(), 100, 1290)]
+    result, cost = run()
+    assert result.read_bytes() == png() and cost > 0
+    assert gen.call_count == 2
+    assert gen.call_args_list[0].args == gen.call_args_list[1].args
+    assert gen.call_args_list[0].kwargs == gen.call_args_list[1].kwargs
+    assert [c.kwargs["state"] for c in guard.finish.call_args_list] == ["failed", "success"]

@@ -310,10 +310,9 @@ def generate_panel(
             "ref_images": [str(p) for p in ref_paths],
             "cost_usd": None, "cost_estimated": False,
         }
-        prompt = prompt_text if attempt == 1 else (
-            "REPAIR: Preserve ALL required characters and reference identities.\n"
-            "Simplify optional background effects only.\n\n" + prompt_text
-        )
+        # Every reservation fingerprints these exact provider inputs. A new prompt
+        # needs a new reviewed revision, even after a completed retryable failure.
+        prompt = prompt_text
         try:
             image_bytes, input_tokens, output_tokens = _generate_one(
                 client, prompt, ref_paths, aspect_ratio=aspect_ratio
