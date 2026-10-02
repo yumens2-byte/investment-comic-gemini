@@ -91,14 +91,15 @@ def _chunk_slides(slides: list[Path]) -> list[list[Path]]:
 
 def _upload_media(api_v1, image_paths: list[Path]) -> list[str]:
     """이미지 파일들을 X에 업로드하고 media_id 목록 반환."""
+    _validate_slides(image_paths)
     media_ids: list[str] = []
     for path in image_paths:
-        if not path.exists():
-            logger.error("[x_publisher] ❌ 슬라이드 파일 없음: %s", path)
-            continue
         try:
             media = api_v1.media_upload(filename=str(path))
-            media_id = str(media.media_id)
+            raw_id = getattr(media, "media_id", None)
+            if raw_id is None or isinstance(raw_id, bool) or not str(raw_id).strip() or str(raw_id) == "0":
+                raise ValueError("X upload response missing media ID")
+            media_id = str(raw_id)
             media_ids.append(media_id)
             logger.info(
                 "[x_publisher] ✅ 이미지 업로드 성공: %s (%dKB) → media_id=%s",
@@ -118,6 +119,23 @@ def _upload_media(api_v1, image_paths: list[Path]) -> list[str]:
     return media_ids
 
 
+def _validate_slides(slides: list[Path]) -> None:
+    """Validate the entire delivery before creating clients or uploading media."""
+    from PIL import Image
+
+    if not slides:
+        raise ValueError("slides required")
+    for path in slides:
+        if not path.is_file():
+            raise ValueError(f"slide file missing: {path}")
+        with Image.open(path) as image:
+            image.verify()
+        with Image.open(path) as image:
+            image.load()
+            if image.info.get("icg_render_kind") == "text_fallback":
+                raise ValueError("text fallback slide cannot be published")
+
+
 def _guard_disclaimer(caption_x_final: str) -> None:
     """
     발행 직전 면책 고지 검증.
@@ -133,6 +151,7 @@ def publish_episode_x(
     script_dict: dict,
     slides: list[Path],
     dry_run: bool = True,
+    receipt_callback=None,
 ) -> list[str]:
     """
     에피소드를 X에 발행.
@@ -169,7 +188,9 @@ def publish_episode_x(
     ]
     # 청크 수에 맞게 캡션 조정
     while len(captions) < len(chunks):
-        captions.append("")
+        captions.insert(-1, "")
+    if len(captions) > len(chunks):
+        captions = captions[: len(chunks) - 1] + [caption_x_final]
 
     if dry_run:
         logger.info("[x_publisher] DRY_RUN — 발행 시뮬레이션")
@@ -180,6 +201,7 @@ def publish_episode_x(
         return tweet_ids
 
     # 실 발행
+    _validate_slides(slides)
     api_v1, client_v2 = _make_clients()
     tweet_ids: list[str] = []
     reply_to: str | None = None
@@ -188,13 +210,8 @@ def publish_episode_x(
         media_ids = _upload_media(api_v1, chunk)
 
         # 청크에 이미지가 있는데 media_ids가 비면 치명적 문제 — 텍스트만 발행되는 상황
-        if chunk and not media_ids:
-            logger.error(
-                "[x_publisher] ❌ T%d 치명적 오류: 슬라이드 %d장 있으나 media_ids=0. "
-                "텍스트만 발행됩니다. X API 플랜(Basic 이상) 또는 OAuth 권한을 확인하세요.",
-                i,
-                len(chunk),
-            )
+        if len(media_ids) != len(chunk) or any(not media_id for media_id in media_ids):
+            raise ValueError("X media upload incomplete; refusing text-only publication")
 
         kwargs: dict = {"text": caption}
         if media_ids:
@@ -216,7 +233,12 @@ def publish_episode_x(
             kwargs["in_reply_to_tweet_id"] = reply_to
 
         resp = client_v2.create_tweet(**kwargs)
-        tweet_id = str(resp.data["id"])
+        raw_id = resp.data.get("id") if isinstance(resp.data, dict) else None
+        if raw_id is None or isinstance(raw_id, bool) or not str(raw_id).strip() or str(raw_id) == "0":
+            raise ValueError("X tweet response missing publication ID; reconciliation required")
+        tweet_id = str(raw_id)
+        if receipt_callback is not None:
+            receipt_callback([tweet_id])
         tweet_ids.append(tweet_id)
         reply_to = tweet_id
 

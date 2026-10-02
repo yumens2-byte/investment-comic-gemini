@@ -41,6 +41,7 @@ class ContinuityScore:
     seed: str
     opening_overlap_score: float
     thread_resolution_score: float
+    thread_acknowledgement_score: float
     relationship_reuse_score: float
     beat_compliance_score: float
     total_score: float
@@ -49,6 +50,8 @@ class ContinuityScore:
 
     @property
     def status(self) -> str:
+        if self.missing_requirements:
+            return "fail"
         if self.total_score >= 70:
             return "pass"
         if self.total_score >= 40:
@@ -57,11 +60,12 @@ class ContinuityScore:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "version": "continuity-score-1",
+            "version": "continuity-score-2",
             "source_episode_id": self.source_episode_id,
             "seed": self.seed,
             "opening_overlap_score": self.opening_overlap_score,
             "thread_resolution_score": self.thread_resolution_score,
+            "thread_acknowledgement_score": self.thread_acknowledgement_score,
             "relationship_reuse_score": self.relationship_reuse_score,
             "beat_compliance_score": self.beat_compliance_score,
             "total_score": self.total_score,
@@ -129,21 +133,23 @@ def score_story_continuity(
         str(item).strip() for item in previous.get("unresolved_threads") or [] if str(item).strip()
     ]
     full_text = _panel_text(script_dict)
-    resolved_text = "\n".join(
-        str(item) for item in script_dict.get("resolved_threads") or []
-    ).lower()
+    from engine.narrative.thread_contracts import validate_thread_transitions
+
+    missing.extend(validate_thread_transitions(
+        script_dict, previous, (context_pack or {}).get("_resolution_review")))
     thread_applicable = bool(unresolved)
     thread_score = 0.0
     if unresolved:
         thread_scores: list[float] = []
         for thread in unresolved[:3]:
-            score, matches = _overlap_score(thread, f"{full_text}\n{resolved_text}", 1.0)
+            # This component measures acknowledgement/progress, not semantic resolution.
+            score, matches = _overlap_score(thread, full_text, 1.0)
             thread_scores.append(score)
             matched_terms.extend(matches)
-        thread_score = round(30.0 * (max(thread_scores) if thread_scores else 0.0), 2)
+        thread_score = round(30.0 * (sum(thread_scores) / len(thread_scores)), 2)
 
         if thread_score < 10:
-            missing.append("unresolved_thread_resolution")
+            missing.append("unresolved_thread_acknowledgement")
 
     relationship_delta = previous.get("relationship_delta") or {}
     relationship_applicable = isinstance(relationship_delta, dict) and bool(relationship_delta)
@@ -217,7 +223,10 @@ def score_story_continuity(
         source_episode_id=str(source_episode_id) if source_episode_id else None,
         seed=seed,
         opening_overlap_score=opening_score,
-        thread_resolution_score=thread_score,
+        thread_resolution_score=(30.0 if script_dict.get("resolved_threads") and
+            not validate_thread_transitions(script_dict, previous,
+                (context_pack or {}).get("_resolution_review")) else 0.0),
+        thread_acknowledgement_score=thread_score,
         relationship_reuse_score=relationship_score,
         beat_compliance_score=beat_score,
         total_score=total,

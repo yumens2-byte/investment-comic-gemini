@@ -65,7 +65,7 @@ def _today() -> str:
     return date.today().strftime("%Y-%m-%d")
 
 
-def _latest_date(stage: str) -> str:
+def _latest_date(stage: str, *, strict: bool = False) -> str:
     """
     날짜 미입력 시 기준 날짜 결정.
     - stage=all/data: 오늘 날짜 (신규 수집)
@@ -87,7 +87,8 @@ def _latest_date(stage: str) -> str:
         if rows.data:
             return str(rows.data[0]["snapshot_date"])
     except Exception:
-        pass
+        if strict:
+            raise
     return _today()
 
 
@@ -97,7 +98,7 @@ def _make_episode_id(episode_date: str) -> str:
 
     Hybrid 멀티-스테이지 패턴 대응:
       - 해당 날짜에 아직 published 되지 않은 에피소드가 있으면 → 해당 ID 재사용
-      - 없으면 → (last_no + 1) 로 신규 생성
+      - published도 ID 재사용 후 생성 가드로 차단; 빈 날짜만 001 생성
     이렇게 하지 않으면 image stage 등 후속 stage가 별도 프로세스로
     실행될 때 +1 증가한 ID를 반환하여 episode_id 불일치가 발생함.
 
@@ -114,9 +115,13 @@ def _make_episode_id(episode_date: str) -> str:
             .limit(1)
             .execute()
         )
+        if not isinstance(rows.data, list):
+            raise RuntimeError("invalid episode identity response")
         if rows.data:
-            last_no = rows.data[0]["episode_no"] or 0
-            last_status = rows.data[0].get("status") or ""
+            last_no = rows.data[0].get("episode_no")
+            last_status = rows.data[0].get("status")
+            if type(last_no) is not int or last_no < 1 or not last_status:
+                raise RuntimeError("invalid stored episode identity")
             # 진행 중인 에피소드 (미발행) → 재사용
             if last_status != "published":
                 episode_id = f"ICG-{episode_date}-{last_no:03d}"
@@ -126,15 +131,86 @@ def _make_episode_id(episode_date: str) -> str:
                     last_status,
                 )
                 return episode_id
-            # 마지막이 published → 새 번호 생성
-            no = last_no + 1
+            # Published IDs remain stable: a repeat must hit the generation guard.
+            no = last_no
         else:
             no = 1
     except Exception as _exc:
-        logger.warning("[pipeline] episode_id 조회 실패 (no=1 fallback): %s", _exc)
-        no = 1
+        raise RuntimeError("episode identity lookup failed; generation blocked") from _exc
 
     return f"ICG-{episode_date}-{no:03d}"
+
+
+class GenerationBlocked(RuntimeError):
+    """A known completed/held episode; database failures remain errors."""
+
+    def __init__(self, episode_id: str, reason: str):
+        self.reason = reason
+        super().__init__(f"generation safety check failed: {episode_id} ({reason})")
+
+
+def _assert_generation_allowed(episode_date: str, episode_id: str) -> None:
+    """Exact identity guard; FORCE_RUN never bypasses terminal image states."""
+    from engine.common.supabase_client import icg_table
+
+    episode_no = int(episode_id.rsplit("-", 1)[1])
+    try:
+        response = (
+            icg_table("episode_assets")
+            .select("episode_no,status,error_message")
+            .eq("episode_date", episode_date)
+            .eq("episode_no", episode_no)
+            .execute()
+        )
+        rows = response.data
+        if not isinstance(rows, list):
+            raise RuntimeError("invalid episode status response")
+        if len(rows) > 1:
+            raise RuntimeError("ambiguous episode identity")
+        if rows and str(rows[0].get("error_message") or "").startswith("PUBLISH_HOLD:"):
+            raise GenerationBlocked(episode_id, "unresolved_publication_hold")
+        if rows and rows[0].get("status") in {"published", "assembled", "image_generated"}:
+            raise GenerationBlocked(episode_id, "already_" + rows[0]["status"])
+        if rows and not rows[0].get("status"):
+            raise RuntimeError("missing episode status")
+    except GenerationBlocked:
+        raise
+    except Exception as exc:
+        raise RuntimeError(f"generation safety check failed: {episode_id} (status lookup failed)") from exc
+
+
+def _assert_image_stage_inputs(episode_date: str, episode_id: str, ctx: dict) -> dict:
+    """Use the exact persisted narrative that authorizes the image revision."""
+    from engine.common.supabase_client import icg_table
+    from engine.image.generation_guard import GenerationHold, generation_revision
+    from engine.narrative.thread_contracts import validate_thread_transitions
+
+    rows = icg_table("episode_assets").select("script_json,status").eq(
+        "episode_date", episode_date
+    ).eq("episode_no", int(episode_id.rsplit("-", 1)[1])).execute().data
+    if not isinstance(rows, list) or len(rows) != 1:
+        raise GenerationHold("image requires one persisted episode; run persist first")
+    script = rows[0].get("script_json")
+    if not isinstance(script, dict) or not script.get("panels"):
+        raise GenerationHold("image requires a persisted narrative; run persist first")
+    if script.get("episode_id") != episode_id or script.get("date") != episode_date:
+        raise GenerationHold("persisted narrative episode identity mismatch")
+    revision = generation_revision()
+    stored_revision = script.get("_generation_revision", 1)
+    if type(stored_revision) is not int or stored_revision != revision:
+        raise GenerationHold(
+            f"image revision {revision} differs from persisted revision {stored_revision}; "
+            "run persist with the selected generation_revision before image"
+        )
+    if revision > 1 and (script.get("_state_candidate") or {}).get("version") != "state-candidate-1":
+        raise GenerationHold("image revision requires current narrative persistence; run recovery")
+    previous = ctx.get("previous_episode") or (ctx.get("narrative_context_pack") or {}).get("previous_episode") or {}
+    errors = validate_thread_transitions(script, previous, script.get("_resolution_review"))
+    if errors:
+        raise GenerationHold(
+            "cached narrative predates current thread contract; run recovery: " + ",".join(errors)
+        )
+    return script
 
 
 def _env_flag_enabled(name: str) -> bool:
@@ -388,9 +464,7 @@ def step_data(episode_date: str, logger_inst) -> None:
             _macro_overrides = market_fetcher.fetch_macro_overrides()
         except Exception as _ov_exc:
             _macro_overrides = {}
-            logger_inst.warning(
-                "STEP_2", f"[MacroOverride] 수집 실패 — FRED 값 유지: {_ov_exc}"
-            )
+            logger_inst.warning("STEP_2", f"[MacroOverride] 수집 실패 — FRED 값 유지: {_ov_exc}")
         for _col, _val in _macro_overrides.items():
             if _val is None:
                 continue
@@ -770,7 +844,9 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
             if scenario_type_v2 == "NO_BATTLE":
                 from engine.narrative.character_selector import select_for_no_battle
 
-                _serial_p0 = os.environ.get("SERIAL_NARRATIVE_P0_ENABLED", "false").lower() == "true"
+                _serial_p0 = (
+                    os.environ.get("SERIAL_NARRATIVE_P0_ENABLED", "false").lower() == "true"
+                )
                 _cast_history = None
                 if _serial_p0:
                     from engine.narrative.continuity import load_continuity_window
@@ -871,11 +947,11 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                 hero_power=0,
                 villain_power=0,
                 balance=0,
-                outcome="PEACEFUL_GROWTH",
+                outcome="OBSERVATION",
                 hero_power_breakdown={},
                 villain_power_breakdown={},
             )
-            logger.info("[Step 3-5] NO_BATTLE → PEACEFUL_GROWTH (전투 스킵)")
+            logger.info("[Step 3-5] NO_BATTLE → OBSERVATION (전투 스킵)")
 
         elif _scenario_v2 and scenario_type_v2 == "ALLIANCE":
             from engine.narrative.battle_calc import battle_alliance, battle_multi_villain
@@ -1165,7 +1241,8 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
                     _mirror_errors = validate_canon_mirrors(canon)
                     if _mirror_errors:
                         logger_inst.warning(
-                            "STEP_3", "[SerialP0] canon mirror warnings: " + "; ".join(_mirror_errors)
+                            "STEP_3",
+                            "[SerialP0] canon mirror warnings: " + "; ".join(_mirror_errors),
                         )
                     _recent_villains = _continuity_window.get("recurring_villains") or []
                     _context_pack["villain_reader_card"] = build_villain_reader_card(
@@ -1286,9 +1363,7 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
         # serial flag from workflow env, so five production violations were
         # logged and then persisted.  Never downgrade them to warnings in a
         # strict continuity run.
-        strict_production = _production_quality_strict_enabled(
-            continuity_strict=strict_continuity
-        )
+        strict_production = _production_quality_strict_enabled(continuity_strict=strict_continuity)
         # Serial fields are a separate rollout contract. Continuity strict keeps
         # factual/action quality fail-closed, but must not silently enable P0.
         serial_required = _env_flag_enabled("SERIAL_NARRATIVE_P0_ENABLED")
@@ -1311,11 +1386,7 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
             collect_required_cast(ctx.get("story_beat_plan"))
         )
         continuity_retry_feedback: str | None = (
-            "\n\n".join(
-                item
-                for item in (serial_base_instruction, cast_base_instruction)
-                if item
-            )
+            "\n\n".join(item for item in (serial_base_instruction, cast_base_instruction) if item)
             or None
         )
         script_dict: dict | None = None
@@ -1382,8 +1453,7 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
                 "status": "pass" if not production_violations else "fail",
                 "violation_codes": [item.code for item in production_violations],
                 "violations": [
-                    {"code": item.code, "detail": item.detail}
-                    for item in production_violations
+                    {"code": item.code, "detail": item.detail} for item in production_violations
                 ],
             }
             logger_inst.info(
@@ -1407,8 +1477,7 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
                     continuity_attempt,
                     max_quality_attempts,
                     script_dict["_production_quality"]["status"],
-                    ",".join(script_dict["_production_quality"]["violation_codes"])
-                    or "none",
+                    ",".join(script_dict["_production_quality"]["violation_codes"]) or "none",
                 ),
             )
 
@@ -1427,19 +1496,25 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
             )
             from engine.narrative.production_quality import build_production_retry_feedback
 
-            production_feedback = build_production_retry_feedback(
-                production_violations, serial_required=serial_required
-            ) or ""
-            continuity_retry_feedback = "\n\n".join(
-                item
-                for item in (
-                    continuity_retry_feedback,
-                    production_feedback,
-                    serial_base_instruction,
-                    cast_base_instruction,
+            production_feedback = (
+                build_production_retry_feedback(
+                    production_violations, serial_required=serial_required
                 )
-                if item
-            ) or None
+                or ""
+            )
+            continuity_retry_feedback = (
+                "\n\n".join(
+                    item
+                    for item in (
+                        continuity_retry_feedback,
+                        production_feedback,
+                        serial_base_instruction,
+                        cast_base_instruction,
+                    )
+                    if item
+                )
+                or None
+            )
             if not continuity_retry_feedback:
                 break
             continuity_reasons = list(
@@ -1447,9 +1522,7 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
             )
             if strict_continuity and continuity_warnings and not continuity_reasons:
                 continuity_reasons.append("continuity_score_below_threshold")
-            retry_reasons = continuity_reasons + [
-                item.code for item in production_violations
-            ]
+            retry_reasons = continuity_reasons + [item.code for item in production_violations]
             logger_inst.warning(
                 "STEP_4",
                 "[QualityRetry] strict retry requested: %s"
@@ -1520,6 +1593,22 @@ def _build_episode_asset_payload(episode_id: str, ctx: dict, script_dict: dict) 
     except Exception as _cont_exc:
         logger.warning("[step_persist] continuity bundle 생성 실패 (진행): %s", _cont_exc)
 
+    from engine.narrative.state_candidate import build_state_candidate
+    from engine.narrative.thread_contracts import validate_thread_transitions
+
+    contract_errors = validate_thread_transitions(
+        script_dict, ctx.get("previous_episode") or (ctx.get("narrative_context_pack") or {}).get("previous_episode") or {},
+        ctx.get("_resolution_review"))
+    if contract_errors:
+        raise ValueError("narrative thread contract failed: " + ",".join(contract_errors))
+
+    script_for_asset["_state_candidate"] = build_state_candidate(
+        episode_id[4:14], ctx, script_dict)
+    from engine.image.generation_guard import generation_revision
+
+    script_for_asset["_generation_revision"] = generation_revision()
+    if ctx.get("_resolution_review"):
+        script_for_asset["_resolution_review"] = ctx["_resolution_review"]
     payload = {
         "episode_no": int(episode_id.split("-")[-1]),
         "title": script_dict.get("title", ""),
@@ -1606,7 +1695,11 @@ def step_image(
                     + ",".join(issue.code for issue in performance_quality.issues)
                 )
 
-        panel_prompts = build_for_episode(script_dict, performance_specs=performance_specs)
+        panel_prompts = build_for_episode(
+            script_dict,
+            performance_specs=performance_specs,
+            battle_outcome=(ctx.get("battle_result") or {}).get("outcome"),
+        )
         panels_input = [
             {
                 "panel_idx": pp.panel_idx,
@@ -1617,9 +1710,15 @@ def step_image(
         ]
 
         panel_paths, total_cost = gemini_generate(panels_input, output_dir)
+        if (
+            not panel_paths
+            or len(panel_paths) != len(panel_prompts)
+            or any(path is None for path in panel_paths)
+        ):
+            raise RuntimeError("incomplete image generation; image_generated status forbidden")
 
         # episode_assets 업데이트 — patch 사용 (기존 script_json 등 보존)
-        from engine.persist.asset_writer import patch as asset_patch
+        from engine.persist.asset_writer import patch_by_episode as asset_patch
 
         panels_json = [
             {"panel_idx": i + 1, "path": str(p) if p else None} for i, p in enumerate(panel_paths)
@@ -1640,7 +1739,7 @@ def step_image(
 
         asset_patch(
             episode_date,
-            ctx["event_type"],
+            int(episode_id.rsplit("-", 1)[1]),
             image_asset_payload,
             optional_fields=frozenset({"performance_quality_json"}),
         )
@@ -1684,12 +1783,39 @@ def main() -> None:
     parser.add_argument(
         "--stage",
         default="all",
-        choices=["all", "data", "analysis", "narrative", "persist", "image"],
+        choices=["all", "data", "analysis", "narrative", "persist", "image", "recovery"],
     )
     parser.add_argument("--date", default=None, help="대상 날짜 (YYYY-MM-DD, 기본: 오늘)")
+    parser.add_argument("--dry-run", action="store_true", help="읽기 전용 입력·상태 점검")
+    parser.add_argument("--preflight-only", action="store_true", help="운영 실행 전 상태 점검")
+    parser.add_argument("--report", type=Path, default=Path("output/run-market-preflight.json"))
     args = parser.parse_args()
+    dry_value = os.environ.get("DRY_RUN", "false").strip().lower()
+    if dry_value not in {"true", "false"}:
+        parser.error("DRY_RUN must be true or false")
+    dry_run = args.dry_run or dry_value == "true"
 
-    episode_date = args.date or _latest_date(args.stage)
+    episode_date = args.date
+
+    if dry_run or args.preflight_only:
+        from scripts.market_preflight import emit_report, inspect_market
+        try:
+            episode_date = episode_date or _latest_date(args.stage, strict=True)
+            report = inspect_market(episode_date, args.stage, dry_run=dry_run)
+        except Exception as exc:
+            # No provider URLs, raw payloads or secrets in public reports.
+            emit_report({"status": "failed", "mode": "dry_run" if dry_run else "live_preflight",
+                         "error_type": type(exc).__name__, "allowed": False}, args.report)
+            raise SystemExit(1) from exc
+        emit_report(report, args.report)
+        return
+
+    episode_date = episode_date or _latest_date(args.stage)
+    try:
+        if date.fromisoformat(episode_date).isoformat() != episode_date:
+            raise ValueError("Noncanonical date")
+    except ValueError:
+        parser.error("--date must be a valid YYYY-MM-DD date")
 
     # StepLogger 초기화
     from engine.common.logger import StepLogger, get_run_id
@@ -1709,6 +1835,11 @@ def main() -> None:
         ctx: dict = {}
         script_dict: dict = {}
         episode_id = _make_episode_id(episode_date)
+        if args.stage in ("all", "narrative", "persist", "image", "recovery"):
+            _assert_generation_allowed(episode_date, episode_id)
+            from scripts.market_preflight import assert_image_ledger_allowed
+
+            assert_image_ledger_allowed(episode_date, episode_id, args.stage)
 
         if args.stage in ("all", "data"):
             step_data(episode_date, sl)
@@ -1716,26 +1847,7 @@ def main() -> None:
         if args.stage in ("all", "analysis"):
             ctx = step_analysis(episode_date, sl)
 
-        # ── 중복 발행 방어 (Layer 3) ─────────────────────────────────────
-        if args.stage in ("all", "narrative", "persist", "image"):
-            _force = os.environ.get("FORCE_RUN", "false").lower() == "true"
-            try:
-                from engine.persist.asset_writer import get_current_status
-
-                _cur = get_current_status(episode_date, "NORMAL")
-                if _cur == "published" and not _force:
-                    sl.error(
-                        "PIPELINE",
-                        f"🛑 이미 published 상태 — episode_date={episode_date} 재생성 차단. "
-                        "강제 재생성이 필요하면 FORCE_RUN=true 설정 후 재실행.",
-                    )
-                    sys.exit(1)
-            except SystemExit:
-                raise
-            except Exception as _exc:
-                sl.warning("PIPELINE", f"published 상태 체크 실패 (진행): {_exc}")
-
-        if args.stage in ("all", "narrative"):
+        if args.stage in ("all", "narrative", "recovery"):
             if not ctx:
                 # ── Hybrid: 단독 실행 시 DB에서 ctx 복원 ────────────────
                 from engine.persist.asset_writer import load_analysis_ctx
@@ -1757,7 +1869,7 @@ def main() -> None:
             except Exception as _exc:
                 logger.warning("[step_narrative] script DB 저장 실패 (진행): %s", _exc)
 
-        if args.stage in ("all", "persist"):
+        if args.stage in ("all", "persist", "recovery"):
             if not ctx:
                 from engine.persist.asset_writer import load_analysis_ctx
 
@@ -1779,88 +1891,9 @@ def main() -> None:
                 sl.info("STEP_5", "[Hybrid] narrative_script_json DB 복원 완료")
             step_persist(episode_date, episode_id, ctx, script_dict, sl)
 
-            # ── Step 3-Story-Save: 에피소드 완료 후 story_state 저장 (2026-04-22 보정) ──
-            # SCENARIO_V2_ENABLED=true 이고 ctx에 _story_state 있을 때만 실행.
-            # 실패해도 파이프라인 계속 (다음 날 load_story_state가 DEFAULT 반환).
-            _scenario_v2_enabled = os.environ.get("SCENARIO_V2_ENABLED", "false").lower() == "true"
-            if _scenario_v2_enabled and ctx.get("_story_state"):
-                try:
-                    from engine.character.story_state_manager import (
-                        save_story_state,
-                        update_after_episode,
-                    )
+            sl.info("STEP_5", "후보 서사 상태 저장 — 발행 확정 전 story/arc 시계는 갱신하지 않음")
 
-                    _delta = ctx.get("delta") or {}
-                    _vix = _delta.get("vix") or 0.0
-                    _outcome = (ctx.get("battle_result") or {}).get("outcome", "DRAW")
-                    _updated_state = update_after_episode(
-                        ctx["_story_state"],
-                        ctx.get("_guest_characters", []),
-                        _outcome,
-                        _vix,
-                    )
-                    save_story_state(episode_date, _updated_state)
-                    sl.info(
-                        "STEP_5",
-                        f"[Step 3-Story-Save] story_state 저장 완료 "
-                        f"(arc={_updated_state.get('arc_id')} "
-                        f"ep={_updated_state.get('arc_episode', 0)} "
-                        f"rift={_updated_state.get('world_state', {}).get('dimensional_rift_progress', 0)}%)",
-                    )
-                except Exception as _exc:
-                    sl.warning(
-                        "STEP_5",
-                        f"[Step 3-Story-Save] 실패 (영향 없음): {_exc}",
-                    )
-
-            # -- ARC_STATE_V3: 에피소드 완료 후 arc_state 갱신/저장 (2026-05-02) --
-            _arc_v3_enabled = os.environ.get("ARC_STATE_V3_ENABLED", "false").lower() == "true"
-            if _arc_v3_enabled and ctx.get("_arc_state") is not None:
-                try:
-                    from engine.arc.arc_state_engine import save_arc_state as _arc_save
-                    from engine.arc.arc_state_engine import (
-                        snapshot_to_daily_analysis as _arc_snap,
-                    )
-                    from engine.arc.arc_state_engine import (
-                        update_after_episode as _arc_update,
-                    )
-
-                    _outcome_v3 = (ctx.get("battle_result") or {}).get("outcome", "DRAW")
-                    _ep_type_v3 = ctx.get("episode_type_v3") or ctx.get(
-                        "scenario_type", "ONE_VS_ONE"
-                    )
-                    _snap_row = ctx.get("_snapshot_row") or {}
-                    _new_villain = ctx.get("_new_villain_id")
-                    _open_hook_v3 = (script_dict or {}).get("next_hook")
-
-                    _updated_arc = _arc_update(
-                        state=ctx["_arc_state"],
-                        outcome=_outcome_v3,
-                        episode_type=_ep_type_v3,
-                        snapshot=_snap_row,
-                        new_villain=_new_villain,
-                        open_hook=_open_hook_v3,
-                    )
-                    _arc_save(_updated_arc)
-                    _arc_snap(
-                        episode_date=episode_date,
-                        state=_updated_arc,
-                        episode_type_v3=_ep_type_v3,
-                    )
-                    sl.info(
-                        "STEP_5",
-                        f"[ARC_V3] arc_state 갱신 완료 "
-                        f"(arc_day={_updated_arc['arc_day']} "
-                        f"tension={_updated_arc['arc_tension']} "
-                        f"sig={_updated_arc['villain_signature']})",
-                    )
-                except Exception as _arc_exc:
-                    sl.warning(
-                        "STEP_5",
-                        f"[ARC_V3] arc_state 갱신 실패 (영향 없음): {_arc_exc}",
-                    )
-
-        if args.stage in ("all", "image"):
+        if args.stage in ("all", "image", "recovery"):
             if not ctx:
                 from engine.persist.asset_writer import load_analysis_ctx
 
@@ -1871,15 +1904,8 @@ def main() -> None:
                         "analysis stage를 먼저 실행하세요."
                     )
             if not script_dict:
-                from engine.persist.asset_writer import load_narrative_script
-
-                script_dict = load_narrative_script(episode_date)
-                if not script_dict:
-                    raise RuntimeError(
-                        "image 단계 실행 불가 — script_json 없음. "
-                        "narrative stage를 먼저 실행하세요."
-                    )
-                sl.info("STEP_6", "[Hybrid] narrative_script_json DB 복원 완료")
+                script_dict = _assert_image_stage_inputs(episode_date, episode_id, ctx)
+                sl.info("STEP_6", "[Hybrid] exact persisted episode script_json 복원 완료")
             step_image(episode_date, episode_id, ctx, script_dict, sl)
 
         sl.info("PIPELINE", f"완료 episode_id={episode_id}")

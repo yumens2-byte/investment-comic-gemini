@@ -117,12 +117,11 @@ def build_continuity_retry_feedback(
             ]
         )
     if unresolved:
-        first_thread = unresolved[0]
         lines.extend(
             [
                 "- unresolved_threads_to_resolve_or_acknowledge: " + "; ".join(unresolved[:3]),
-                f"- EXACT_RESOLVED_THREAD: {first_thread}",
-                "- Required: put EXACT_RESOLVED_THREAD verbatim in the top-level resolved_threads array.",
+                "- Acknowledge or advance the actual prior question in story panels. "
+                "Keep unanswered questions OPEN/PROGRESSED; never copy them into resolved_threads.",
             ]
         )
     lines.extend(

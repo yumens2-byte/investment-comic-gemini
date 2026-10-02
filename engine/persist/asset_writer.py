@@ -193,7 +193,10 @@ def get_episode_by_no(episode_date: str, episode_no: int) -> dict | None:
     return data[0]
 
 
-def patch_by_episode(episode_date: str, episode_no: int, data: dict) -> None:
+def patch_by_episode(
+    episode_date: str, episode_no: int, data: dict,
+    *, optional_fields: frozenset[str] = frozenset(),
+) -> None:
     """episode_date + episode_no 기준으로 episode_assets 특정 컬럼만 UPDATE.
 
     Resume/Publish처럼 episode_id 기반으로 대상을 확정한 뒤에는 event_type보다
@@ -201,9 +204,19 @@ def patch_by_episode(episode_date: str, episode_no: int, data: dict) -> None:
     """
     from engine.common.supabase_client import icg_table
 
-    icg_table("episode_assets").update(data).eq("episode_date", episode_date).eq(
-        "episode_no", episode_no
-    ).execute()
+    remaining = dict(data)
+    while True:
+        try:
+            icg_table("episode_assets").update(remaining).eq("episode_date", episode_date).eq(
+                "episode_no", episode_no
+            ).execute()
+            break
+        except Exception as exc:
+            missing_column = extract_missing_column(exc)
+            if missing_column not in optional_fields or missing_column not in remaining:
+                raise
+            remaining.pop(missing_column)
+            logger.warning("[asset_writer] optional column missing: %s", missing_column)
 
     logger.info(
         "[asset_writer] patch_by_episode date=%s no=%s fields=%s",

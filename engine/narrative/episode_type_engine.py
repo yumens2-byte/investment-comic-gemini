@@ -149,7 +149,7 @@ def determine_episode_type(
         recent_outcomes = []
 
     arc_day = arc_state.get("arc_day") or 0
-    arc_tension = arc_state.get("arc_tension") or 30
+    arc_tension = arc_state.get("arc_tension") if arc_state.get("arc_tension") is not None else 30
     form3_activated = arc_state.get("form3_activated") or False
     form2_available = arc_state.get("form2_available") or False
     reversal_state = delta.get("reversal_state") or "NONE"
@@ -402,7 +402,8 @@ def _step3_arc_day_base(arc_day: int) -> str:
     }
     if arc_day in mapping:
         return mapping[arc_day]
-    return "FLASHBACK"  # Day 7+
+    # Long arcs must advance current events rather than becoming perpetual flashbacks.
+    return {0: "TACTICAL", 1: "INTEL", 2: "AFTERMATH"}[(arc_day - 7) % 3]
 
 
 def _step4_dss_correction(

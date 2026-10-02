@@ -81,7 +81,8 @@ def select_ending_tone(
         EndingTone 문자열
     """
     if scenario == "NO_BATTLE":
-        return "OPTIMISTIC"
+        return {"LOW": "OPTIMISTIC", "HIGH": "OMINOUS", "CRITICAL": "OMINOUS"}.get(
+            (risk_level or "MEDIUM").upper(), "TENSE")
 
     rl = (risk_level or "MEDIUM").upper()
 
