@@ -1,0 +1,220 @@
+name: 🚀 Publish SNS
+
+on:
+  schedule:
+    # KST 월/수 06:00 = UTC 화/토
+    - cron: '6 21 * * 0-5'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'auto=DRY_RYN/DRY_RUN 시크릿, true=읽기 점검, false=운영'
+        type: choice
+        options: [auto, 'true', 'false']
+        default: auto
+      episode_id:
+        description: '에피소드 ID (예: ICG-2026-04-15-004). 미입력 시 최신 assembled 자동 선택.'
+        required: false
+        default: ''
+      channels:
+        type: choice
+        options: [telegram, x, all]
+        description: '발행 채널 (telegram / x / all)'
+        required: true
+        default: 'telegram'
+      confirm:
+        description: '운영 발행 확인 (live에서 YES 필수, dry는 불필요)'
+        required: true
+        default: 'NO'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  # ──────────────────────────────────────────────
+  # Job 1: 사전 점검 + episode_id / slides_run_id 결정
+  # ──────────────────────────────────────────────
+  pre-check:
+    name: Pre-flight Check
+    runs-on: ubuntu-latest
+    outputs:
+      execution_mode: ${{ steps.mode.outputs.execution_mode }}
+      episode_id:    ${{ steps.resolve.outputs.episode_id }}
+      slides_run_id: ${{ steps.resolve.outputs.slides_run_id }}
+      video_run_id:  ${{ steps.resolve.outputs.video_run_id }}
+    env:
+      DRY_RUN: ${{ (inputs.dry_run != '' && inputs.dry_run != 'auto') && inputs.dry_run || secrets.DRY_RYN || secrets.DRY_RUN || 'false' }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # publish code guard compares against the last published commit
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate execution mode
+        id: mode
+        run: |
+          python -c "import os; from scripts.publish_preflight import parse_dry_run; print('execution_mode=' + ('dry' if parse_dry_run(os.environ['DRY_RUN']) else 'live'))" >> "$GITHUB_OUTPUT"
+
+      - name: Publish code change guard (schedule only)
+        if: github.event_name == 'schedule' && steps.mode.outputs.execution_mode == 'live'
+        run: python -m scripts.publish_code_guard
+
+      - name: Confirm guard (workflow_dispatch only)
+        if: github.event_name == 'workflow_dispatch' && steps.mode.outputs.execution_mode == 'live'
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          if [ "$CONFIRM" != "YES" ]; then
+            echo "❌ confirm=YES 미입력. 발행 중단."
+            exit 1
+          fi
+
+      - name: Resolve episode & slides run id
+        id: resolve
+        env:
+          INPUT_EPISODE_ID: ${{ inputs.episode_id }}
+          GH_TOKEN:         ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python -m scripts.resolve_episode \
+            --episode-id "$INPUT_EPISODE_ID" \
+            >> "$GITHUB_OUTPUT"
+
+  # ──────────────────────────────────────────────
+  # Job 2: 실제 SNS 발행
+  # ──────────────────────────────────────────────
+  publish:
+    name: Publish to SNS
+    needs: pre-check
+    runs-on: ubuntu-latest
+    if: needs.pre-check.outputs.episode_id != '' && needs.pre-check.outputs.execution_mode != ''
+    env:
+      DRY_RUN: ${{ needs.pre-check.outputs.execution_mode == 'dry' && 'true' || 'false' }}
+      PUBLISH_NON_MAJOR: ${{ secrets.PUBLISH_NON_MAJOR }}
+      SUPABASE_URL:               ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY:               ${{ secrets.SUPABASE_KEY }}
+      TELEGRAM_BOT_TOKEN:         ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_FREE_CHANNEL_ID:   ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
+      TELEGRAM_PAID_CHANNEL_ID:   ${{ secrets.TELEGRAM_PAID_CHANNEL_ID }}
+      X_API_KEY:                  ${{ secrets.X_API_KEY }}
+      X_API_SECRET:               ${{ secrets.X_API_SECRET }}
+      X_ACCESS_TOKEN:             ${{ secrets.X_ACCESS_TOKEN }}
+      X_ACCESS_TOKEN_SECRET:      ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Download Assembled Slides (from Resume Episode run)
+        # Read-only: dry runs also need the slides to verify the assembly manifest.
+        if: needs.pre-check.outputs.slides_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          pattern: slides-*
+          path: output/episodes/
+          merge-multiple: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ needs.pre-check.outputs.slides_run_id }}
+
+      - name: Download Video Artifact (from Video Trailer run)
+        if: needs.pre-check.outputs.execution_mode == 'live' && needs.pre-check.outputs.video_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          pattern: video-*
+          path: .
+          merge-multiple: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ needs.pre-check.outputs.video_run_id }}
+
+      - name: Check publish assets availability
+        env:
+          EPISODE_ID: ${{ needs.pre-check.outputs.episode_id }}
+          VIDEO_RUN_ID: ${{ needs.pre-check.outputs.video_run_id }}
+        run: |
+          echo "=== 슬라이드 파일 확인 ==="
+          find output/episodes -name "S*.png" 2>/dev/null | sort || echo "슬라이드 없음"
+          echo "=== 비디오 파일 확인 ==="
+          find output/videos -name "*.mp4" 2>/dev/null | sort || echo "비디오 없음"
+          echo "=== episode_id: $EPISODE_ID ==="
+          echo "=== video_run_id: $VIDEO_RUN_ID ==="
+
+      - name: Read-only publish readiness
+        id: readiness
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_CHANNELS: ${{ inputs.channels }}
+          EPISODE_ID: ${{ needs.pre-check.outputs.episode_id }}
+        run: |
+          CHANNELS="$INPUT_CHANNELS"
+          if [ "$EVENT_NAME" = "schedule" ]; then CHANNELS="all"; fi
+          python -m scripts.run_publish --preflight-only --episode "$EPISODE_ID" --channels "$CHANNELS"
+          cat output/publish-preflight.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Anti-bot random delay
+        if: steps.readiness.outputs.allowed == 'true'
+        run: |
+          # 60~360초(1~6분) 랜덤 — 동일 시각 반복 발행 패턴 회피
+          DELAY=$((RANDOM % 301 + 60))
+          echo "⏱️ Random delay: ${DELAY}s ($((DELAY/60))m $((DELAY%60))s)"
+          sleep "$DELAY"
+
+      - name: STEP 8 — Publish SNS
+        if: steps.readiness.outputs.allowed == 'true'
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_CHANNELS: ${{ inputs.channels }}
+          EPISODE_ID: ${{ needs.pre-check.outputs.episode_id }}
+        run: |
+          if [ "$EVENT_NAME" = "schedule" ]; then
+            CHANNELS="all"
+          else
+            CHANNELS="$INPUT_CHANNELS"
+          fi
+
+          EID="$EPISODE_ID"
+          if [ -n "$EID" ]; then
+            python -m scripts.run_publish --episode "$EID" --channels "$CHANNELS"
+          else
+            python -m scripts.run_publish --channels "$CHANNELS"
+          fi
+
+      - name: Upload publish inspection
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: publish-preflight-${{ github.run_id }}
+          path: output/publish-preflight.json
+          retention-days: 14
+
+      - name: Notify Content QC Warnings
+        if: ${{ always() && env.DRY_RUN != 'true' }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}
+        run: python -m scripts.notify_failure --qc-warnings
+
+      - name: Notify Failure
+        if: failure() && env.DRY_RUN == 'false'
+        run: python -m scripts.notify_failure
