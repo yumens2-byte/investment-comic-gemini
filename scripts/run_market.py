@@ -1435,6 +1435,10 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
         script_dict: dict | None = None
         continuity_warnings: list[str] = []
 
+        def _narrative_attempt_observer(level: str, message: str, meta: dict) -> None:
+            log_fn = logger_inst.warning if level == "warning" else logger_inst.info
+            log_fn("STEP_4", message, meta=meta)
+
         for continuity_attempt in range(1, max_quality_attempts + 1):
             script = generate_episode(
                 date=episode_date,
@@ -1458,6 +1462,8 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
                 villain_ids=ctx.get("villain_ids"),
                 continuity_retry_feedback=continuity_retry_feedback,
                 episode_decision=ctx.get("episode_decision"),
+                # P2(2026-10-05): 내부 재시도 실패·범위 보정을 run.log에 기록
+                attempt_observer=_narrative_attempt_observer,
             )
             script_dict = script.model_dump()
             if ctx.get("episode_decision"):

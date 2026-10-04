@@ -1,0 +1,114 @@
+{
+  "episode_id": "ICG-2026-10-05-001",
+  "date": "2026-10-05",
+  "event_type": "BATTLE",
+  "title": "오일 쇼크의 습격",
+  "logline": "유가 급등으로 오일 쇼크 타이탄이 소환되었다.",
+  "next_hook": null,
+  "unresolved_threads": [],
+  "thread_transitions": [],
+  "resolved_threads": [],
+  "relationship_delta": {},
+  "panels": [
+    {
+      "idx": 1,
+      "panel_type": "BATTLE",
+      "characters": [],
+      "camera": "WIDE",
+      "setting": "Seoul",
+      "action": "fight",
+      "key_text": "대사1",
+      "narration": "내레이션1",
+      "market_ref": null
+    },
+    {
+      "idx": 2,
+      "panel_type": "BATTLE",
+      "characters": [],
+      "camera": "WIDE",
+      "setting": "Seoul",
+      "action": "fight",
+      "key_text": "대사2",
+      "narration": "내레이션2",
+      "market_ref": null
+    },
+    {
+      "idx": 3,
+      "panel_type": "BATTLE",
+      "characters": [],
+      "camera": "WIDE",
+      "setting": "Seoul",
+      "action": "fight",
+      "key_text": "대사3",
+      "narration": "내레이션3",
+      "market_ref": null
+    },
+    {
+      "idx": 4,
+      "panel_type": "BATTLE",
+      "characters": [],
+      "camera": "WIDE",
+      "setting": "Seoul",
+      "action": "fight",
+      "key_text": "대사4",
+      "narration": "내레이션4",
+      "market_ref": null
+    },
+    {
+      "idx": 5,
+      "panel_type": "BATTLE",
+      "characters": [],
+      "camera": "WIDE",
+      "setting": "Seoul",
+      "action": "fight",
+      "key_text": "대사5",
+      "narration": "내레이션5",
+      "market_ref": null
+    },
+    {
+      "idx": 6,
+      "panel_type": "BATTLE",
+      "characters": [],
+      "camera": "WIDE",
+      "setting": "Seoul",
+      "action": "fight",
+      "key_text": "대사6",
+      "narration": "내레이션6",
+      "market_ref": null
+    },
+    {
+      "idx": 7,
+      "panel_type": "BATTLE",
+      "characters": [],
+      "camera": "WIDE",
+      "setting": "Seoul",
+      "action": "fight",
+      "key_text": "대사7",
+      "narration": "내레이션7",
+      "market_ref": null
+    },
+    {
+      "idx": 8,
+      "panel_type": "DISCLAIMER",
+      "characters": [],
+      "camera": "WIDE",
+      "setting": "Seoul",
+      "action": "fight",
+      "key_text": "대사8",
+      "narration": "내레이션8",
+      "market_ref": null
+    }
+  ],
+  "caption_x_cover": "오늘 유가 폭등!",
+  "caption_x_parts": [
+    "파트1",
+    "파트2"
+  ],
+  "caption_x_final": "본 콘텐츠는 투자 참고 정보이며, 투자 권유가 아닙니다.",
+  "caption_telegram": "텔레그램 캡션",
+  "hashtags": [
+    "#미장",
+    "#EDT"
+  ],
+  "arc_tension_delta": 10
+}

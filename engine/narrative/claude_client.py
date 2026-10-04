@@ -26,6 +26,7 @@ import inspect
 import json
 import logging
 import re
+from collections.abc import Callable
 
 from anthropic import Anthropic
 
@@ -191,6 +192,58 @@ def _auto_trim_raw_json(raw_json: dict) -> dict:
     return raw_json
 
 
+# 정수 필드 범위 (schema.py EpisodeScript와 동기화)
+_INT_FIELD_RANGES: dict[str, tuple[int, int]] = {
+    "arc_tension_delta": (-10, 10),
+}
+
+
+def _clamp_numeric_fields(raw_json: dict) -> list[str]:
+    """
+    Pydantic 검증 전 정수 필드 범위 보정 (raw_json in-place 수정).
+
+    - 정수(또는 정수로 해석 가능한 문자열/정수값 float)만 보정한다.
+    - bool, 소수 float, 숫자가 아닌 값은 손대지 않고 스키마 검증에 맡긴다.
+
+    Returns:
+        보정 내역 문자열 목록 (예: ["arc_tension_delta 12→10"]).
+    """
+    notes: list[str] = []
+    for field, (lower, upper) in _INT_FIELD_RANGES.items():
+        if field not in raw_json:
+            continue
+        original = raw_json[field]
+        if isinstance(original, bool):
+            continue
+        if isinstance(original, int):
+            value = original
+        elif isinstance(original, float) and original.is_integer():
+            value = int(original)
+        elif isinstance(original, str) and re.fullmatch(r"\s*[+-]?\d+\s*", original):
+            value = int(original.strip())
+        else:
+            continue
+        clamped = min(max(value, lower), upper)
+        if clamped != original:
+            raw_json[field] = clamped
+            notes.append(f"{field} {original!r}→{clamped}")
+    if notes:
+        logger.warning("[claude] 정수 범위 보정 적용: %s", ", ".join(notes))
+    return notes
+
+
+def _notify(
+    attempt_observer: Callable[[str, str, dict], None] | None, level: str, message: str, meta: dict
+) -> None:
+    """관측 콜백 호출. 콜백 실패가 생성 흐름을 깨지 않도록 격리."""
+    if attempt_observer is None:
+        return
+    try:
+        attempt_observer(level, message, meta)
+    except Exception as exc:  # noqa: BLE001 — 로깅 실패는 파이프라인 중단 사유 아님
+        logger.warning("[claude] attempt_observer 호출 실패 (무시): %s", exc)
+
+
 def _extract_json(text: str) -> str:
     """Claude 응답에서 JSON 블록 추출."""
     fence_match = re.search(r"```(?:json)?\s*([\s\S]+?)\s*```", text)
@@ -281,6 +334,7 @@ def generate_episode(
     villain_ids: list[str] | None = None,
     continuity_retry_feedback: str | None = None,
     episode_decision: dict | None = None,
+    attempt_observer: Callable[[str, str, dict], None] | None = None,
 ) -> EpisodeScript:
     """
     Claude API를 호출하여 EpisodeScript를 생성.
@@ -297,6 +351,8 @@ def generate_episode(
         scenario_type: v2.0 — "ONE_VS_ONE" | "NO_BATTLE" | "ALLIANCE" (기본: ONE_VS_ONE).
         ending_tone:   v2.0 — "OPTIMISTIC" | "TENSE" | "OMINOUS" (기본: TENSE).
         heroes:        v2.0 — 히어로 ID 리스트 (ALLIANCE=2개, 그 외=1개, 기본: [hero_id]).
+        attempt_observer: (level, message, meta) 콜백. 시도별 실패·범위 보정을
+                       호출자 로그(run.log 등)에 남기기 위함. None이면 미호출.
 
     Returns:
         검증된 EpisodeScript 인스턴스.
@@ -423,6 +479,8 @@ def generate_episode(
         user_prompt += "\nNO_BATTLE describes scene staging only. Ground market direction in supplied evidence.\n"
 
     for attempt in range(1, _MAX_RETRIES + 1):
+        # 3회차는 haiku로 fallback (except 블록 로깅에서도 참조하므로 try 밖에서 결정)
+        model = _MODEL_PRIMARY if attempt <= 2 else _MODEL_FALLBACK
         try:
             logger.info(
                 "[claude] 에피소드 생성 시도 %d/%d (scenario=%s)",
@@ -450,9 +508,6 @@ def generate_episode(
             else:
                 messages = [{"role": "user", "content": user_prompt}]
 
-            # 3회차는 haiku로 fallback
-            model = _MODEL_PRIMARY if attempt <= 2 else _MODEL_FALLBACK
-
             resp = client.messages.create(
                 **_build_messages_create_kwargs(
                     client.messages.create,
@@ -473,6 +528,15 @@ def generate_episode(
 
             # ── 자동 트리밍 (검증 전) ────────────────────────────────────
             raw_json = _auto_trim_raw_json(raw_json)
+            clamp_notes = _clamp_numeric_fields(raw_json)
+            if clamp_notes:
+                _notify(
+                    attempt_observer,
+                    "warning",
+                    f"[NarrativeClamp] 시도 {attempt}/{_MAX_RETRIES} 범위 보정: "
+                    + ", ".join(clamp_notes),
+                    {"attempt": attempt, "model": model, "clamped": clamp_notes},
+                )
 
             script = EpisodeScript.model_validate(raw_json)
 
@@ -492,6 +556,19 @@ def generate_episode(
         except Exception as exc:
             last_error = exc
             logger.warning("[claude] 시도 %d 실패: %s", attempt, exc)
+            _notify(
+                attempt_observer,
+                "warning",
+                f"[NarrativeAttempt] 시도 {attempt}/{_MAX_RETRIES} 실패 "
+                f"model={model} {type(exc).__name__}: {exc}",
+                {
+                    "attempt": attempt,
+                    "max_attempts": _MAX_RETRIES,
+                    "model": model,
+                    "exception_type": type(exc).__name__,
+                    "exception": str(exc),
+                },
+            )
 
     raise NarrativeValidationError(
         attempt=_MAX_RETRIES,
