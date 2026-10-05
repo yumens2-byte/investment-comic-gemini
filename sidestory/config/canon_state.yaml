@@ -1,0 +1,6 @@
+# Master-managed side canon state (Phase-1). Change only by master instruction.
+# nn_stage: New Network event stage per ACT2 02 v2.29 NW-EVENT table.
+#   E01 = latent (collapse data absorbed; Zero Block side-story only; nodes silhouette only)
+nn_stage: E01
+updated_at: "2026-10-05"
+source: "ACT2 02 v2.29 SECTION 7 / 05 v2.19 NW-N-01·NW-N-05 / ARC v2.11 (stage 0, absorbed_data 10 @Ep44)"
