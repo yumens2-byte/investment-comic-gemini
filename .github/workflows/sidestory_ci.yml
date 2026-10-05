@@ -33,8 +33,34 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: pip install -r requirements.txt ruff
+      # Only NotoSansCJK-Bold.ttc is used (engine/assembly/pil_composer.py). Cache that one file
+      # so a slow Ubuntu mirror (observed 12m32s for the 61 MB package) is paid at most once.
+      - name: Restore Korean font cache
+        id: fontcache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/sidestory-fonts
+          key: noto-cjk-bold-v1-${{ runner.os }}
+
       - name: Install Korean font (slide composer)
-        run: sudo apt-get install -y fonts-noto-cjk --no-install-recommends -q
+        if: steps.fontcache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get install -y fonts-noto-cjk --no-install-recommends -q
+          mkdir -p ~/.cache/sidestory-fonts
+          cp /usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc ~/.cache/sidestory-fonts/
+
+      - name: Save Korean font cache
+        if: steps.fontcache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/sidestory-fonts
+          key: noto-cjk-bold-v1-${{ runner.os }}
+
+      - name: Place Korean font
+        run: |
+          sudo mkdir -p /usr/share/fonts/opentype/noto
+          sudo cp -n ~/.cache/sidestory-fonts/NotoSansCJK-Bold.ttc /usr/share/fonts/opentype/noto/
+          test -s /usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc
       - name: Lint (ruff, side only)
         run: ruff check sidestory --line-length=100
       - name: Test (side)
@@ -73,8 +99,34 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -r requirements.txt 'psycopg[binary]==3.3.6'
+      # Only NotoSansCJK-Bold.ttc is used (engine/assembly/pil_composer.py). Cache that one file
+      # so a slow Ubuntu mirror (observed 12m32s for the 61 MB package) is paid at most once.
+      - name: Restore Korean font cache
+        id: fontcache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/sidestory-fonts
+          key: noto-cjk-bold-v1-${{ runner.os }}
+
       - name: Install Korean font (slide composer)
-        run: sudo apt-get install -y fonts-noto-cjk --no-install-recommends -q
+        if: steps.fontcache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get install -y fonts-noto-cjk --no-install-recommends -q
+          mkdir -p ~/.cache/sidestory-fonts
+          cp /usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc ~/.cache/sidestory-fonts/
+
+      - name: Save Korean font cache
+        if: steps.fontcache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/sidestory-fonts
+          key: noto-cjk-bold-v1-${{ runner.os }}
+
+      - name: Place Korean font
+        run: |
+          sudo mkdir -p /usr/share/fonts/opentype/noto
+          sudo cp -n ~/.cache/sidestory-fonts/NotoSansCJK-Bold.ttc /usr/share/fonts/opentype/noto/
+          test -s /usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc
       - name: Install pg_dump 16 client
         run: sudo apt-get install -y --no-install-recommends postgresql-client-16 || true
       - name: Download PostgREST (local, test credentials only)

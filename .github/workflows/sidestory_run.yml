@@ -77,9 +77,36 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      # Only NotoSansCJK-Bold.ttc is used (engine/assembly/pil_composer.py). Cache that one file
+      # so a slow Ubuntu mirror (observed 12m32s for the 61 MB package) is paid at most once.
+      - name: Restore Korean font cache
+        id: fontcache
+        if: (inputs.stage == 'assembly' || inputs.stage == 'p1')
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/sidestory-fonts
+          key: noto-cjk-bold-v1-${{ runner.os }}
+
       - name: Install Korean font (slide composer)
-        if: inputs.stage == 'assembly' || inputs.stage == 'p1'
-        run: sudo apt-get install -y fonts-noto-cjk --no-install-recommends -q
+        if: (inputs.stage == 'assembly' || inputs.stage == 'p1') && steps.fontcache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get install -y fonts-noto-cjk --no-install-recommends -q
+          mkdir -p ~/.cache/sidestory-fonts
+          cp /usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc ~/.cache/sidestory-fonts/
+
+      - name: Save Korean font cache
+        if: (inputs.stage == 'assembly' || inputs.stage == 'p1') && steps.fontcache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/sidestory-fonts
+          key: noto-cjk-bold-v1-${{ runner.os }}
+
+      - name: Place Korean font
+        if: (inputs.stage == 'assembly' || inputs.stage == 'p1')
+        run: |
+          sudo mkdir -p /usr/share/fonts/opentype/noto
+          sudo cp -n ~/.cache/sidestory-fonts/NotoSansCJK-Bold.ttc /usr/share/fonts/opentype/noto/
+          test -s /usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc
 
       - name: Resolve slot date
         id: slot
