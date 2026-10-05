@@ -38,7 +38,7 @@ on:
         default: false
         type: boolean
       artifact_run_id:
-        description: "Restore panels/slides from a previous run's artifact (run id). Needed to resume image/assembly"
+        description: "Resume only: previous run id or run URL whose artifact to restore. Leave EMPTY for a first run"
         required: false
         default: ""
 
@@ -90,11 +90,25 @@ jobs:
           echo "date=$SLOT" >> "$GITHUB_OUTPUT"
           echo "SLOT=$SLOT"
 
+      - name: Validate artifact_run_id
+        id: art
+        env:
+          RAW: ${{ inputs.artifact_run_id }}
+        run: |
+          RUN_ID="$(printf '%s' "$RAW" | tr -d '[:space:]')"
+          RUN_ID="${RUN_ID##*/runs/}"; RUN_ID="${RUN_ID%%/*}"
+          if [ -z "$RUN_ID" ]; then echo "id=" >> "$GITHUB_OUTPUT"; exit 0; fi
+          if ! printf '%s' "$RUN_ID" | grep -Eq '^[0-9]+$'; then
+            echo "::error::artifact_run_id must be the numeric run id (e.g. 18234567890) or the run URL. Leave it empty for a first run. Got: '$RAW'"
+            exit 1
+          fi
+          echo "id=$RUN_ID" >> "$GITHUB_OUTPUT"
+
       - name: Restore previous artifact
-        if: inputs.artifact_run_id != ''
+        if: steps.art.outputs.id != ''
         uses: actions/download-artifact@v4
         with:
-          run-id: ${{ inputs.artifact_run_id }}
+          run-id: ${{ steps.art.outputs.id }}
           github-token: ${{ github.token }}
           pattern: sidestory-${{ steps.slot.outputs.date }}-*
           merge-multiple: true
