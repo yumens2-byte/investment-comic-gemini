@@ -178,3 +178,64 @@ def test_repo_refs_registered_and_match_committed_files() -> None:
                        if file.is_file() else None))
     result = gates.sg2_refs(checks)
     assert result.passed, result.reason
+
+
+# Pilot 1 (2026-10-05, ICG-2026-10-03-001) produced these exact panel descriptions.
+PILOT1 = {
+    1: ("a vast dark sky after a clash, residual light fragments and data trails drifting upward "
+        "like embers, no figures present",
+        "glowing afterglow of two opposing forces lingers mid-air, slowly dispersing into the "
+        "dark void"),
+    2: ("a dark data plane where fragmented text panels float like broken glass in empty space",
+        "shards of light arrange themselves into the shape of a title inscription, suspended "
+        "motionless"),
+    3: ("a void between data streams, scattered unresolved data packets hovering without "
+        "destination",
+        "fragments of data pulse faintly but do not move toward any receiver, suspended in "
+        "equilibrium"),
+    4: ("a stark monochrome observation platform above a gridded data field, no other figures",
+        "Zero Block stands still facing forward, one hand extended slightly as if measuring the "
+        "gap between invisible forces"),
+    5: ("a remote elevated ridge overlooking a fractured data landscape below, deep shadow",
+        "a single distant silhouette stands at the edge of the ridge, unmoving, facing the broken "
+        "terrain"),
+    6: ("a dim observation corridor, faint grid lines on the floor, darkness beyond",
+        "Zero Block stands with back to camera, motionless, looking into the dark ahead"),
+}
+
+
+def test_pilot1_defects_are_now_rejected_and_clean_panels_still_pass() -> None:
+    echo = echo_for("DRAW")
+    raw = raw_script()
+    for p in raw["panels"]:
+        p["setting"], p["action"] = PILOT1[p["idx"]]
+    _, problems = _check(raw, echo)
+    joined = "\n".join(problems)
+    assert "P2 setting/action must not ask for written text ['inscription', 'text', 'title']" \
+        in joined
+    assert "P5 setting/action must not describe people ['silhouette']" in joined
+    # negated mentions in P1/P4 and the named Zero Block in P4/P6 are not flagged
+    for idx in (1, 3, 4, 6):
+        assert f"P{idx} setting/action" not in joined, problems
+
+
+@pytest.mark.parametrize("phrase,ok", [
+    ("no text, no logos", True), ("without any figures", True), ("a glowing sign of decay", True),
+    ("a neon banner over the city", False), ("an observer watches", False),
+    ("scattered numerals in the air", False), ("a crowd below", False),
+])
+def test_visual_word_rules(phrase, ok) -> None:
+    raw = raw_script()
+    raw["panels"][2]["setting"] = phrase
+    _, problems = _check(raw)
+    assert (not any(p.startswith("P3 setting/action") for p in problems)) is ok, problems
+
+
+def test_image_prompt_forbids_extra_figures_and_letterbox(tmp_path) -> None:
+    chars = make_refs(tmp_path)
+    none = build_panel_spec(SidePanel(idx=1, panel_type="COVER", setting="s", action="a"), chars)
+    posed = build_panel_spec(SidePanel(idx=4, panel_type="CLIMAX", setting="s", action="a",
+                                       zero_block_pose="front"), chars)
+    assert "No people or figures anywhere" in none.prompt
+    assert "No other people or figures besides Zero Block" in posed.prompt
+    assert "no letterbox" in none.prompt and "full-bleed" in posed.prompt

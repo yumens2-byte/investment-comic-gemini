@@ -18,12 +18,13 @@ class GeminiPanelGenerator:
         self._guard_factory = guard_factory
 
     def generate(self, panel_idx: int, prompt: str, refs: list[Path],
-                 output_dir: Path) -> tuple[Path, float]:
+                 output_dir: Path, aspect_ratio: str | None = None) -> tuple[Path, float]:
         guard = (self._guard_factory(output_dir, panel_idx, prompt, refs)
                  if self._guard_factory else None)
         try:
             path, cost = generate_panel(panel_idx, prompt, refs, output_dir,
-                                        output_dir.parent / "gemini_run.log", None, guard=guard)
+                                        output_dir.parent / "gemini_run.log", aspect_ratio,
+                                        guard=guard)
         except GenerationHold as exc:
             raise ImageHold(str(exc)) from exc
         if path is None:

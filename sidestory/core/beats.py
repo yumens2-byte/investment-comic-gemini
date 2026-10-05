@@ -52,11 +52,13 @@ def beats_for(outcome_class: OutcomeClass) -> list[PanelBeat]:
     observe, observe_poses = _OBSERVE[outcome_class]
     return [
         PanelBeat(1, "COVER", _COVER[outcome_class]),
-        PanelBeat(2, "TENSION", "본편 회차를 인용한다(본편 제목·결과를 그대로, 변경 금지)",
+        PanelBeat(2, "TENSION", "본편 회차를 인용한다(제목·결과는 key_text/narration 글자로만, 변경 금지). "
+                  "그림은 본편 전투가 남긴 추상적 잔향(빛·파편)이며 글자 형상 금지",
                   must_cite_main=True),
         PanelBeat(3, "TENSION", _FLOW[outcome_class]),
         PanelBeat(4, "CLIMAX", observe, allowed_poses=observe_poses),
-        PanelBeat(5, "CLIMAX", "원경의 노드 실루엣(이름·대사 없음)",
+        PanelBeat(5, "CLIMAX", "원경의 노드 실루엣(이름·대사 없음). 노드는 silhouettes 항목으로만 지정하고 "
+                  "setting/action은 풍경만 묘사",
                   max_silhouettes=2 if outcome_class is OutcomeClass.DEFEAT else 1),
         PanelBeat(6, "AFTERMATH", "Zero Block 독백(시스템·구조 비판, 냉정한 관찰자) + 다음 외전 훅"),
     ]

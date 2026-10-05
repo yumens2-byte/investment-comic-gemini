@@ -1,5 +1,5 @@
-"""CLI: python -m sidestory --stage gate|echo|narrative|image|assembly|p1
-   [--date YYYY-MM-DD] [--force] [--no-persist] [--retry-hold]."""
+"""CLI: python -m sidestory --stage gate|echo|narrative|image|assembly|p1|refgen
+   [--date YYYY-MM-DD] [--force] [--no-persist] [--retry-hold] [--ref-revision N]."""
 from __future__ import annotations
 
 import argparse
@@ -53,9 +53,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="read-only (gate/echo only; P1 stages always persist)")
     parser.add_argument("--retry-hold", action="store_true",
                         help="p1: release a held episode and resume from its last artifact")
+    parser.add_argument("--ref-revision", type=int, default=1,
+                        help="refgen: REF revision folder r<N> (new N for a new set of prompts)")
     args = parser.parse_args(argv)
 
-    if args.stage not in P0_STAGES + P1_STAGES:
+    if args.stage not in P0_STAGES + P1_STAGES + ("refgen",):
         print(json.dumps({"stage": args.stage, "status": "not_implemented"}))
         return 2
     if args.stage in P1_STAGES and args.no_persist:
@@ -78,6 +80,19 @@ def main(argv: list[str] | None = None) -> int:
                          ensure_ascii=False))
         return 3
     feed, store = SupabaseMainFeedReader(client), SupabaseSideStore(client)
+
+    if args.stage == "refgen":
+        from sidestory.adapters.icg.image_adapter import GeminiPanelGenerator
+        from sidestory.adapters.notion.prompt_loader import NotionPromptSource
+        from sidestory.app.refgen import run_refgen
+
+        res = run_refgen(args.ref_revision, images=GeminiPanelGenerator(),
+                         prompts=NotionPromptSource(), store=store)
+        print(json.dumps(res.as_dict(), ensure_ascii=False, indent=2))
+        snippet = res.detail.get("characters_side_yaml_refs")
+        if snippet:
+            print("\n# characters_side.yaml refs (after master review):\n" + snippet)
+        return 0 if res.status == "ok" else 1
 
     if args.stage in P1_STAGES:
         from sidestory.app.p1 import run_p1, run_stage

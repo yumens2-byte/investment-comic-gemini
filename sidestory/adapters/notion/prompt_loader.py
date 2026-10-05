@@ -35,31 +35,71 @@ def blocks_to_text(blocks: list[dict]) -> list[str]:
     return lines
 
 
+REF_PAGE_TITLE = "REF_PROMPTS"
+REF_POSES = ("front", "side", "back", "attack", "defense")
+MIN_REF_PROMPT_CHARS = 300
+
+
+def _rich(block: dict) -> str:
+    btype = block.get("type", "")
+    return "".join(r.get("plain_text", "") for r in block.get(btype, {}).get("rich_text", []))
+
+
+def parse_ref_prompts(blocks: list[dict]) -> dict[str, str]:
+    """`## <pose>` heading followed by one code block = that pose's REF prompt."""
+    prompts: dict[str, str] = {}
+    pose: str | None = None
+    for block in blocks:
+        btype = block.get("type", "")
+        if btype.startswith("heading_"):
+            name = _rich(block).strip().lower()
+            pose = name if name in REF_POSES else None
+        elif btype == "code" and pose and pose not in prompts:
+            prompts[pose] = _rich(block).strip()
+    return prompts
+
+
 class NotionPromptSource:
     def __init__(self, page_id: str | None = None, token: str | None = None, session=None):
         self.page_id = (page_id or os.environ.get("NOTION_SIDE_SYSTEM_ID", "")).replace("-", "")
         self.token = token or os.environ.get("NOTION_API_KEY", "")
         self._http = session or requests
 
-    def system_prompt(self) -> str:
+    def _children(self, block_id: str) -> list[dict]:
         if not self.page_id or not self.token:
             raise LLMError("NOTION_SIDE_SYSTEM_ID / NOTION_API_KEY missing")
         headers = {"Authorization": f"Bearer {self.token}", "Notion-Version": "2022-06-28"}
-        lines: list[str] = []
+        blocks: list[dict] = []
         cursor = None
         for _ in range(20):  # ≤2,000 blocks
-            url = f"{_API}/blocks/{self.page_id}/children?page_size=100"
+            url = f"{_API}/blocks/{block_id.replace('-', '')}/children?page_size=100"
             if cursor:
                 url += f"&start_cursor={cursor}"
             resp = self._http.get(url, headers=headers, timeout=15)
             if resp.status_code != 200:
                 raise LLMError(f"Notion prompt load failed: HTTP {resp.status_code}")
             body = resp.json()
-            lines += blocks_to_text(body.get("results", []))
+            blocks += body.get("results", [])
             if not body.get("has_more"):
                 break
             cursor = body.get("next_cursor")
-        text = "\n".join(lines).strip()
+        return blocks
+
+    def system_prompt(self) -> str:
+        text = "\n".join(blocks_to_text(self._children(self.page_id))).strip()
         if len(text) < MIN_PROMPT_CHARS:
             raise LLMError(f"Notion side system prompt too short ({len(text)} chars)")
         return text
+
+    def ref_prompts(self) -> dict[str, str]:
+        """Child page "REF_PROMPTS" of the system prompt page (no extra secret needed)."""
+        page = next((b for b in self._children(self.page_id)
+                     if b.get("type") == "child_page"
+                     and b.get("child_page", {}).get("title", "").strip() == REF_PAGE_TITLE), None)
+        if page is None:
+            raise LLMError(f"child page {REF_PAGE_TITLE!r} not found under the system prompt page")
+        prompts = parse_ref_prompts(self._children(page["id"]))
+        missing = [p for p in REF_POSES if len(prompts.get(p, "")) < MIN_REF_PROMPT_CHARS]
+        if missing:
+            raise LLMError(f"REF prompts missing or too short: {missing}")
+        return prompts

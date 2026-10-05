@@ -17,7 +17,7 @@ NEGATIVE_BLOCK = (
     "NEGATIVE: no text, no letters, no numbers, no captions, no speech bubbles, no logos, "
     "no watermarks, no real people, no celebrities, no brand marks, no gold color, no red color, "
     "no visible face under the hood, no superheroes, no villains, no other named characters, "
-    "no human crowds in focus, no photorealism."
+    "no human crowds in focus, no photorealism, no letterbox, no black bars, full-bleed image."
 )
 
 
@@ -58,9 +58,12 @@ def build_panel_spec(panel: SidePanel, characters: dict[str, Any]) -> PanelImage
         lock = "; ".join(zb.get("visual_lock") or [])
         lines.append(
             f"CHARACTER: {zb['name']} ({panel.zero_block_pose} pose), match the attached "
-            f"reference image exactly. IDENTITY LOCK: {lock}. {zb.get('gdl', '')}".rstrip())
+            f"reference image exactly. IDENTITY LOCK: {lock}. {zb.get('gdl', '')} "
+            "No other people or figures besides Zero Block and the background figures listed "
+            "below, if any.")
     else:
-        lines.append("CHARACTER: none (environment only).")
+        lines.append("CHARACTER: none (environment only). No people or figures anywhere except "
+                     "the background figures listed below, if any.")
     silhouettes = _silhouette_text(characters, panel.silhouettes)
     if silhouettes:
         lines.append("BACKGROUND FIGURES (unnamed, silhouette only, no details, no faces): "

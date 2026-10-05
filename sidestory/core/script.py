@@ -6,6 +6,7 @@ to the model for regeneration; still failing → hold.
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
@@ -16,6 +17,26 @@ from sidestory.core.canon_rules import DISCLAIMER, find_stage_violations
 from sidestory.core.models import EchoPack
 
 CAPTION_MAX = 1500
+
+# Words in setting/action that make the image model draw glyphs (pilot 1: "title inscription"
+# rendered the literal word TITLE). Text belongs to key_text/narration only.
+TEXT_INDUCING = re.compile(
+    r"\b(title|titles|text|texts|inscription|inscriptions|letter|letters|lettering|word|words|"
+    r"caption|captions|typography|headline|headlines|banner|banners|label|labels|logo|logos|"
+    r"signage|signboard|font|fonts|glyph|glyphs|numeral|numerals|digits|writing|written)\b",
+    re.IGNORECASE)
+# Extra people in setting/action (pilot 1: "a distant silhouette stands" became a second figure).
+# Nodes are expressed only through the `silhouettes` field; Zero Block only via its pose.
+FIGURE_WORDS = re.compile(
+    r"\b(figure|figures|person|persons|people|man|men|woman|women|human|humans|humanoid|"
+    r"silhouette|silhouettes|observer|observers|someone|somebody|stranger|strangers|crowd|"
+    r"character|characters|soldier|soldiers|hero|heroes|villain|villains)\b",
+    re.IGNORECASE)
+# Negated mentions ("no figures present", "without any text") are instructions, not content.
+NEGATED = re.compile(
+    r"\b(no|without|never|not)\s+(any\s+|other\s+|visible\s+|human\s+|written\s+)?\w+",
+    re.IGNORECASE)
+
 DATA_CARD_IDX = 7
 DISCLAIMER_IDX = 8
 
@@ -163,6 +184,15 @@ def validate(script: dict[str, Any], echo: EchoPack, stage: str) -> tuple[SideSc
         if hits:
             problems.append(f"P{p.idx} main characters must not be drawn: {sorted(set(hits))}")
         problems += [f"P{p.idx} {v}" for v in find_stage_violations(visual, stage)]
+        positive = NEGATED.sub(" ", visual)
+        text_hits = sorted({m.group(0).lower() for m in TEXT_INDUCING.finditer(positive)})
+        if text_hits:
+            problems.append(f"P{p.idx} setting/action must not ask for written text {text_hits} "
+                            "(quote titles only in key_text/narration)")
+        figure_hits = sorted({m.group(0).lower() for m in FIGURE_WORDS.finditer(positive)})
+        if figure_hits:
+            problems.append(f"P{p.idx} setting/action must not describe people {figure_hits} "
+                            "(Zero Block via zero_block_pose, nodes via silhouettes only)")
         if beat.must_cite_main:
             cited = f"{p.key_text}\n{p.narration}"
             if echo.main_episode_id not in cited and (not echo.title or echo.title not in cited):

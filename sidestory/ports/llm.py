@@ -14,3 +14,7 @@ class NarrativeLLM(Protocol):
 
 class PromptSource(Protocol):
     def system_prompt(self) -> str: ...
+
+
+class RefPromptSource(Protocol):
+    def ref_prompts(self) -> dict[str, str]: ...

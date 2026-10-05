@@ -11,7 +11,7 @@ class ImageHold(RuntimeError):
 
 class ImageGenerator(Protocol):
     def generate(self, panel_idx: int, prompt: str, refs: list[Path],
-                 output_dir: Path) -> tuple[Path, float]:
+                 output_dir: Path, aspect_ratio: str | None = None) -> tuple[Path, float]:
         """Return (png path, cost USD). Raise ImageHold on any non-success."""
         ...
 

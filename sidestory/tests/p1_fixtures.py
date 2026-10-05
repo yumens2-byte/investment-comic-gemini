@@ -85,8 +85,9 @@ class FakeImages:
         self.hold_on = hold_on
         self.calls: list[tuple[int, str, list[Path], Path]] = []
 
-    def generate(self, panel_idx, prompt, refs, output_dir):
+    def generate(self, panel_idx, prompt, refs, output_dir, aspect_ratio=None):
         self.calls.append((panel_idx, prompt, list(refs), output_dir))
+        self.aspects = getattr(self, "aspects", []) + [aspect_ratio]
         if panel_idx == self.hold_on:
             raise ImageHold("ledger cap reached")
         output_dir.mkdir(parents=True, exist_ok=True)

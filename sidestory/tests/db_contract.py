@@ -180,6 +180,12 @@ def run_db_checks(url: str) -> None:
             check("D4 re-apply refused atomically (no partial objects)", n_before == n_after,
                   f"{n_before}->{n_after}")
 
+        ddl_before = main_ddl(url)
+        for _ in range(2):
+            db.execute((SIDE / "migrations/0002_ledger_refs_scope.sql").read_text())
+        check("D4b 0002 applies idempotently, main icg DDL unchanged",
+              main_ddl(url) == ddl_before)
+
         eps = db.execute("select episode_date, script_json from icg_side.main_feed_episode_v1"
                          " order by episode_date").fetchall()
         check("D5 episode view = published only", [r[0] for r in eps]
@@ -314,6 +320,15 @@ def run_ledger_db_checks(url: str) -> None:
                 holds = (i, res)
         check("L3 side daily cap (20 calls) enforced", holds is not None and holds[0] == 20,
               str(holds))
+        db.execute("delete from icg_side.image_generation_calls")
+        ok = db.execute("select icg_side.image_generation_reserve("
+                        "'output/sidestory/refs/r1/panels',1,%s)", (fp,)).fetchone()[0]
+        check("L5 refgen scope refs/r<N> accepted (0002)", "token" in ok, str(ok))
+        bad = [db.execute("select icg_side.image_generation_reserve(%s,1,%s)", (sc, fp)
+                          ).fetchone()[0].get("hold") for sc in (
+            "output/sidestory/refs/x/panels", "output/sidestory/refs/r1/../panels",
+            "output/sidestory/refs/r1", "output/sidestory/refs/r1000/panels")]
+        check("L6 malformed refs scopes refused", bad == ["invalid identity"] * 4, str(bad))
         main_after = db.execute("select count(*) from icg.image_generation_calls").fetchone()[0]
         check("L4 side ledger never touches main ledger", main_before == main_after == 0)
         db.execute("delete from icg_side.image_generation_calls")
@@ -639,6 +654,25 @@ def run_p1_checks(url: str, env: dict) -> None:
               [tuple(x) for x in logs][-5:] == [("narrative", "ok"), ("image", "ok"),
                                                 ("assembly", "ok"), ("image", "ok"),
                                                 ("image", "hold")], str(logs))
+        # refgen through the real ledger (scope refs/r1) with the stubbed provider.
+        from sidestory.app.refgen import POSE_ORDER, run_refgen
+
+        class _Prompts:
+            def ref_prompts(self):
+                return {p: f"REF prompt for {p} " * 40 for p in POSE_ORDER}
+
+        calls_before = len(provider_calls)
+        with contextlib.redirect_stderr(io.StringIO()):
+            ref = run_refgen(1, images=GeminiPanelGenerator(), prompts=_Prompts(), store=store)
+        with psycopg.connect(url, autocommit=True) as db:
+            n = db.execute("select count(*) filter (where state='success') from"
+                           " icg_side.image_generation_calls where scope ="
+                           " 'output/sidestory/refs/r1/panels'").fetchone()[0]
+        attached = [c[1] for c in provider_calls[calls_before:]]
+        check("P9 refgen: 5 REFs via ledger, front first then attached to the other 4",
+              ref.status == "ok" and n == 5 and attached[0] == []
+              and all(a == ["zero_block_front.png"] for a in attached[1:])
+              and set(ref.files) == set(POSE_ORDER), f"{ref.as_dict()} {attached}")
     finally:
         gemini._generate_one, gemini._get_client = real_one, real_client
         os.chdir(cwd)
