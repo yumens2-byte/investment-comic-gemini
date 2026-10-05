@@ -9,8 +9,7 @@ Main X pipeline is not modified; see boundary rules in `sidestory/__init__.py`.
 | `core/` | pure domain: models, outcome classes, Tue/Thu schedule, echo pack, canon rules, gates |
 | `ports/` | Protocol interfaces |
 | `adapters/supabase/` | icg_side access + main feed views (no engine imports) |
-| `adapters/icg/` | ONLY place allowed to import `engine` (whitelisted symbols): Claude LLM, Gemini panel + ledger, PIL composer |
-| `adapters/notion/` | side system prompt loader (`NOTION_SIDE_SYSTEM_ID`) |
+| `adapters/icg/` | ONLY place allowed to import `engine` (P1, whitelisted symbols) |
 | `adapters/facebook/` | Page publisher (P2/P3) |
 | `app/` | settings + stage orchestration |
 | `migrations/` | `0000_precheck.sql` (read-only), `0001_icg_side_schema.sql` |
@@ -22,15 +21,6 @@ Tue/Thu 10:17 KST (`sidestory_run.yml`, inert until repo variable
 else latest unanchored main episode after the previous slot (≤3 days). Main
 outcome → side reaction class: VICTORY / DRAW / DEFEAT / NO_BATTLE.
 
-## Dollar index redundancy (F3)
-Main `dollar_index` is the Fed broad index (FRED DTWEXBGS, ~120, weekly runs carried
-forward), not ICE DXY (~100). `core/dollar.py` picks the quotable value:
-DXY completed close dated before the main KST date (yfinance `DX-Y.NYB`, ≤4 days old) → else broad index labelled 광의 달러지수
-(run start ≤9 days old) → else omitted. A "DXY" within 3% of the broad value is rejected
-as a series mix-up; opposite 1-week directions are flagged `direction_divergence`.
-The raw `dollar_index` is never placed in `EchoPack.market`; SG-4 only accepts the chosen value.
-`SIDESTORY_DXY_SOURCE=off` disables the second source (tests / offline).
-
 ## P0 runbook
 1. Supabase SQL editor: run `migrations/0000_precheck.sql` → all `present = true`.
 2. Run `migrations/0001_icg_side_schema.sql`.
@@ -38,23 +28,8 @@ The raw `dollar_index` is never placed in `EchoPack.market`; SG-4 only accepts t
 4. Actions → "Sidestory Run" → stage `gate` (read-only) → then `echo` with persist=false.
 5. Confirm output `gates` all passed (SG-0 skip is normal on non-slot days; use force).
 
-## P1 (script → images → slides, no publishing)
-Stages: `narrative` (draft→narrative_done), `image` (→image_done), `assembly` (→assembled),
-`p1` (echo if the slot is new, then all remaining stages). Status is compare-and-set;
-any gate failure → `hold` + `error_message`; `p1 --retry-hold` resumes from the last stored
-artifact.
-- narrative: Claude writes panels 1–6 + copy; panel 7 (data card, EchoPack numbers only) and
-  8 (disclaimer) are deterministic. Schema + beats + SG-3/4/5 failures are fed back, max 3
-  calls, then hold. Main characters are never drawn (D-P1-1).
-- image: SG-2 (REF sha256 == `characters_side.yaml`; `__PENDING__` holds), then Gemini via
-  the main `generate_panel` and the icg_side ledger (scope `output/sidestory/<date>/panels`).
-- assembly: main `compose_episode(strict=True)` → 8 slides 1080×1350, SG-6 manifest, SG-7.
-- Artifacts: Actions artifact `sidestory-<date>-<run_id>`; resume image/assembly in a new run
-  with `artifact_run_id` (a paid panel whose file is gone is a ledger HOLD, never re-bought).
-
 ## Secrets used
-`SUPABASE_URL`, `SUPABASE_KEY` (P0); `ANTHROPIC_API_KEY`, `GEMINI_API_SUB_PAY_KEY`,
-`NOTION_API_KEY`, `NOTION_SIDE_SYSTEM_ID` (P1, run step only);
+`SUPABASE_URL`, `SUPABASE_KEY` (P0); `GEMINI_API_SUB_PAY_KEY`, `ANTHROPIC_API_KEY` (P1);
 `FACE_PAGE_ID`, `FACE_PAGE_TOKEN` (P2+). X / Telegram channel secrets are never injected.
 
 ## Split procedure (after stabilisation)

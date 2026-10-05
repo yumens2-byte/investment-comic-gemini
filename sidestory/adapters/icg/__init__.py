@@ -5,6 +5,5 @@ Allowed symbols (also the vendor list for the future repo split):
   engine.image.generation_guard: GenerationHold
   engine.assembly.pil_composer: compose_episode
   engine.narrative.claude_client: _extract_json, _build_messages_create_kwargs
-
-Modules: llm_adapter (Claude), image_adapter (Gemini + ledger), composer_adapter (PIL).
+Implemented in P1.
 """

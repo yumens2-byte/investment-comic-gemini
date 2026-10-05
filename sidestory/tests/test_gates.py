@@ -55,11 +55,3 @@ def test_sg6_manifest() -> None:
     assert gates.sg6_manifest({"S1": "x"}, {"S1": "x"}).passed
     assert not gates.sg6_manifest({"S1": "x"}, {"S1": "y"}).passed
     assert not gates.sg6_manifest({}, {}).passed
-
-
-def test_sg4_allows_chosen_dollar_value_only() -> None:
-    echo = _echo().model_copy(update={"dollar": {"value": 99.81, "change_pct_1w": 0.5}})
-    ok = {"panels": [{"narration": f"{echo.title} 달러인덱스 99.81"}]}
-    assert gates.sg4_echo_contract(ok, echo).passed
-    raw_broad = {"panels": [{"narration": f"{echo.title} 달러인덱스 120.33"}]}
-    assert "EC-2" in gates.sg4_echo_contract(raw_broad, echo).reason

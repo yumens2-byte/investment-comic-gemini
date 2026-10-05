@@ -55,32 +55,3 @@ def test_rerun_same_slot_never_reanchors_or_overwrites() -> None:
     second = run_gate_and_echo(date(2026, 10, 6), feed, store)
     assert second.skipped and "slot exists" in second.gates[0].reason
     assert store.episodes == snapshot
-
-
-class _Dxy:
-    def __init__(self, cand):
-        self.cand, self.asked = cand, None
-
-    def dxy_close(self, on_or_before):
-        self.asked = on_or_before
-        return self.cand
-
-
-def test_echo_carries_dollar_decision_and_no_raw_broad_index() -> None:
-    from sidestory.core.dollar import DollarCandidate, DollarIndexKind
-
-    src = _Dxy(DollarCandidate(kind=DollarIndexKind.DXY, value=99.81, as_of="2026-10-02",
-                               source="t", change_pct_1w=0.5))
-    result = run_gate_and_echo(date(2026, 10, 6), FakeFeed([main_row("2026-10-05")]),
-                               FakeStore(), persist=False, dxy_source=src)
-    assert src.asked == date(2026, 10, 4)          # completed sessions before main KST date
-    assert result.echo["dollar"]["kind"] == "DXY" and result.echo["dollar"]["value"] == 99.81
-    assert "dollar_index" not in result.echo["market"]
-
-
-def test_echo_falls_back_to_broad_without_second_source() -> None:
-    result = run_gate_and_echo(date(2026, 10, 6), FakeFeed([main_row("2026-10-05")]),
-                               FakeStore(), persist=False, dxy_source=None)
-    dollar = result.echo["dollar"]
-    assert dollar["kind"] == "BROAD" and dollar["as_of"] == "2026-09-29"
-    assert dollar["label_ko"] == "광의 달러지수" and "fallback_broad_index" in dollar["flags"]

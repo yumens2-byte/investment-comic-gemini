@@ -40,19 +40,9 @@ def arc_row() -> ArcRow:
                   last_episode_date="2026-10-06")
 
 
-# Production pattern 2026-09-22..10-05 (main dollar_index = Fed broad index, weekly runs).
-BROAD_HISTORY = [
-    ("2026-09-22", 119.5133), ("2026-09-23", 119.5133), ("2026-09-24", 119.5133),
-    ("2026-09-25", 119.5133), ("2026-09-26", 119.5133), ("2026-09-28", 119.5133),
-    ("2026-09-29", 120.33), ("2026-09-30", 120.33), ("2026-10-01", 120.33),
-    ("2026-10-02", 120.33), ("2026-10-03", 120.33), ("2026-10-05", 120.33),
-]
-
-
 class FakeFeed:
-    def __init__(self, rows, fingerprints=("a" * 64, "a" * 64), dollar=None):
+    def __init__(self, rows, fingerprints=("a" * 64, "a" * 64)):
         self.rows = rows
-        self.dollar = BROAD_HISTORY if dollar is None else dollar
         self._fps = list(fingerprints)
         self.calls = 0
 
@@ -64,9 +54,6 @@ class FakeFeed:
 
     def arc(self):
         return arc_row()
-
-    def dollar_history(self, start_date, end_date):
-        return [(d, v) for d, v in self.dollar if start_date <= d <= end_date]
 
     def main_fingerprint(self, episode_date):
         value = self._fps[min(self.calls, len(self._fps) - 1)]
@@ -84,14 +71,7 @@ class FakeStore:
         return set(self.anchored)
 
     def upsert_episode(self, sid, fields):
-        self.episodes[sid] = {"side_episode_id": sid, **fields}
-
-    def update_episode(self, sid, fields, expect_status):
-        row = self.episodes.get(sid)
-        if row is None or row.get("status") != expect_status:
-            return False
-        row.update(fields)
-        return True
+        self.episodes[sid] = fields
 
     def get_episode(self, sid):
         return self.episodes.get(sid)

@@ -397,7 +397,7 @@ def _wait(port: int) -> None:
 def _env(proxy_port: int) -> dict:
     return {**os.environ, "PYTHONPATH": str(REPO), "SUPABASE_SCHEMA": "icg_side",
             "SUPABASE_URL": f"http://127.0.0.1:{proxy_port}", "SUPABASE_KEY": jwt("service_role"),
-            "DRY_RUN": "true", "SIDESTORY_DXY_SOURCE": "off"}  # deterministic: no network
+            "DRY_RUN": "true"}
 
 
 def run_setup_error_cases(url: str, binary: str) -> None:
@@ -466,7 +466,7 @@ def run_e2e(url: str, binary: str) -> None:
                 time.sleep(0.25)
         env = {**os.environ, "PYTHONPATH": str(REPO), "SUPABASE_SCHEMA": "icg_side",
                "SUPABASE_URL": f"http://127.0.0.1:{proxy_port}", "SUPABASE_KEY": jwt("service_role"),
-               "DRY_RUN": "true", "SIDESTORY_DXY_SOURCE": "off"}
+               "DRY_RUN": "true"}
 
         code, out = cli(env, "--stage", "gate", "--date", "2026-10-06")
         check("E1 CLI gate on Tue anchors same-day main",
@@ -479,11 +479,6 @@ def run_e2e(url: str, binary: str) -> None:
               code == 0 and echo.get("title") == "첨탑 아래의 방패"
               and echo.get("outcome_class") == "VICTORY" and echo.get("market", {}).get("us10y")
               == 5.24 and not out.get("persisted"), str(out)[:400])
-        dollar = echo.get("dollar") or {}
-        check("E2b F3 dollar via view history: broad fallback, raw field not in market",
-              dollar.get("kind") == "BROAD" and dollar.get("label_ko") == "광의 달러지수"
-              and "dollar_index" not in echo.get("market", {})
-              and dollar.get("rejected", {}).get("DXY") == "unavailable", str(dollar))
         with psycopg.connect(url, autocommit=True) as db:
             n = db.execute("select count(*) from icg_side.side_episodes").fetchone()[0]
         check("E3 --no-persist wrote nothing", n == 0, f"rows={n}")
@@ -531,117 +526,12 @@ def run_e2e(url: str, binary: str) -> None:
         except GenerationHold as exc:
             check("E10 main scope refused when schema=icg_side", "invalid identity" in str(exc))
 
-        run_p1_checks(url, env)
-
         with psycopg.connect(url, autocommit=True) as db:
             check("E11 main icg data unchanged after full E2E", main_data_hash(db) == main_before)
     finally:
         proxy.shutdown()
         server.terminate()
         server.wait(timeout=10)
-
-
-# ── P1 over PostgREST: real store/feed/ledger, fake LLM, stubbed image provider ──
-def run_p1_checks(url: str, env: dict) -> None:
-    import contextlib
-    import io
-    from datetime import date
-
-    from PIL import Image
-
-    import engine.image.gemini_client as gemini
-    from sidestory.adapters.icg.composer_adapter import PilSlideComposer
-    from sidestory.adapters.icg.image_adapter import GeminiPanelGenerator
-    from sidestory.adapters.supabase.client import side_client
-    from sidestory.adapters.supabase.main_feed_reader import SupabaseMainFeedReader
-    from sidestory.adapters.supabase.side_store import SupabaseSideStore
-    from sidestory.app.p1 import P1Deps, run_p1, run_stage
-    from sidestory.app.settings import load_settings
-    from sidestory.tests.p1_fixtures import FakeLLM, FakePrompts, make_refs, raw_script
-
-    client = side_client(load_settings())
-    store, feed = SupabaseSideStore(client), SupabaseMainFeedReader(client)
-    sid = "SIDE-2026-10-08-01"  # drafted by E6 (NO_BATTLE anchor)
-
-    check("P1 CAS update refuses wrong expected status",
-          store.update_episode(sid, {"error_message": "x"}, expect_status="assembled") is False
-          and store.get_episode(sid)["status"] == "draft")
-    try:
-        store.update_episode(sid, {"status": "bogus"}, expect_status="draft")
-        check("P2 status check constraint enforced over API", False)
-    except Exception as exc:  # noqa: BLE001
-        check("P2 status check constraint enforced over API", "23514" in str(exc), str(exc)[:200])
-
-    buf = io.BytesIO()
-    Image.new("RGB", (96, 120), (40, 20, 90)).save(buf, "PNG")
-    provider_calls = []
-
-    def fake_generate_one(client_, prompt, refs, aspect_ratio=None):
-        provider_calls.append((prompt[:20], [Path(r).name for r in refs]))
-        return buf.getvalue(), 1000, 1290
-
-    real_one, real_client = gemini._generate_one, gemini._get_client
-    gemini._generate_one, gemini._get_client = fake_generate_one, (lambda: object())
-    cwd = os.getcwd()
-    work = Path(tempfile.mkdtemp())
-    os.chdir(work)
-    try:
-        raw = raw_script()
-        raw["panels"][2]["narration"] = "붕괴 데이터가 흘러간다"
-        deps = P1Deps(feed=feed, store=store, llm=FakeLLM([raw]), prompts=FakePrompts(),
-                      images=GeminiPanelGenerator(), composer=PilSlideComposer(),
-                      characters=make_refs(work), ref_root=work)
-        with contextlib.redirect_stderr(io.StringIO()):
-            results = run_p1(date(2026, 10, 8), deps)
-        statuses = [(r.stage, r.status) for r in results]
-        row = store.get_episode(sid)
-        check("P3 run_p1 draft→assembled through PostgREST + real ledger",
-              statuses == [("narrative", "narrative_done"), ("image", "image_done"),
-                           ("assembly", "assembled")] and row["status"] == "assembled"
-              and len(row["slides_json"]) == 8 and row["manifest_json"]["slides"],
-              f"{statuses} {[r.detail for r in results][-1]}")
-        with psycopg.connect(url, autocommit=True) as db:
-            ledger = db.execute(
-                "select count(*), count(*) filter (where state='success') from"
-                " icg_side.image_generation_calls where scope ="
-                " 'output/sidestory/2026-10-08/panels'").fetchone()
-        check("P4 six paid panels reserved+settled in icg_side ledger",
-              ledger == (6, 6) and len(provider_calls) == 6, f"{ledger} calls={provider_calls}")
-        posed = [c for c in provider_calls if c[1]]
-        check("P5 REF attached only for posed panels",
-              all(len(c[1]) == 1 and c[1][0].startswith("zero_block_") for c in posed)
-              and len(posed) == 3, str(provider_calls))
-
-        # Re-run image on the same artifacts: ledger reuse, no provider call, no new rows.
-        store.update_episode(sid, {"status": "narrative_done"}, expect_status="assembled")
-        before = len(provider_calls)
-        res = run_stage("image", date(2026, 10, 8), deps)
-        with psycopg.connect(url, autocommit=True) as db:
-            n = db.execute("select count(*) from icg_side.image_generation_calls where scope ="
-                           " 'output/sidestory/2026-10-08/panels'").fetchone()[0]
-        check("P6 image rerun reuses ledger artifacts (0 provider calls)",
-              res.status == "image_done" and len(provider_calls) == before and n == 6,
-              f"{res.status} {res.detail}")
-
-        # Lost artifact on a fresh runner → ledger HOLD, never a silent paid regeneration.
-        store.update_episode(sid, {"status": "narrative_done"}, expect_status="image_done")
-        (work / "output/sidestory/2026-10-08/panels/P1.png").unlink()
-        res = run_stage("image", date(2026, 10, 8), deps)
-        row = store.get_episode(sid)
-        check("P7 missing paid artifact → hold (restore artifact), no new call",
-              res.status == "hold" and row["status"] == "hold"
-              and "Restore" in (row.get("error_message") or "")
-              and len(provider_calls) == before, f"{res.detail}")
-        with psycopg.connect(url, autocommit=True) as db:
-            logs = db.execute("select stage, status from icg_side.side_run_logs where"
-                              " detail->>'sid' = %s order by id", (sid,)).fetchall()
-        check("P8 run logs recorded per stage",
-              [tuple(x) for x in logs][-5:] == [("narrative", "ok"), ("image", "ok"),
-                                                ("assembly", "ok"), ("image", "ok"),
-                                                ("image", "hold")], str(logs))
-    finally:
-        gemini._generate_one, gemini._get_client = real_one, real_client
-        os.chdir(cwd)
 
 
 def main() -> int:

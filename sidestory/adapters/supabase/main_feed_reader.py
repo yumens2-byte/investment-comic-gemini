@@ -47,17 +47,6 @@ class SupabaseMainFeedReader:
         rows = _rows(resp)
         return MarketRow.model_validate(rows[0]) if rows else None
 
-    def dollar_history(self, start_date: str, end_date: str) -> list[tuple[str, float | None]]:
-        resp = (
-            side_table(self._client, MARKET_VIEW)
-            .select("snapshot_date,dollar_index")
-            .gte("snapshot_date", start_date)
-            .lte("snapshot_date", end_date)
-            .order("snapshot_date")
-            .execute()
-        )
-        return [(str(r["snapshot_date"]), r.get("dollar_index")) for r in _rows(resp)]
-
     def arc(self) -> ArcRow | None:
         rows = _rows(side_table(self._client, ARC_VIEW).select("*").limit(1).execute())
         return ArcRow.model_validate(rows[0]) if rows else None

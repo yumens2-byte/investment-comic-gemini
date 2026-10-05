@@ -76,8 +76,6 @@ class EchoPack(BaseModel):
     main_threads: list[str]
     market: dict[str, float | None]
     arc: dict[str, Any]
-    # F3: chosen dollar quote {value, kind, label_ko, as_of, flags, rejected} or None
-    dollar: dict[str, Any] | None = None
 
 
 class GateResult(BaseModel):
