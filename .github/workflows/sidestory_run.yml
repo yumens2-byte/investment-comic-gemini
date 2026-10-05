@@ -49,6 +49,8 @@ jobs:
       PYTHONPATH: .
       SUPABASE_SCHEMA: icg_side
       ICG_GENERATION_REVISION: "1"
+      # F3: second dollar source (ICE DXY close). "off" = main broad index only.
+      SIDESTORY_DXY_SOURCE: yfinance
       DRY_RUN: "true"
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
