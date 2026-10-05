@@ -6,7 +6,9 @@
 
 begin;
 
-create schema icg_side;
+-- "if not exists": an empty icg_side left by an interrupted manual run must not block re-apply.
+-- Atomicity still holds: any existing object makes a later CREATE fail and the whole block rolls back.
+create schema if not exists icg_side;
 revoke all on schema icg_side from public, anon, authenticated;
 grant usage on schema icg_side to service_role;
 

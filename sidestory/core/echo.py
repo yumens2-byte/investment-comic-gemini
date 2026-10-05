@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sidestory.core.models import ArcRow, EchoPack, MainEpisodeRow, MarketRow
+from sidestory.core.models import ArcRow, EchoPack, MainEpisodeRow, MarketRow, OutcomeClass
 from sidestory.core.outcome import classify
 
 MAX_THREADS = 3
@@ -73,7 +73,17 @@ def build_echo_pack(
     market_values: dict[str, float | None] = {}
     if market is not None:
         dumped = market.model_dump()
-        market_values = {key: dumped.get(key) for key in _MARKET_KEYS}
+        # Main stores some fields with float32 noise (e.g. 15.3100004196167).
+        # 2 decimals = same precision the SG-4 EC-2 number check compares at.
+        market_values = {
+            key: (round(float(dumped[key]), 2) if dumped.get(key) is not None else None)
+            for key in _MARKET_KEYS
+        }
+
+    outcome_class = classify(outcome, episode.scenario_type)
+    # NO_BATTLE rows keep a legacy villain_id in battle_json for persistence
+    # compatibility only (scripts/run_market.py: primary_villain is None) — not story fact.
+    villain_id = None if outcome_class is OutcomeClass.NO_BATTLE else battle.get("villain_id")
 
     return EchoPack(
         side_date=side_date,
@@ -84,8 +94,8 @@ def build_echo_pack(
         event_type=episode.event_type,
         scenario_type=episode.scenario_type,
         outcome=outcome,
-        outcome_class=classify(outcome, episode.scenario_type),
-        villain_id=battle.get("villain_id"),
+        outcome_class=outcome_class,
+        villain_id=villain_id,
         hero_ids=hero_ids,
         next_hook=next_hook,
         main_threads=threads,

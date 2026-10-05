@@ -31,3 +31,19 @@ def test_no_battle_main_episode() -> None:
     echo = build_echo_pack("2026-10-06", main_row(outcome="DRAW", scenario="NO_BATTLE"),
                            None, None)
     assert echo.outcome_class is OutcomeClass.NO_BATTLE
+
+
+def test_no_battle_drops_legacy_villain_and_rounds_market() -> None:
+    """Regression from the 2026-10-05 production echo (ICG-2026-10-05-001)."""
+    row = main_row(outcome="OBSERVATION", scenario="NO_BATTLE")
+    market = market_row()
+    market.vix = 15.3100004196167
+    market.spy_change = 0.7395
+    echo = build_echo_pack("2026-10-06", row, market, None)
+    assert echo.villain_id is None
+    assert echo.market["vix"] == 15.31 and echo.market["spy_change"] == 0.74
+
+
+def test_battle_keeps_villain() -> None:
+    echo = build_echo_pack("2026-10-06", main_row(), None, None)
+    assert echo.villain_id == "CHAR_VILLAIN_001"

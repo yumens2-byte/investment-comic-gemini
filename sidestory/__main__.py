@@ -27,11 +27,17 @@ def main(argv: list[str] | None = None) -> int:
     settings = load_settings()
     side_day = date.fromisoformat(args.date) if args.date else datetime.now(KST).date()
 
-    from sidestory.adapters.supabase.client import side_client
+    from sidestory.adapters.supabase.client import SideSetupError, preflight, side_client
     from sidestory.adapters.supabase.main_feed_reader import SupabaseMainFeedReader
     from sidestory.adapters.supabase.side_store import SupabaseSideStore
 
     client = side_client(settings)
+    try:
+        preflight(client)
+    except SideSetupError as exc:
+        print(json.dumps({"stage": args.stage, "status": "setup_error", "error": str(exc)},
+                         ensure_ascii=False))
+        return 3
     persist = not (args.no_persist or args.stage == "gate")
     result = run_gate_and_echo(
         side_day,

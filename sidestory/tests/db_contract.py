@@ -156,6 +156,8 @@ def run_db_checks(url: str) -> None:
         check("D1 precheck: every contract column present", all(r[2] for r in rows),
               str([r[:2] for r in rows if not r[2]]))
 
+        # Production state found 2026-10-05: an empty icg_side left by a manual run.
+        db.execute("create schema icg_side")
         ddl_before, data_before = main_ddl(url), main_data_hash(db)
         db.execute((SIDE / "migrations/0001_icg_side_schema.sql").read_text())
         ddl_after = main_ddl(url)
@@ -324,11 +326,12 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
-def start_postgrest(binary: str, db_url: str, port: int) -> subprocess.Popen:
+def start_postgrest(binary: str, db_url: str, port: int,
+                    schemas: str = "icg,icg_side") -> subprocess.Popen:
     conf = Path(tempfile.mkdtemp()) / "pgrst.conf"
     parsed = urlparse(db_url)
     uri = f"postgresql://authenticator:local@{parsed.hostname}:{parsed.port}{parsed.path}"
-    conf.write_text(f'db-uri = "{uri}"\ndb-schemas = "icg,icg_side"\ndb-anon-role = "anon"\n'
+    conf.write_text(f'db-uri = "{uri}"\ndb-schemas = "{schemas}"\ndb-anon-role = "anon"\n'
                     f'jwt-secret = "{SECRET}"\nserver-port = {port}\n')
     log = open("/tmp/sidestory_postgrest.log", "w")
     return subprocess.Popen([binary, str(conf)], stdout=log, stderr=subprocess.STDOUT)
@@ -378,6 +381,70 @@ def cli(env: dict, *args: str) -> tuple[int, dict]:
         return proc.returncode, json.loads(proc.stdout)
     except json.JSONDecodeError:
         return proc.returncode, {"stdout": proc.stdout, "stderr": proc.stderr[-800:]}
+
+
+def _wait(port: int) -> None:
+    for _ in range(60):
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=1)
+            return
+        except urllib.error.HTTPError:
+            return
+        except OSError:
+            time.sleep(0.25)
+
+
+def _env(proxy_port: int) -> dict:
+    return {**os.environ, "PYTHONPATH": str(REPO), "SUPABASE_SCHEMA": "icg_side",
+            "SUPABASE_URL": f"http://127.0.0.1:{proxy_port}", "SUPABASE_KEY": jwt("service_role"),
+            "DRY_RUN": "true"}
+
+
+def run_setup_error_cases(url: str, binary: str) -> None:
+    """Reproduces the 2026-10-05 production gate failure (PGRST106) and the
+    not-yet-migrated case; both must exit 3 with a runbook hint, not a trace."""
+    port = free_port()
+    server = start_postgrest(binary, url, port, schemas="icg")  # icg_side NOT exposed
+    proxy, proxy_port = start_proxy(port)
+    try:
+        _wait(port)
+        code, out = cli(_env(proxy_port), "--stage", "gate", "--date", "2026-10-06")
+        check("S1 not-exposed schema → exit 3 + Exposed schemas hint",
+              code == 3 and "PGRST106" in out.get("error", "")
+              and "Exposed schemas" in out.get("error", ""), str(out)[:300])
+    finally:
+        proxy.shutdown()
+        server.terminate()
+        server.wait(timeout=10)
+    with psycopg.connect(url, autocommit=True) as db:
+        db.execute("create schema if not exists icg_side_empty")
+    port = free_port()
+    server = start_postgrest(binary, url, port, schemas="icg,icg_side_empty")
+    proxy, proxy_port = start_proxy(port)
+    try:
+        _wait(port)
+        env = {**_env(proxy_port)}
+        # settings pin the schema name; emulate an exposed-but-empty icg_side via a probe client
+        os.environ.update({"SUPABASE_URL": env["SUPABASE_URL"], "SUPABASE_KEY": env["SUPABASE_KEY"]})
+        from supabase import create_client
+
+        from sidestory.adapters.supabase import client as side_client_mod
+        original = side_client_mod.SIDE_SCHEMA
+        side_client_mod.SIDE_SCHEMA = "icg_side_empty"
+        try:
+            side_client_mod.preflight(create_client(env["SUPABASE_URL"], env["SUPABASE_KEY"]))
+            check("S2 exposed-but-unmigrated → PGRST205 hint", False, "preflight passed")
+        except side_client_mod.SideSetupError as exc:
+            check("S2 exposed-but-unmigrated → migration hint", "0001_icg_side_schema.sql"
+                  in str(exc), str(exc))
+        finally:
+            side_client_mod.SIDE_SCHEMA = original
+    finally:
+        proxy.shutdown()
+        server.terminate()
+        server.wait(timeout=10)
+        with psycopg.connect(url, autocommit=True) as db:
+            db.execute("drop schema if exists icg_side_empty")
 
 
 def run_e2e(url: str, binary: str) -> None:
@@ -476,6 +543,7 @@ def main() -> int:
     run_db_checks(url)
     run_ledger_db_checks(url)
     if Path(binary).exists():
+        run_setup_error_cases(url, binary)
         run_e2e(url, binary)
     else:
         check("E* PostgREST binary present", False, binary)
