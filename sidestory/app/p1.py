@@ -90,6 +90,16 @@ def _rel(path: Path) -> str:
         return path.as_posix()
 
 
+def accumulate_feedback(attempts: list[list[str]]) -> list[str]:
+    """Unique problems across all attempts, latest attempt first, capped."""
+    out: list[str] = []
+    for problems in reversed(attempts):
+        for item in problems:
+            if item not in out:
+                out.append(item)
+    return out[:MAX_FEEDBACK_ITEMS]
+
+
 def render_user_prompt(*, side_episode_id_: str, echo: EchoPack, nn_stage: str,
                        previous_hook: str | None, feedback: list[str]) -> str:
     env = Environment(loader=FileSystemLoader(str(CONFIG_DIR / "prompts")),
@@ -119,17 +129,18 @@ def _narrative(sid: str, side_day: date, row: dict[str, Any], deps: P1Deps,
         try:
             raw = deps.llm.generate_script(system, user)
         except LLMError as exc:
-            feedback = [f"output error: {exc}. Return exactly one JSON object."]
-            attempts.append(feedback)
-            continue
-        script = normalize(raw, side_episode_id=sid, echo=echo)
-        _, problems = validate(script, echo, deps.nn_stage)
-        if not problems:
-            return {"script_json": script}, {"attempts": len(attempts) + 1}
-        feedback = problems[:MAX_FEEDBACK_ITEMS]
-        attempts.append(feedback)
+            problems = [f"output error: {exc}. Return exactly one JSON object."]
+        else:
+            script = normalize(raw, side_episode_id=sid, echo=echo)
+            _, problems = validate(script, echo, deps.nn_stage)
+            if not problems:
+                return {"script_json": script}, {"attempts": len(attempts) + 1}
+        attempts.append(problems)
+        # The model rewrites the whole script each time, so it must see every earlier
+        # rejection (pilot 1 retry: fixing one problem reintroduced another).
+        feedback = accumulate_feedback(attempts)
     raise StageFailure("narrative rejected after "
-                       f"{MAX_NARRATIVE_ATTEMPTS} attempts: {'; '.join(feedback)}",
+                       f"{MAX_NARRATIVE_ATTEMPTS} attempts: {'; '.join(attempts[-1])}",
                        detail={"attempt_problems": attempts})
 
 

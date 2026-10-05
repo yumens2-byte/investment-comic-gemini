@@ -239,3 +239,37 @@ def test_image_prompt_forbids_extra_figures_and_letterbox(tmp_path) -> None:
     assert "No people or figures anywhere" in none.prompt
     assert "No other people or figures besides Zero Block" in posed.prompt
     assert "no letterbox" in none.prompt and "full-bleed" in posed.prompt
+
+
+# Pilot 1 retry (2026-10-05, SIDE-2026-10-03-01): format-only issues are repaired, not rejected.
+@pytest.mark.parametrize("ref,expected", [
+    (15.69, "15.69"), (72, "72"), ("VIX 15.69", "VIX 15.69"), ({"vix": 15.69}, None),
+    (["x"], None), (True, None), ("  ", None), (None, None)])
+def test_market_ref_coerced(ref, expected) -> None:
+    raw = raw_script()
+    for p in raw["panels"][2:6]:
+        p["market_ref"] = ref
+    parsed, problems = _check(raw)
+    assert not any("market_ref" in p for p in problems), problems
+    assert parsed.panels[2].market_ref == expected
+
+
+def test_market_ref_numbers_still_checked_by_sg4() -> None:
+    raw = raw_script()
+    raw["panels"][2]["market_ref"] = 17.8
+    _, problems = _check(raw)
+    assert any("EC-2 number not in echo: 17.8" in p for p in problems), problems
+
+
+def test_long_camera_clipped_not_rejected() -> None:
+    raw = raw_script()
+    raw["panels"][3]["camera"] = "low-angle medium shot " * 20
+    parsed, problems = _check(raw)
+    assert problems == []
+    assert len(parsed.panels[3].camera) <= 200 and not parsed.panels[3].camera.endswith(" ")
+
+
+def test_p5_beat_no_longer_uses_silhouette_wording() -> None:
+    for cls in OutcomeClass:
+        beat = beats_for(cls)[4].beat
+        assert "실루엣" not in beat and "silhouettes 항목" in beat

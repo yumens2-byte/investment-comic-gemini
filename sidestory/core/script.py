@@ -17,6 +17,7 @@ from sidestory.core.canon_rules import DISCLAIMER, find_stage_violations
 from sidestory.core.models import EchoPack
 
 CAPTION_MAX = 1500
+CAMERA_MAX = 200
 
 # Words in setting/action that make the image model draw glyphs (pilot 1: "title inscription"
 # rendered the literal word TITLE). Text belongs to key_text/narration only.
@@ -46,7 +47,7 @@ PanelType = Literal["COVER", "TENSION", "CLIMAX", "AFTERMATH", "TEXT_CARD", "DIS
 class SidePanel(BaseModel):
     idx: int = Field(ge=1, le=TOTAL_PANELS)
     panel_type: PanelType
-    camera: str = Field(default="", max_length=60)
+    camera: str = Field(default="", max_length=CAMERA_MAX)
     setting: str = Field(default="", max_length=400)   # English, image prompt
     action: str = Field(default="", max_length=400)    # English, image prompt
     key_text: str = Field(default="", max_length=40)
@@ -126,9 +127,36 @@ def _with_disclaimer(caption: str) -> str:
     return f"{caption}\n\n{DISCLAIMER}" if caption else DISCLAIMER
 
 
+def _clip_words(text: str, limit: int) -> str:
+    text = " ".join(text.split())
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rsplit(" ", 1)[0]
+    return cut or text[:limit]
+
+
+def _fix_format(panel: dict[str, Any]) -> dict[str, Any]:
+    """Repair format-only issues instead of rejecting (pilot 1 retry, attempts 1 and 3).
+
+    market_ref: a number becomes its text, anything else non-text is dropped (its numbers
+    are still checked by SG-4). camera: image-prompt only, so it is clipped, not rejected.
+    """
+    p = dict(panel)
+    ref = p.get("market_ref")
+    if isinstance(ref, bool) or not isinstance(ref, int | float | str):
+        p["market_ref"] = None
+    elif isinstance(ref, int | float):
+        p["market_ref"] = f"{ref}"
+    elif not ref.strip():
+        p["market_ref"] = None
+    if p.get("camera") is not None:
+        p["camera"] = _clip_words(str(p["camera"]), CAMERA_MAX)
+    return p
+
+
 def normalize(raw: dict[str, Any], *, side_episode_id: str, echo: EchoPack) -> dict[str, Any]:
     """Fill ids and deterministic panels; keep only LLM story panels 1–6."""
-    story = [p for p in (raw.get("panels") or [])
+    story = [_fix_format(p) for p in (raw.get("panels") or [])
              if isinstance(p, dict) and isinstance(p.get("idx"), int)
              and 1 <= p["idx"] <= LLM_PANELS]
     story.sort(key=lambda p: p["idx"])

@@ -198,3 +198,34 @@ def test_user_prompt_render_contains_contract() -> None:
     assert "P4 pose attack" in text and "dollar_index" not in text
     for idx in range(1, 7):
         assert f"- P{idx} [" in text
+
+
+def test_feedback_accumulates_across_attempts(env) -> None:
+    """Pilot 1 retry: each attempt fixed the last problem and reintroduced an older one."""
+    bad_pose = raw_script()
+    bad_pose["panels"][3]["zero_block_pose"] = "attack"
+    bad_num = raw_script()
+    bad_num["panels"][2]["narration"] = "VIX 17.80"
+    env.llm = FakeLLM([bad_pose, bad_num, raw_script()])
+    results = run_p1(TUE, env)
+    assert results[-1].status == "assembled"
+    third_prompt = env.llm.calls[2][1]
+    assert "pose attack" in third_prompt and "17.80" in third_prompt
+
+
+def test_accumulate_feedback_order_and_cap() -> None:
+    from sidestory.app.p1 import MAX_FEEDBACK_ITEMS, accumulate_feedback
+
+    assert accumulate_feedback([["a", "b"], ["c", "a"]]) == ["c", "a", "b"]
+    many = [[f"p{i}" for i in range(40)]]
+    assert len(accumulate_feedback(many)) == MAX_FEEDBACK_ITEMS
+
+
+def test_hold_reason_reports_last_attempt(env) -> None:
+    bad = raw_script()
+    bad["panels"][2]["narration"] = "VIX 17.80"
+    env.llm = FakeLLM([LLMError("x"), bad, bad])
+    res = run_p1(TUE, env)[-1]
+    assert res.status == "hold" and "17.80" in res.detail["reason"]
+    assert "output error" not in res.detail["reason"]
+    assert len(res.detail["attempt_problems"]) == MAX_NARRATIVE_ATTEMPTS

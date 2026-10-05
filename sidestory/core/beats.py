@@ -57,8 +57,9 @@ def beats_for(outcome_class: OutcomeClass) -> list[PanelBeat]:
                   must_cite_main=True),
         PanelBeat(3, "TENSION", _FLOW[outcome_class]),
         PanelBeat(4, "CLIMAX", observe, allowed_poses=observe_poses),
-        PanelBeat(5, "CLIMAX", "원경의 노드 실루엣(이름·대사 없음). 노드는 silhouettes 항목으로만 지정하고 "
-                  "setting/action은 풍경만 묘사",
+        PanelBeat(5, "CLIMAX", "원경에 노드가 존재함을 암시(이름·대사 없음). 노드는 silhouettes 항목에 키만 "
+                  "지정하고, setting/action은 풍경만 영어로 묘사 "
+                  "(예: 'a fractured data plain under a dim horizon')",
                   max_silhouettes=2 if outcome_class is OutcomeClass.DEFEAT else 1),
         PanelBeat(6, "AFTERMATH", "Zero Block 독백(시스템·구조 비판, 냉정한 관찰자) + 다음 외전 훅"),
     ]
