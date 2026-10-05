@@ -60,6 +60,10 @@ def test_run_workflow_p1_wiring() -> None:
     assert upload["with"]["path"] == "output/sidestory/"
     assert "github.run_id" in upload["with"]["name"]
     assert "fonts-noto-cjk" in steps["Install Korean font (slide composer)"]["run"]
+    assert "cache-hit != 'true'" in steps["Install Korean font (slide composer)"]["if"]
+    assert steps["Restore Korean font cache"]["uses"] == "actions/cache/restore@v4"
+    assert steps["Save Korean font cache"]["with"]["key"] == steps["Restore Korean font cache"]["with"]["key"]
+    assert "test -s" in steps["Place Korean font"]["run"]
     assert "^[0-9]+$" in steps["Validate artifact_run_id"]["run"]
     restore = steps["Restore previous artifact"]
     assert restore["if"] == "steps.art.outputs.id != ''"
