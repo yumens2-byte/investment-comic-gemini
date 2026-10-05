@@ -14,6 +14,7 @@ from typing import Any
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from PIL import Image
 
+from sidestory.app.imaging import MIN_KEEP_RATIO, trim_panel
 from sidestory.app.pipeline import run_gate_and_echo, side_episode_id
 from sidestory.app.settings import CONFIG_DIR
 from sidestory.core import gates, lifecycle
@@ -192,8 +193,22 @@ def _assembly(sid: str, side_day: date, row: dict[str, Any], deps: P1Deps,
         path = Path(entry["path"]) if entry else None
         if path is None or sha256_file(path) != entry.get("sha256"):
             raise StageFailure(f"P{panel.idx} panel artifact missing or changed — restore the "
-                               "image-stage artifact (artifact_run_id) before assembly")
+                               "image-stage artifact (Resume only: previous run id or run URL) "
+                               "before assembly")
         images.append(path)
+    # B1: cut letterbox / frame bands from a copy (the paid original keeps its ledger hash).
+    trim_dir = deps.output_root / side_day.isoformat() / "panels_trimmed"
+    trims: dict[str, list[int]] = {}
+    for i, path in enumerate(images):
+        if path is None:
+            continue
+        used, res = trim_panel(path, trim_dir)
+        if res.kept_ratio < MIN_KEEP_RATIO:
+            raise StageFailure(f"{path.name} band trim would keep only {res.kept_ratio:.0%} "
+                               "(misdetection) — review the panel")
+        if res.trimmed:
+            trims[path.stem] = list(res.box)
+        images[i] = used
     out_dir = deps.output_root / side_day.isoformat() / "slides"
     try:
         slides = deps.composer.compose(
@@ -216,7 +231,8 @@ def _assembly(sid: str, side_day: date, row: dict[str, Any], deps: P1Deps,
     if not sg6.passed:
         raise StageFailure(sg6.reason, [sg6])
     manifest = {"slides": expected, "script_sha256": gates.fingerprint(row["script_json"]),
-                "panels": {str(k): v["sha256"] for k, v in stored.items()}}
+                "panels": {str(k): v["sha256"] for k, v in stored.items()},
+                "trimmed": trims}
     slides_json = [{"name": Path(s).name, "path": _rel(Path(s)), "sha256": expected[Path(s).name]}
                    for s in slides]
     return {"slides_json": slides_json, "manifest_json": manifest}, {"gates": [sg6]}

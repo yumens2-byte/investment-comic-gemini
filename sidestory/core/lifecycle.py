@@ -9,11 +9,13 @@ from __future__ import annotations
 from typing import Any
 
 P1_FLOW = ("draft", "narrative_done", "image_done", "assembled")
-# stage name → (required status before, status after)
+# stage name → (allowed statuses before, status after)
+# assembly may re-run on an assembled episode: it is deterministic and makes no paid call
+# (B1: re-compose pilot 1 after band trimming without regenerating images).
 STAGE_TRANSITIONS = {
-    "narrative": ("draft", "narrative_done"),
-    "image": ("narrative_done", "image_done"),
-    "assembly": ("image_done", "assembled"),
+    "narrative": (("draft",), "narrative_done"),
+    "image": (("narrative_done",), "image_done"),
+    "assembly": (("image_done", "assembled"), "assembled"),
 }
 P1_STAGE_ORDER = ("narrative", "image", "assembly")
 
@@ -23,9 +25,10 @@ class TransitionError(RuntimeError):
 
 
 def check_transition(stage: str, current: str) -> None:
-    required, _ = STAGE_TRANSITIONS[stage]
-    if current != required:
-        raise TransitionError(f"stage {stage} requires status {required!r} (current {current!r})")
+    allowed, _ = STAGE_TRANSITIONS[stage]
+    if current not in allowed:
+        need = " or ".join(repr(a) for a in allowed)
+        raise TransitionError(f"stage {stage} requires status {need} (current {current!r})")
 
 
 def target_status(stage: str) -> str:

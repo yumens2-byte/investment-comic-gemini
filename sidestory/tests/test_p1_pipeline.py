@@ -6,7 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from sidestory.app.p1 import MAX_NARRATIVE_ATTEMPTS, P1Deps, render_user_prompt, run_p1, run_stage
+from sidestory.app.p1 import (
+    MAX_NARRATIVE_ATTEMPTS,
+    P1Deps,
+    render_user_prompt,
+    run_p1,
+    run_stage,
+    sha256_file,
+)
 from sidestory.ports.llm import LLMError
 from sidestory.tests.fixtures import FakeFeed, FakeStore, main_row
 from sidestory.tests.p1_fixtures import (
@@ -229,3 +236,57 @@ def test_hold_reason_reports_last_attempt(env) -> None:
     assert res.status == "hold" and "17.80" in res.detail["reason"]
     assert "output error" not in res.detail["reason"]
     assert len(res.detail["attempt_problems"]) == MAX_NARRATIVE_ATTEMPTS
+
+
+def test_assembly_trims_bands_and_records_manifest(env, tmp_path) -> None:
+    import numpy as np
+    from PIL import Image as _I
+
+    class BandImages(FakeImages):
+        def generate(self, panel_idx, prompt, refs, output_dir, aspect_ratio=None):
+            path, cost = super().generate(panel_idx, prompt, refs, output_dir, aspect_ratio)
+            if panel_idx == 5:
+                rng = np.random.default_rng(5)
+                a = rng.integers(30, 220, (400, 400, 3), dtype=np.uint8)
+                a[:40] = 0
+                a[-40:] = 0
+                _I.fromarray(a).save(path)
+            return path, cost
+
+    seen = {}
+
+    class RecordingComposer(FakeComposer):
+        def compose(self, panels, images, output_dir):
+            seen["images"] = list(images)
+            return super().compose(panels, images, output_dir)
+
+    env.images = BandImages()
+    env.composer = RecordingComposer()
+    res = run_p1(TUE, env)
+    assert res[-1].status == "assembled"
+    row = env.store.get_episode(SID)
+    assert row["manifest_json"]["trimmed"] == {"P5": [0, 44, 400, 356]}
+    p5 = next(p for p in row["panels_json"]["panels"] if p["idx"] == 5)
+    assert sha256_file(Path(p5["path"])) == p5["sha256"]   # paid original untouched
+    composed_p5 = seen["images"][4]
+    assert composed_p5.parent.name == "panels_trimmed" and composed_p5.name == "P5.png"
+    assert seen["images"][0].parent.name == "panels"        # clean panels used as-is
+
+
+def test_assembly_reruns_on_assembled_without_paid_calls(env) -> None:
+    run_p1(TUE, env)
+    calls = len(env.images.calls)
+    res = run_stage("assembly", TUE, env)
+    assert res.status == "assembled" and len(env.images.calls) == calls
+    assert run_stage("image", TUE, env).status == "error"
+
+
+def test_assembly_holds_on_overcut(env, monkeypatch) -> None:
+    from sidestory.app import p1 as mod
+    from sidestory.app.imaging import TrimResult
+
+    run_p1(TUE, env)
+    monkeypatch.setattr(mod, "trim_panel", lambda src, d: (src, TrimResult(
+        box=(0, 0, 10, 10), size=(100, 100), kept_ratio=0.01)))
+    res = run_stage("assembly", TUE, env)
+    assert res.status == "hold" and "misdetection" in res.detail["reason"]
