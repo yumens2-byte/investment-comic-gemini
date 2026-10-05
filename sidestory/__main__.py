@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import date, datetime, timedelta, timezone
 
@@ -39,12 +40,18 @@ def main(argv: list[str] | None = None) -> int:
                          ensure_ascii=False))
         return 3
     persist = not (args.no_persist or args.stage == "gate")
+    dxy_source = None
+    if os.environ.get("SIDESTORY_DXY_SOURCE", "yfinance").lower() == "yfinance":
+        from sidestory.adapters.market.yfinance_dxy import YFinanceDxySource
+
+        dxy_source = YFinanceDxySource()
     result = run_gate_and_echo(
         side_day,
         SupabaseMainFeedReader(client),
         SupabaseSideStore(client),
         force=args.force,
         persist=persist,
+        dxy_source=dxy_source,
     )
     print(json.dumps({
         "side_episode_id": result.side_episode_id,

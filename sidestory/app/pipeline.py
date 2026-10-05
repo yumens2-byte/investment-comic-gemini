@@ -6,11 +6,16 @@ from datetime import date, timedelta
 from typing import Any
 
 from sidestory.core import gates
+from sidestory.core.dollar import infer_broad_from_history, select_dollar
 from sidestory.core.echo import build_echo_pack
 from sidestory.core.models import GateResult
 from sidestory.core.schedule import ANCHOR_LOOKBACK_DAYS, is_publish_day, select_anchor
 from sidestory.ports.main_feed import MainFeedReader
+from sidestory.ports.market_source import DxySource
 from sidestory.ports.store import SideStore
+
+# History window for inferring the broad index run start (> weekly cadence, see core/dollar.py).
+DOLLAR_HISTORY_DAYS = 21
 
 STAGES = ("gate", "echo", "narrative", "image", "assembly", "publish", "verify")
 P0_STAGES = ("gate", "echo")
@@ -36,6 +41,7 @@ def run_gate_and_echo(
     *,
     force: bool = False,
     persist: bool = True,
+    dxy_source: DxySource | None = None,
 ) -> RunResult:
     """gate (SG-0, SG-1) → echo → SG-7 check → persist draft to icg_side.
 
@@ -72,7 +78,13 @@ def run_gate_and_echo(
     if not sg1.passed:
         return result
 
-    echo = build_echo_pack(side_day.isoformat(), anchor, feed.market(anchor.episode_date), feed.arc())
+    main_day = date.fromisoformat(anchor.episode_date)
+    broad = infer_broad_from_history(feed.dollar_history(
+        (main_day - timedelta(days=DOLLAR_HISTORY_DAYS)).isoformat(), anchor.episode_date))
+    dxy = dxy_source.dxy_close(main_day) if dxy_source is not None else None
+    dollar = select_dollar(main_day, dxy, broad)
+    echo = build_echo_pack(side_day.isoformat(), anchor, feed.market(anchor.episode_date),
+                           feed.arc(), dollar)
     result.echo = echo.model_dump(mode="json")
 
     if store is not None and persist:

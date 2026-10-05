@@ -397,7 +397,7 @@ def _wait(port: int) -> None:
 def _env(proxy_port: int) -> dict:
     return {**os.environ, "PYTHONPATH": str(REPO), "SUPABASE_SCHEMA": "icg_side",
             "SUPABASE_URL": f"http://127.0.0.1:{proxy_port}", "SUPABASE_KEY": jwt("service_role"),
-            "DRY_RUN": "true"}
+            "DRY_RUN": "true", "SIDESTORY_DXY_SOURCE": "off"}  # deterministic: no network
 
 
 def run_setup_error_cases(url: str, binary: str) -> None:
@@ -466,7 +466,7 @@ def run_e2e(url: str, binary: str) -> None:
                 time.sleep(0.25)
         env = {**os.environ, "PYTHONPATH": str(REPO), "SUPABASE_SCHEMA": "icg_side",
                "SUPABASE_URL": f"http://127.0.0.1:{proxy_port}", "SUPABASE_KEY": jwt("service_role"),
-               "DRY_RUN": "true"}
+               "DRY_RUN": "true", "SIDESTORY_DXY_SOURCE": "off"}
 
         code, out = cli(env, "--stage", "gate", "--date", "2026-10-06")
         check("E1 CLI gate on Tue anchors same-day main",
@@ -479,6 +479,11 @@ def run_e2e(url: str, binary: str) -> None:
               code == 0 and echo.get("title") == "첨탑 아래의 방패"
               and echo.get("outcome_class") == "VICTORY" and echo.get("market", {}).get("us10y")
               == 5.24 and not out.get("persisted"), str(out)[:400])
+        dollar = echo.get("dollar") or {}
+        check("E2b F3 dollar via view history: broad fallback, raw field not in market",
+              dollar.get("kind") == "BROAD" and dollar.get("label_ko") == "광의 달러지수"
+              and "dollar_index" not in echo.get("market", {})
+              and dollar.get("rejected", {}).get("DXY") == "unavailable", str(dollar))
         with psycopg.connect(url, autocommit=True) as db:
             n = db.execute("select count(*) from icg_side.side_episodes").fetchone()[0]
         check("E3 --no-persist wrote nothing", n == 0, f"rows={n}")

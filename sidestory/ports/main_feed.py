@@ -13,6 +13,10 @@ class MainFeedReader(Protocol):
 
     def arc(self) -> ArcRow | None: ...
 
+    def dollar_history(self, start_date: str, end_date: str) -> list[tuple[str, float | None]]:
+        """[(snapshot_date, dollar_index)] — main broad dollar index history (F3)."""
+        ...
+
     def main_fingerprint(self, episode_date: str) -> str | None:
         """SHA of main protected rows (arc_state, episode_assets/published_comics/
         daily_analysis for the date). Computed in-DB by icg_side.main_state_fingerprint."""

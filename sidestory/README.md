@@ -21,6 +21,15 @@ Tue/Thu 10:17 KST (`sidestory_run.yml`, inert until repo variable
 else latest unanchored main episode after the previous slot (≤3 days). Main
 outcome → side reaction class: VICTORY / DRAW / DEFEAT / NO_BATTLE.
 
+## Dollar index redundancy (F3)
+Main `dollar_index` is the Fed broad index (FRED DTWEXBGS, ~120, weekly runs carried
+forward), not ICE DXY (~100). `core/dollar.py` picks the quotable value:
+DXY close (yfinance `DX-Y.NYB`, ≤4 days old) → else broad index labelled 광의 달러지수
+(run start ≤9 days old) → else omitted. A "DXY" within 3% of the broad value is rejected
+as a series mix-up; opposite 1-week directions are flagged `direction_divergence`.
+The raw `dollar_index` is never placed in `EchoPack.market`; SG-4 only accepts the chosen value.
+`SIDESTORY_DXY_SOURCE=off` disables the second source (tests / offline).
+
 ## P0 runbook
 1. Supabase SQL editor: run `migrations/0000_precheck.sql` → all `present = true`.
 2. Run `migrations/0001_icg_side_schema.sql`.

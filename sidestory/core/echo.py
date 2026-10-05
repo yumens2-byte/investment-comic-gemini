@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from sidestory.core.dollar import DollarDecision
 from sidestory.core.models import ArcRow, EchoPack, MainEpisodeRow, MarketRow, OutcomeClass
 from sidestory.core.outcome import classify
 
@@ -18,7 +19,8 @@ _MARKET_KEYS = (
     "oil_wti",
     "spy_change",
     "nasdaq_change",
-    "dollar_index",
+    # dollar_index intentionally excluded: main stores the Fed broad index (F3);
+    # the quotable dollar value comes from EchoPack.dollar (core/dollar.py).
     "hy_spread",
     "fear_greed",
 )
@@ -55,6 +57,7 @@ def build_echo_pack(
     episode: MainEpisodeRow,
     market: MarketRow | None,
     arc: ArcRow | None,
+    dollar: DollarDecision | None = None,
 ) -> EchoPack:
     script = episode.script_json or {}
     battle = episode.battle_json or {}
@@ -101,4 +104,21 @@ def build_echo_pack(
         main_threads=threads,
         market=market_values,
         arc=(arc.model_dump() if arc is not None else {}),
+        dollar=_dollar_block(dollar),
     )
+
+
+def _dollar_block(decision: DollarDecision | None) -> dict | None:
+    if decision is None:
+        return None
+    chosen = decision.chosen
+    return {
+        "value": decision.value,
+        "kind": chosen.kind.value if chosen else None,
+        "label_ko": decision.label_ko,
+        "as_of": chosen.as_of if chosen else None,
+        "change_pct_1w": (round(chosen.change_pct_1w, 2)
+                          if chosen and chosen.change_pct_1w is not None else None),
+        "flags": list(decision.flags),
+        "rejected": dict(decision.rejected),
+    }

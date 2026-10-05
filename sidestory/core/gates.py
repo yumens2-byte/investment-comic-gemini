@@ -64,6 +64,10 @@ def sg4_echo_contract(script: dict[str, Any], echo: EchoPack) -> GateResult:
     if echo.main_episode_id not in joined and (not echo.title or echo.title not in joined):
         problems.append("EC-1 main episode not cited")
     allowed = {_norm(v) for v in echo.market.values() if isinstance(v, int | float)}
+    if echo.dollar and isinstance(echo.dollar.get("value"), int | float):
+        allowed.add(_norm(echo.dollar["value"]))
+        if isinstance(echo.dollar.get("change_pct_1w"), int | float):
+            allowed.add(_norm(echo.dollar["change_pct_1w"]))
     for token in _NUMBER.findall(joined):
         if "." in token and _norm(float(token)) not in allowed:
             problems.append(f"EC-2 number not in echo: {token}")
