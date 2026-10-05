@@ -3,7 +3,7 @@ name: "🌐 Sidestory Run (Facebook side canon)"
 # SIDESTORY track — isolated from the main X pipeline (K-1).
 #  - Separate concurrency group (main uses icg-<date>).
 #  - SUPABASE_SCHEMA is pinned to icg_side; main schema is read only via views.
-#  - X / Telegram channel secrets are intentionally NOT injected.
+#  - X / Telegram channel secrets and FACE_* are intentionally NOT injected (no publishing in P1).
 # Schedule: Tue/Thu 10:17 KST (= 01:17 UTC Tue/Thu), after main publish_sns (06:06 KST).
 # The schedule is inert until repository variable SIDESTORY_SCHEDULE_ENABLED == 'true' (P4).
 
@@ -13,11 +13,11 @@ on:
   workflow_dispatch:
     inputs:
       stage:
-        description: "gate | echo (P0)"
+        description: "gate | echo (P0) · narrative | image | assembly | p1 (P1, paid calls)"
         required: true
         default: "gate"
         type: choice
-        options: [gate, echo]
+        options: [gate, echo, narrative, image, assembly, p1]
       date:
         description: "Side slot date KST (YYYY-MM-DD). Empty = today KST"
         required: false
@@ -28,10 +28,19 @@ on:
         default: false
         type: boolean
       persist:
-        description: "Write draft to icg_side (echo stage only)"
+        description: "Write draft to icg_side (echo stage only; P1 stages always write)"
         required: false
         default: false
         type: boolean
+      retry_hold:
+        description: "p1 only: release a held episode and resume from its last artifact"
+        required: false
+        default: false
+        type: boolean
+      artifact_run_id:
+        description: "Restore panels/slides from a previous run's artifact (run id). Needed to resume image/assembly"
+        required: false
+        default: ""
 
 concurrency:
   group: sidestory-${{ inputs.date || 'today' }}
@@ -39,16 +48,19 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   sidestory:
     if: github.event_name == 'workflow_dispatch' || vars.SIDESTORY_SCHEDULE_ENABLED == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     env:
       PYTHONPATH: .
       SUPABASE_SCHEMA: icg_side
       ICG_GENERATION_REVISION: "1"
+      # F3: second dollar source (ICE DXY close). "off" = main broad index only.
+      SIDESTORY_DXY_SOURCE: yfinance
       DRY_RUN: "true"
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
@@ -65,15 +77,54 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Install Korean font (slide composer)
+        if: inputs.stage == 'assembly' || inputs.stage == 'p1'
+        run: sudo apt-get install -y fonts-noto-cjk --no-install-recommends -q
+
+      - name: Resolve slot date
+        id: slot
+        env:
+          SIDE_DATE: ${{ inputs.date }}
+        run: |
+          if [ -n "$SIDE_DATE" ]; then SLOT="$SIDE_DATE"; else SLOT="$(TZ=Asia/Seoul date +%F)"; fi
+          echo "date=$SLOT" >> "$GITHUB_OUTPUT"
+          echo "SLOT=$SLOT"
+
+      - name: Restore previous artifact
+        if: inputs.artifact_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.artifact_run_id }}
+          github-token: ${{ github.token }}
+          pattern: sidestory-${{ steps.slot.outputs.date }}-*
+          merge-multiple: true
+          path: output/sidestory
+
       - name: Run sidestory stage
         env:
           STAGE: ${{ inputs.stage || 'echo' }}
-          SIDE_DATE: ${{ inputs.date }}
+          SIDE_DATE: ${{ steps.slot.outputs.date }}
           FORCE: ${{ inputs.force && '--force' || '' }}
-          NO_PERSIST: ${{ (github.event_name == 'workflow_dispatch' && !inputs.persist) && '--no-persist' || '' }}
+          NO_PERSIST: ${{ (github.event_name == 'workflow_dispatch' && !inputs.persist && (inputs.stage == 'gate' || inputs.stage == 'echo')) && '--no-persist' || '' }}
+          RETRY_HOLD: ${{ inputs.retry_hold && '--retry-hold' || '' }}
+          # P1 providers (used only by narrative / image / p1 stages)
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_SUB_PAY_KEY: ${{ secrets.GEMINI_API_SUB_PAY_KEY }}
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_SIDE_SYSTEM_ID: ${{ secrets.NOTION_SIDE_SYSTEM_ID }}
         run: |
-          ARGS=(--stage "$STAGE")
-          if [ -n "$SIDE_DATE" ]; then ARGS+=(--date "$SIDE_DATE"); fi
+          ARGS=(--stage "$STAGE" --date "$SIDE_DATE")
           if [ -n "$FORCE" ]; then ARGS+=("$FORCE"); fi
           if [ -n "$NO_PERSIST" ]; then ARGS+=("$NO_PERSIST"); fi
+          if [ -n "$RETRY_HOLD" ] && [ "$STAGE" = "p1" ]; then ARGS+=("$RETRY_HOLD"); fi
+          echo "STAGE=$STAGE SIDE_DATE=$SIDE_DATE FORCE=$FORCE NO_PERSIST=$NO_PERSIST RETRY_HOLD=$RETRY_HOLD SIDESTORY_DXY_SOURCE=$SIDESTORY_DXY_SOURCE"
           python -m sidestory "${ARGS[@]}"
+
+      - name: Upload side artifacts
+        if: always() && (inputs.stage == 'image' || inputs.stage == 'assembly' || inputs.stage == 'p1')
+        uses: actions/upload-artifact@v4
+        with:
+          name: sidestory-${{ steps.slot.outputs.date }}-${{ github.run_id }}
+          path: output/sidestory/
+          if-no-files-found: ignore
+          retention-days: 30

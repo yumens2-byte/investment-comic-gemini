@@ -33,6 +33,8 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: pip install -r requirements.txt ruff
+      - name: Install Korean font (slide composer)
+        run: sudo apt-get install -y fonts-noto-cjk --no-install-recommends -q
       - name: Lint (ruff, side only)
         run: ruff check sidestory --line-length=100
       - name: Test (side)
@@ -71,6 +73,8 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -r requirements.txt 'psycopg[binary]==3.3.6'
+      - name: Install Korean font (slide composer)
+        run: sudo apt-get install -y fonts-noto-cjk --no-install-recommends -q
       - name: Install pg_dump 16 client
         run: sudo apt-get install -y --no-install-recommends postgresql-client-16 || true
       - name: Download PostgREST (local, test credentials only)
