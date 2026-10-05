@@ -129,3 +129,33 @@ def make_refs(root: Path) -> dict:
                   {"key": "node_b", "silhouette": "white-noise hologram"},
                   {"key": "node_c", "silhouette": "cube-fortress on the horizon"}],
     }
+
+
+CLEAN = {"figures": [], "text": "none", "watermark": False, "notes": ""}
+
+
+class FakeInspector:
+    """SG-8 describer. reports[(idx, take)] -> report dict | Exception; default = clean
+    picture with Zero Block present when the file is a posed panel (posed=set of idx)."""
+
+    def __init__(self, reports=None, posed=(1, 4, 6)):
+        self.reports = dict(reports or {})
+        self.posed = set(posed)
+        self.calls: list[Path] = []
+        self.usage: list[dict[str, int]] = []
+
+    def inspect(self, image):
+        from sidestory.core.panel_check import VisionReport
+
+        image = Path(image)
+        self.calls.append(image)
+        self.usage.append({"input": 1500, "output": 60})
+        idx = int(image.stem[1:])
+        take = 2 if image.parent.parent.name == "v2" else 1
+        item = self.reports.get((idx, take))
+        if isinstance(item, Exception):
+            raise item
+        if item is None:
+            item = dict(CLEAN, figures=[{"kind": "zero_block", "prominence": "major"}]
+                        if idx in self.posed else [])
+        return VisionReport.model_validate(item)

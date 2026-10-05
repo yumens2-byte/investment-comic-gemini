@@ -50,7 +50,8 @@ def test_run_workflow_p1_wiring() -> None:
     text = RUN_WF.read_text(encoding="utf-8")
     wf = yaml.safe_load(text)
     stage_opts = wf[True]["workflow_dispatch"]["inputs"]["stage"]["options"]
-    assert stage_opts == ["gate", "echo", "narrative", "image", "assembly", "p1", "refgen"]
+    assert stage_opts == ["gate", "echo", "narrative", "image", "assembly", "inspect", "p1",
+                          "refgen"]
     steps = {s["name"]: s for s in wf["jobs"]["sidestory"]["steps"]}
     run_env = steps["Run sidestory stage"]["env"]
     for secret in ("ANTHROPIC_API_KEY", "GEMINI_API_SUB_PAY_KEY", "NOTION_API_KEY",

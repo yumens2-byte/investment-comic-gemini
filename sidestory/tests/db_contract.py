@@ -185,6 +185,10 @@ def run_db_checks(url: str) -> None:
             db.execute((SIDE / "migrations/0002_ledger_refs_scope.sql").read_text())
         check("D4b 0002 applies idempotently, main icg DDL unchanged",
               main_ddl(url) == ddl_before)
+        for _ in range(2):
+            db.execute((SIDE / "migrations/0003_ledger_retake_scope.sql").read_text())
+        check("D4c 0003 applies idempotently, main icg DDL unchanged",
+              main_ddl(url) == ddl_before)
 
         eps = db.execute("select episode_date, script_json from icg_side.main_feed_episode_v1"
                          " order by episode_date").fetchall()
@@ -329,6 +333,15 @@ def run_ledger_db_checks(url: str) -> None:
             "output/sidestory/refs/x/panels", "output/sidestory/refs/r1/../panels",
             "output/sidestory/refs/r1", "output/sidestory/refs/r1000/panels")]
         check("L6 malformed refs scopes refused", bad == ["invalid identity"] * 4, str(bad))
+        ok = db.execute("select icg_side.image_generation_reserve("
+                        "'output/sidestory/2026-10-06/v2/panels',1,%s)", (fp,)).fetchone()[0]
+        check("L7 SG-8 retake scope <date>/v2 accepted (0003)", "token" in ok, str(ok))
+        bad = [db.execute("select icg_side.image_generation_reserve(%s,1,%s)", (sc, fp)
+                          ).fetchone()[0].get("hold") for sc in (
+            "output/sidestory/2026-10-06/v3/panels", "output/sidestory/2026-10-06/v2",
+            "output/sidestory/2026-10-06/v2/v2/panels", "output/sidestory/v2/panels",
+            "output/sidestory/refs/r1/v2/panels")]
+        check("L8 only one retake scope (v2) exists", bad == ["invalid identity"] * 5, str(bad))
         main_after = db.execute("select count(*) from icg.image_generation_calls").fetchone()[0]
         check("L4 side ledger never touches main ledger", main_before == main_after == 0)
         db.execute("delete from icg_side.image_generation_calls")
@@ -572,7 +585,14 @@ def run_p1_checks(url: str, env: dict) -> None:
     from sidestory.adapters.supabase.side_store import SupabaseSideStore
     from sidestory.app.p1 import P1Deps, run_p1, run_stage
     from sidestory.app.settings import load_settings
-    from sidestory.tests.p1_fixtures import FakeLLM, FakePrompts, make_refs, raw_script
+    from sidestory.tests.p1_fixtures import (
+        CLEAN,
+        FakeInspector,
+        FakeLLM,
+        FakePrompts,
+        make_refs,
+        raw_script,
+    )
 
     client = side_client(load_settings())
     store, feed = SupabaseSideStore(client), SupabaseMainFeedReader(client)
@@ -605,7 +625,9 @@ def run_p1_checks(url: str, env: dict) -> None:
         raw["panels"][2]["narration"] = "붕괴 데이터가 흘러간다"
         deps = P1Deps(feed=feed, store=store, llm=FakeLLM([raw]), prompts=FakePrompts(),
                       images=GeminiPanelGenerator(), composer=PilSlideComposer(),
-                      characters=make_refs(work), ref_root=work)
+                      characters=make_refs(work), ref_root=work,
+                      inspector=FakeInspector({(2, 1): dict(CLEAN, figures=[
+                          {"kind": "other", "prominence": "major"}])}), run_id="777")
         with contextlib.redirect_stderr(io.StringIO()):
             results = run_p1(date(2026, 10, 8), deps)
         statuses = [(r.stage, r.status) for r in results]
@@ -620,8 +642,17 @@ def run_p1_checks(url: str, env: dict) -> None:
                 "select count(*), count(*) filter (where state='success') from"
                 " icg_side.image_generation_calls where scope ="
                 " 'output/sidestory/2026-10-08/panels'").fetchone()
+        with psycopg.connect(url, autocommit=True) as db:
+            retake = db.execute(
+                "select panel, state from icg_side.image_generation_calls where scope ="
+                " 'output/sidestory/2026-10-08/v2/panels'").fetchall()
         check("P4 six paid panels reserved+settled in icg_side ledger",
-              ledger == (6, 6) and len(provider_calls) == 6, f"{ledger} calls={provider_calls}")
+              ledger == (6, 6) and len(provider_calls) == 7, f"{ledger} calls={provider_calls}")
+        p2 = row["panels_json"]["panels"][1]
+        check("P10 SG-8 critical P2 → one retake via real ledger scope <date>/v2, used in"
+              " assembly", [tuple(r) for r in retake] == [(2, "success")]
+              and "/v2/panels/P2.png" in p2["path"] and row["panels_json"]["run_id"] == "777",
+              f"{retake} {p2.get('path')}")
         posed = [c for c in provider_calls if c[1]]
         check("P5 REF attached only for posed panels",
               all(len(c[1]) == 1 and c[1][0].startswith("zero_block_") for c in posed)
@@ -634,7 +665,7 @@ def run_p1_checks(url: str, env: dict) -> None:
         with psycopg.connect(url, autocommit=True) as db:
             n = db.execute("select count(*) from icg_side.image_generation_calls where scope ="
                            " 'output/sidestory/2026-10-08/panels'").fetchone()[0]
-        check("P6 image rerun reuses ledger artifacts (0 provider calls)",
+        check("P6 image rerun reuses ledger artifacts incl. retake (0 provider calls)",
               res.status == "image_done" and len(provider_calls) == before and n == 6,
               f"{res.status} {res.detail}")
 

@@ -22,6 +22,7 @@ from sidestory.core.beats import beats_for
 from sidestory.core.canon_rules import DISCLAIMER, REACTION_BEATS
 from sidestory.core.image_prompt import build_panel_spec, registered_refs
 from sidestory.core.models import EchoPack, GateResult
+from sidestory.core.panel_check import SG8, Expectation, correction, judge
 from sidestory.core.schedule import previous_slot
 from sidestory.core.script import SideScript, normalize, validate
 from sidestory.ports.image import ImageGenerator, ImageHold, SlideComposer
@@ -29,11 +30,13 @@ from sidestory.ports.llm import LLMError, NarrativeLLM, PromptSource
 from sidestory.ports.main_feed import MainFeedReader
 from sidestory.ports.market_source import DxySource
 from sidestory.ports.store import SideStore
+from sidestory.ports.vision import PanelInspector, VisionError
 
 MAX_NARRATIVE_ATTEMPTS = 3          # 1 + 2 regenerations (P1 §2-4)
 MAX_FEEDBACK_ITEMS = 15
 IMAGE_PANELS = range(1, 7)          # 7 data card / 8 disclaimer are PIL text slides
 SLIDE_SIZE = (1080, 1350)
+RETAKE_DIR = "v2"                   # one retake per panel per slot (icg_side 0003 scope)
 
 
 @dataclass
@@ -49,6 +52,8 @@ class P1Deps:
     output_root: Path = Path("output/sidestory")
     ref_root: Path = Path(".")
     dxy_source: DxySource | None = None
+    inspector: PanelInspector | None = None
+    run_id: str | None = None         # GITHUB_RUN_ID of this run (artifact to restore later)
 
 
 @dataclass
@@ -71,10 +76,13 @@ class StageResult:
 
 class StageFailure(RuntimeError):
     def __init__(self, reason: str, gates_: list[GateResult] | None = None,
-                 detail: dict[str, Any] | None = None):
+                 detail: dict[str, Any] | None = None, *, keep_status: bool = False):
         super().__init__(reason)
         self.gates = gates_ or []
         self.detail = detail or {}
+        # keep_status: an operator input problem (e.g. wrong artifact restored), not a content
+        # problem — report an error without moving the episode to hold.
+        self.keep_status = keep_status
 
 
 def sha256_file(path: Path) -> str | None:
@@ -157,25 +165,63 @@ def _image(sid: str, side_day: date, row: dict[str, Any], deps: P1Deps,
     sg2 = gates.sg2_refs(checks)
     if not sg2.passed:
         raise StageFailure(sg2.reason, [sg2])
-    out_dir = deps.output_root / side_day.isoformat() / "panels"
+    if deps.inspector is None:
+        raise StageFailure("panel inspector (SG-8) not configured", [sg2])
+    day_dir = deps.output_root / side_day.isoformat()
     panels: list[dict[str, Any]] = []
+    sg8: list[GateResult] = []
     total = 0.0
+
+    def fail(reason: str) -> StageFailure:
+        return StageFailure(reason, [sg2, *sg8],
+                            {"panels_done": panels, "cost_usd": round(total, 4)})
+
     for panel in story:
         spec = build_panel_spec(panel, deps.characters)
         refs = [deps.ref_root / spec.ref_path] if spec.ref_path else []
-        try:
-            path, cost = deps.images.generate(panel.idx, spec.prompt, refs, out_dir)
-        except ImageHold as exc:
-            raise StageFailure(f"P{panel.idx} image hold: {exc}", [sg2],
-                               {"panels_done": panels, "cost_usd": round(total, 4)}) from exc
-        digest = sha256_file(path)
-        if digest is None:
-            raise StageFailure(f"P{panel.idx} image file missing after generation", [sg2])
-        total += cost
+        exp = Expectation.of(panel)
+        checks: list[dict[str, Any]] = []
+        prompt, out_dir = spec.prompt, day_dir / "panels"
+        panel_cost = 0.0
+        for take in (0, 1):
+            try:
+                path, cost = deps.images.generate(panel.idx, prompt, refs, out_dir)
+            except ImageHold as exc:
+                raise fail(f"P{panel.idx} image hold: {exc}") from exc
+            total += cost
+            panel_cost += cost
+            digest = sha256_file(path)
+            if digest is None:
+                raise fail(f"P{panel.idx} image file missing after generation")
+            try:
+                report = deps.inspector.inspect(path)
+            except VisionError as exc:
+                raise fail(f"P{panel.idx} {SG8} inspection unavailable (not passed): "
+                           f"{exc}") from exc
+            verdict = judge(report, exp)
+            checks.append({"take": take + 1, "sha256": digest, **verdict.as_dict(),
+                           "report": report.model_dump()})
+            if verdict.passed:
+                break
+            if take == 0:   # one retake: same prompt + fixed correction for the categories
+                prompt = f"{spec.prompt}\n{correction(verdict)}"
+                out_dir = day_dir / RETAKE_DIR / "panels"
+                continue
+            sg8.append(GateResult(gate=SG8, passed=False,
+                                  reason=f"P{panel.idx}: {'; '.join(verdict.critical)}"))
+            raise StageFailure(
+                f"P{panel.idx} {SG8} failed after retake: {'; '.join(verdict.critical)}",
+                [sg2, *sg8], {"panels_done": panels, "cost_usd": round(total, 4),
+                              "sg8_checks": checks})
+        minor = checks[-1]["minor"]
+        sg8.append(GateResult(gate=SG8, passed=True, reason=(
+            f"P{panel.idx} take {len(checks)}" + (f"; minor: {'; '.join(minor)}" if minor else ""))))
         panels.append({"idx": panel.idx, "path": _rel(path), "sha256": digest,
-                       "pose": spec.pose, "ref": spec.ref_path, "cost_usd": round(cost, 4)})
-    return ({"panels_json": {"panels": panels, "cost_usd": round(total, 4)}},
-            {"gates": [sg2], "cost_usd": round(total, 4)})
+                       "pose": spec.pose, "ref": spec.ref_path,
+                       "cost_usd": round(panel_cost, 4), "sg8": checks})
+    return ({"panels_json": {"panels": panels, "cost_usd": round(total, 4),
+                             "run_id": deps.run_id}},
+            {"gates": [sg2, *sg8], "cost_usd": round(total, 4)})
 
 
 def _assembly(sid: str, side_day: date, row: dict[str, Any], deps: P1Deps,
@@ -192,9 +238,12 @@ def _assembly(sid: str, side_day: date, row: dict[str, Any], deps: P1Deps,
         entry = stored.get(panel.idx)
         path = Path(entry["path"]) if entry else None
         if path is None or sha256_file(path) != entry.get("sha256"):
-            raise StageFailure(f"P{panel.idx} panel artifact missing or changed — restore the "
-                               "image-stage artifact (Resume only: previous run id or run URL) "
-                               "before assembly")
+            run = (row.get("panels_json") or {}).get("run_id")
+            where = (f"enter {run} in \"Resume only: previous run id or run URL\"" if run else
+                     "enter the run id of the image-stage run in \"Resume only: previous run id "
+                     "or run URL\"")
+            raise StageFailure(f"P{panel.idx} panel artifact missing or changed — {where}. "
+                               "Status unchanged (no hold).", keep_status=True)
         images.append(path)
     # B1: cut letterbox / frame bands from a copy (the paid original keeps its ledger hash).
     trim_dir = deps.output_root / side_day.isoformat() / "panels_trimmed"
@@ -278,6 +327,10 @@ def run_stage(stage: str, side_day: date, deps: P1Deps) -> StageResult:
     except StageFailure as exc:
         result.gates += exc.gates
         result.detail.update({"reason": str(exc), **exc.detail})
+        if exc.keep_status:
+            result.status = "error"
+            deps.store.log(stage, "error", {"sid": sid, **_loggable(result.detail)})
+            return result
         deps.store.update_episode(sid, {"status": "hold", "error_message": f"{stage}: {exc}"[:2000]},
                                   expect_status=current)
         result.status = "hold"
@@ -322,9 +375,56 @@ def run_p1(side_day: date, deps: P1Deps, *, force: bool = False,
     except lifecycle.TransitionError as exc:
         results.append(StageResult("p1", sid, "error", detail={"reason": str(exc)}))
         return results
+    if not stages:
+        results.append(StageResult("p1", sid, status, detail={
+            "reason": f"nothing to run (already {status})"}))
+        return results
     for stage in stages:
         res = run_stage(stage, side_day, deps)
         results.append(res)
         if not res.ok:
             break
     return results
+
+
+def run_inspect(side_day: date, deps: P1Deps) -> StageResult:
+    """SG-8 on already generated panels. Read-only: no image call, no status change."""
+    sid = side_episode_id(side_day)
+    row = deps.store.get_episode(sid)
+    status = (row or {}).get("status", "")
+    result = StageResult("inspect", sid, status)
+    if not row or not row.get("script_json") or not row.get("panels_json"):
+        result.status, result.detail["reason"] = "error", "no generated panels for this slot"
+        return result
+    if deps.inspector is None:
+        result.status, result.detail["reason"] = "error", "panel inspector not configured"
+        return result
+    script = SideScript.model_validate(row["script_json"])
+    stored = {p["idx"]: p for p in row["panels_json"].get("panels", [])}
+    found: dict[str, Any] = {}
+    for panel in script.panels:
+        entry = stored.get(panel.idx)
+        if panel.idx not in IMAGE_PANELS or entry is None:
+            continue
+        path = Path(entry["path"])
+        if sha256_file(path) != entry.get("sha256"):
+            result.status = "error"
+            run = row["panels_json"].get("run_id")
+            result.detail["reason"] = (
+                f"P{panel.idx} panel artifact missing or changed — restore it with "
+                "\"Resume only: previous run id or run URL\"" + (f" = {run}" if run else ""))
+            return result
+        try:
+            report = deps.inspector.inspect(path)
+        except VisionError as exc:
+            result.status, result.detail["reason"] = "error", f"P{panel.idx}: {exc}"
+            return result
+        verdict = judge(report, Expectation.of(panel))
+        result.gates.append(GateResult(gate=SG8, passed=verdict.passed, reason=(
+            f"P{panel.idx}: " + "; ".join([*verdict.critical, *verdict.minor] or ["clean"]))))
+        found[f"P{panel.idx}"] = {**verdict.as_dict(), "report": report.model_dump()}
+    result.detail["panels"] = found
+    result.detail["failed"] = [k for k, v in found.items() if v["critical"]]
+    deps.store.log("inspect", "ok", {"sid": sid, "failed": result.detail["failed"],
+                                     "panels": found})
+    return result

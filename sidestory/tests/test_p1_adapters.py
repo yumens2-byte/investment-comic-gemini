@@ -16,7 +16,14 @@ from sidestory.app.p1 import P1Deps, run_p1
 from sidestory.ports.image import ImageHold
 from sidestory.ports.llm import LLMError
 from sidestory.tests.fixtures import FakeFeed, FakeStore, main_row
-from sidestory.tests.p1_fixtures import FakeImages, FakeLLM, FakePrompts, make_refs, raw_script
+from sidestory.tests.p1_fixtures import (
+    FakeImages,
+    FakeInspector,
+    FakeLLM,
+    FakePrompts,
+    make_refs,
+    raw_script,
+)
 
 
 class _Messages:
@@ -130,7 +137,7 @@ def test_real_pil_composer_full_p1_flow(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     deps = P1Deps(feed=FakeFeed([main_row("2026-10-06")], fingerprints=("a" * 64,)),
                   store=FakeStore(), llm=FakeLLM([raw_script()]), prompts=FakePrompts(),
-                  images=FakeImages(), composer=PilSlideComposer(),
+                  images=FakeImages(), composer=PilSlideComposer(), inspector=FakeInspector(),
                   characters=make_refs(tmp_path), output_root=tmp_path / "output/sidestory",
                   ref_root=tmp_path)
     results = run_p1(date(2026, 10, 6), deps)

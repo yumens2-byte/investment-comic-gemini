@@ -1,4 +1,4 @@
-"""CLI: python -m sidestory --stage gate|echo|narrative|image|assembly|p1|refgen
+"""CLI: python -m sidestory --stage gate|echo|narrative|image|assembly|inspect|p1|refgen
    [--date YYYY-MM-DD] [--force] [--no-persist] [--retry-hold] [--ref-revision N]."""
 from __future__ import annotations
 
@@ -27,7 +27,8 @@ def _p1_deps(stage: str, settings, feed, store):
     from sidestory.app.settings import load_characters
 
     deps = P1Deps(feed=feed, store=store, characters=load_characters(),
-                  nn_stage=settings.nn_stage, dxy_source=_dxy_source())
+                  nn_stage=settings.nn_stage, dxy_source=_dxy_source(),
+                  run_id=os.environ.get("GITHUB_RUN_ID") or None)
     if stage in {"narrative", "p1"}:
         from sidestory.adapters.icg.llm_adapter import ClaudeNarrativeLLM
         from sidestory.adapters.notion.prompt_loader import NotionPromptSource
@@ -37,6 +38,10 @@ def _p1_deps(stage: str, settings, feed, store):
         from sidestory.adapters.icg.image_adapter import GeminiPanelGenerator
 
         deps.images = GeminiPanelGenerator()
+    if stage in {"image", "inspect", "p1"}:
+        from sidestory.adapters.icg.vision_adapter import ClaudePanelInspector
+
+        deps.inspector = ClaudePanelInspector()
     if stage in {"assembly", "p1"}:
         from sidestory.adapters.icg.composer_adapter import PilSlideComposer
 
@@ -57,7 +62,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="refgen: REF revision folder r<N> (new N for a new set of prompts)")
     args = parser.parse_args(argv)
 
-    if args.stage not in P0_STAGES + P1_STAGES + ("refgen",):
+    if args.stage not in P0_STAGES + P1_STAGES + ("refgen", "inspect"):
         print(json.dumps({"stage": args.stage, "status": "not_implemented"}))
         return 2
     if args.stage in P1_STAGES and args.no_persist:
@@ -94,16 +99,25 @@ def main(argv: list[str] | None = None) -> int:
             print("\n# characters_side.yaml refs (after master review):\n" + snippet)
         return 0 if res.status == "ok" else 1
 
-    if args.stage in P1_STAGES:
-        from sidestory.app.p1 import run_p1, run_stage
+    if args.stage in P1_STAGES + ("inspect",):
+        from sidestory.app.p1 import run_inspect, run_p1, run_stage
 
         deps = _p1_deps(args.stage, settings, feed, store)
         if args.stage == "p1":
             results = run_p1(side_day, deps, force=args.force, retry_hold=args.retry_hold)
+        elif args.stage == "inspect":
+            results = [run_inspect(side_day, deps)]
         else:
             results = [run_stage(args.stage, side_day, deps)]
-        print(json.dumps({"stage": args.stage, "results": [r.as_dict() for r in results]},
-                         ensure_ascii=False, indent=2, default=str))
+        out: dict = {"stage": args.stage, "results": [r.as_dict() for r in results]}
+        usage = getattr(deps.inspector, "usage", None)
+        if usage:
+            out["vision_usage"] = {"calls": len(usage),
+                                   "input_tokens": sum(u["input"] for u in usage),
+                                   "output_tokens": sum(u["output"] for u in usage)}
+        print(json.dumps(out, ensure_ascii=False, indent=2, default=str))
+        if not results:   # defensive: run_p1 always reports at least one result
+            return 1
         last = results[-1]
         if last.status == "skipped":
             return 0

@@ -19,6 +19,7 @@ from sidestory.tests.fixtures import FakeFeed, FakeStore, main_row
 from sidestory.tests.p1_fixtures import (
     FakeComposer,
     FakeImages,
+    FakeInspector,
     FakeLLM,
     FakePrompts,
     echo_for,
@@ -38,6 +39,7 @@ def env(tmp_path, monkeypatch):
         feed=FakeFeed([main_row("2026-10-06")], fingerprints=("a" * 64,)),
         store=store, llm=FakeLLM([raw_script()]), prompts=FakePrompts(),
         images=FakeImages(), composer=FakeComposer(), characters=make_refs(tmp_path),
+        inspector=FakeInspector(),
         output_root=tmp_path / "output/sidestory", ref_root=tmp_path)
     return deps
 
@@ -62,11 +64,14 @@ def test_p1_full_flow_from_new_slot(env) -> None:
     assert all(c[3].as_posix().endswith("output/sidestory/2026-10-06/panels")
                for c in env.images.calls)
     assert [g.gate for g in results[1].gates] == ["SG-1", "SG-7"]
-    assert {g.gate for g in results[2].gates} == {"SG-1", "SG-2", "SG-7"}
+    assert {g.gate for g in results[2].gates} == {"SG-1", "SG-2", "SG-7", "SG-8"}
+    assert [g.gate for g in results[2].gates].count("SG-8") == 6
     assert {g.gate for g in results[3].gates} == {"SG-1", "SG-6", "SG-7"}
     assert [log[1] for log in env.store.logs] == ["ok", "ok", "ok", "ok"]
     # rerun = nothing left to do (idempotent)
-    assert run_p1(TUE, env) == []
+    again = run_p1(TUE, env)
+    assert _statuses(again) == [("p1", "assembled")]
+    assert again[0].ok and "nothing to run" in again[0].detail["reason"]
 
 
 def test_p1_skips_non_slot_day_without_writing(env) -> None:
@@ -136,7 +141,7 @@ def test_image_hold_records_progress_and_stops(env) -> None:
     last = results[-1]
     assert last.stage == "image" and last.status == "hold"
     assert [p["idx"] for p in last.detail["panels_done"]] == [1, 2, 3]
-    assert [g.gate for g in last.gates] == ["SG-1", "SG-2"]
+    assert [g.gate for g in last.gates] == ["SG-1", "SG-2", "SG-8", "SG-8", "SG-8"]
     row = env.store.get_episode(SID)
     assert row["status"] == "hold" and row.get("panels_json") is None
     # resume from hold goes back to image (script kept), not narrative
@@ -152,7 +157,10 @@ def test_assembly_requires_panel_artifacts(env, tmp_path) -> None:
     row["status"] = "image_done"
     Path(row["panels_json"]["panels"][0]["path"]).unlink()
     res = run_stage("assembly", TUE, env)
-    assert res.status == "hold" and "artifact" in res.detail["reason"]
+    # 9-2: wrong/missing restored artifact is an input error, not a hold.
+    assert res.status == "error" and "artifact" in res.detail["reason"]
+    assert env.store.get_episode(SID)["status"] == "image_done"
+    assert env.store.logs[-1][:2] == ("assembly", "error")
 
 
 def test_assembly_rejects_wrong_slide_size(env) -> None:
