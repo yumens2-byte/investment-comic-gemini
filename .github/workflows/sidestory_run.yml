@@ -3,6 +3,7 @@ name: "🌐 Sidestory Run (Facebook side canon)"
 # SIDESTORY track — isolated from the main X pipeline (K-1).
 #  - Separate concurrency group (main uses icg-<date>).
 #  - SUPABASE_SCHEMA is pinned to icg_side; main schema is read only via views.
+#  - SG-8 (v8.9): image / p1 / inspect stages check each panel picture with Claude vision.
 #  - X / Telegram channel secrets and FACE_* are intentionally NOT injected (no publishing in P1).
 # Schedule: Tue/Thu 10:17 KST (= 01:17 UTC Tue/Thu), after main publish_sns (06:06 KST).
 # The schedule is inert until repository variable SIDESTORY_SCHEDULE_ENABLED == 'true' (P4).
@@ -13,11 +14,11 @@ on:
   workflow_dispatch:
     inputs:
       stage:
-        description: "gate | echo (P0) · narrative | image | assembly | p1 (P1, paid) · refgen (Zero Block REF, paid)"
+        description: "gate | echo (P0) · narrative | image | assembly | inspect | p1 (P1, paid) · refgen (Zero Block REF, paid)"
         required: true
         default: "gate"
         type: choice
-        options: [gate, echo, narrative, image, assembly, p1, refgen]
+        options: [gate, echo, narrative, image, assembly, inspect, p1, refgen]
       date:
         description: "Side slot date KST (YYYY-MM-DD). Empty = today KST"
         required: false
@@ -153,7 +154,7 @@ jobs:
           NO_PERSIST: ${{ (github.event_name == 'workflow_dispatch' && !inputs.persist && (inputs.stage == 'gate' || inputs.stage == 'echo')) && '--no-persist' || '' }}
           RETRY_HOLD: ${{ inputs.retry_hold && '--retry-hold' || '' }}
           REF_REVISION: ${{ inputs.ref_revision || '1' }}
-          # P1 providers (used only by narrative / image / p1 stages)
+          # P1 providers (narrative / image / inspect / p1 stages; SG-8 uses ANTHROPIC_API_KEY)
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GEMINI_API_SUB_PAY_KEY: ${{ secrets.GEMINI_API_SUB_PAY_KEY }}
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
