@@ -13,11 +13,11 @@ on:
   workflow_dispatch:
     inputs:
       stage:
-        description: "gate | echo (P0) · narrative | image | assembly | p1 (P1, paid calls)"
+        description: "gate | echo (P0) · narrative | image | assembly | p1 (P1, paid) · refgen (Zero Block REF, paid)"
         required: true
         default: "gate"
         type: choice
-        options: [gate, echo, narrative, image, assembly, p1]
+        options: [gate, echo, narrative, image, assembly, p1, refgen]
       date:
         description: "Side slot date KST (YYYY-MM-DD). Empty = today KST"
         required: false
@@ -37,6 +37,10 @@ on:
         required: false
         default: false
         type: boolean
+      ref_revision:
+        description: "refgen only: REF revision number r<N> (1..999). Use a new number for new prompts"
+        required: false
+        default: "1"
       artifact_run_id:
         description: "Resume only: previous run id or run URL whose artifact to restore. Leave EMPTY for a first run"
         required: false
@@ -148,6 +152,7 @@ jobs:
           FORCE: ${{ inputs.force && '--force' || '' }}
           NO_PERSIST: ${{ (github.event_name == 'workflow_dispatch' && !inputs.persist && (inputs.stage == 'gate' || inputs.stage == 'echo')) && '--no-persist' || '' }}
           RETRY_HOLD: ${{ inputs.retry_hold && '--retry-hold' || '' }}
+          REF_REVISION: ${{ inputs.ref_revision || '1' }}
           # P1 providers (used only by narrative / image / p1 stages)
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GEMINI_API_SUB_PAY_KEY: ${{ secrets.GEMINI_API_SUB_PAY_KEY }}
@@ -158,11 +163,17 @@ jobs:
           if [ -n "$FORCE" ]; then ARGS+=("$FORCE"); fi
           if [ -n "$NO_PERSIST" ]; then ARGS+=("$NO_PERSIST"); fi
           if [ -n "$RETRY_HOLD" ] && [ "$STAGE" = "p1" ]; then ARGS+=("$RETRY_HOLD"); fi
+          if [ "$STAGE" = "refgen" ]; then
+            if ! printf '%s' "$REF_REVISION" | grep -Eq '^[0-9]{1,3}$'; then
+              echo "::error::ref_revision must be 1..999 (got '$REF_REVISION')"; exit 1
+            fi
+            ARGS+=(--ref-revision "$REF_REVISION")
+          fi
           echo "STAGE=$STAGE SIDE_DATE=$SIDE_DATE FORCE=$FORCE NO_PERSIST=$NO_PERSIST RETRY_HOLD=$RETRY_HOLD SIDESTORY_DXY_SOURCE=$SIDESTORY_DXY_SOURCE"
           python -m sidestory "${ARGS[@]}"
 
       - name: Upload side artifacts
-        if: always() && (inputs.stage == 'image' || inputs.stage == 'assembly' || inputs.stage == 'p1')
+        if: always() && (inputs.stage == 'image' || inputs.stage == 'assembly' || inputs.stage == 'p1' || inputs.stage == 'refgen')
         uses: actions/upload-artifact@v4
         with:
           name: sidestory-${{ steps.slot.outputs.date }}-${{ github.run_id }}
