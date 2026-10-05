@@ -98,3 +98,14 @@ class FakeStore:
 
     def log(self, stage, status, detail):
         self.logs.append((stage, status, detail))
+
+    def live_publication(self, sid, channel):
+        return next((p for p in getattr(self, "publications", [])
+                     if p["side_episode_id"] == sid and p["channel"] == channel
+                     and not p["dry_run"]), None)
+
+    def insert_publication(self, row):
+        pubs = self.__dict__.setdefault("publications", [])
+        if not row["dry_run"] and self.live_publication(row["side_episode_id"], row["channel"]):
+            raise RuntimeError("duplicate key value violates unique constraint")
+        pubs.append(dict(row))

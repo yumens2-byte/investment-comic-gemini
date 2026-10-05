@@ -1,5 +1,6 @@
-"""CLI: python -m sidestory --stage gate|echo|narrative|image|assembly|inspect|p1|refgen
-   [--date YYYY-MM-DD] [--force] [--no-persist] [--retry-hold] [--ref-revision N]."""
+"""CLI: python -m sidestory --stage gate|echo|narrative|image|assembly|inspect|p1|refgen|
+   publish|verify [--date YYYY-MM-DD] [--force] [--no-persist] [--retry-hold]
+   [--ref-revision N] [--live]."""
 from __future__ import annotations
 
 import argparse
@@ -46,6 +47,14 @@ def _p1_deps(stage: str, settings, feed, store):
         from sidestory.adapters.icg.composer_adapter import PilSlideComposer
 
         deps.composer = PilSlideComposer()
+        from functools import partial
+
+        from sidestory.adapters.icg.composer_adapter import KOREAN_FONT_CANDIDATES
+        from sidestory.app.disclaimer_slide import render
+
+        font = next((p for p in KOREAN_FONT_CANDIDATES if p.is_file()), None)
+        if font is not None:   # missing font is refused by the composer itself
+            deps.disclaimer = partial(render, font_path=font)
     return deps
 
 
@@ -60,9 +69,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="p1: release a held episode and resume from its last artifact")
     parser.add_argument("--ref-revision", type=int, default=1,
                         help="refgen: REF revision folder r<N> (new N for a new set of prompts)")
+    parser.add_argument("--live", action="store_true",
+                        help="publish: post to Facebook for real (also needs DRY_RUN=false)")
     args = parser.parse_args(argv)
 
-    if args.stage not in P0_STAGES + P1_STAGES + ("refgen", "inspect"):
+    if args.stage not in P0_STAGES + P1_STAGES + ("refgen", "inspect", "publish", "verify"):
         print(json.dumps({"stage": args.stage, "status": "not_implemented"}))
         return 2
     if args.stage in P1_STAGES and args.no_persist:
@@ -71,6 +82,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     settings = load_settings()
+    if args.live and (args.stage != "publish" or settings.dry_run):
+        print(json.dumps({"stage": args.stage, "status": "usage_error",
+                          "error": "--live is only for publish and requires DRY_RUN=false"}))
+        return 2
     side_day = date.fromisoformat(args.date) if args.date else datetime.now(KST).date()
 
     from sidestory.adapters.supabase.client import SideSetupError, preflight, side_client
@@ -98,6 +113,21 @@ def main(argv: list[str] | None = None) -> int:
         if snippet:
             print("\n# characters_side.yaml refs (after master review):\n" + snippet)
         return 0 if res.status == "ok" else 1
+
+    if args.stage in {"publish", "verify"}:
+        from sidestory.app.publish import PublishDeps, run_publish, run_verify
+
+        publisher = None
+        if settings.face_page_id and settings.face_page_token:
+            from sidestory.adapters.facebook.graph import FacebookPagePublisher
+
+            publisher = FacebookPagePublisher(settings.face_page_id, settings.face_page_token)
+        pdeps = PublishDeps(feed=feed, store=store, publisher=publisher, live=args.live)
+        res = (run_publish(side_day, pdeps, retry_hold=args.retry_hold)
+               if args.stage == "publish" else run_verify(side_day, pdeps))
+        print(json.dumps({"stage": args.stage, "results": [res.as_dict()]},
+                         ensure_ascii=False, indent=2, default=str))
+        return 0 if res.ok else 1
 
     if args.stage in P1_STAGES + ("inspect",):
         from sidestory.app.p1 import run_inspect, run_p1, run_stage

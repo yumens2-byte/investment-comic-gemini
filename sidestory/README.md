@@ -11,7 +11,7 @@ Main X pipeline is not modified; see boundary rules in `sidestory/__init__.py`.
 | `adapters/supabase/` | icg_side access + main feed views (no engine imports) |
 | `adapters/icg/` | ONLY place allowed to import `engine` (whitelisted symbols): Claude LLM, Gemini panel + ledger, PIL composer |
 | `adapters/notion/` | side system prompt loader (`NOTION_SIDE_SYSTEM_ID`) |
-| `adapters/facebook/` | Page publisher (P2/P3) |
+| `adapters/facebook/` | Graph API Page publisher (P2) |
 | `app/` | settings + stage orchestration |
 | `migrations/` | `0000_precheck.sql` (read-only), `0001_icg_side_schema.sql` |
 | `tests/` | side tests incl. boundary / split-readiness / isolation checks; `db_contract.py` = real Postgres + PostgREST E2E |
@@ -51,6 +51,22 @@ artifact.
 - assembly: main `compose_episode(strict=True)` → 8 slides 1080×1350, SG-6 manifest, SG-7.
 - Artifacts: Actions artifact `sidestory-<date>-<run_id>`; resume image/assembly in a new run
   with `artifact_run_id` (a paid panel whose file is gone is a ledger HOLD, never re-bought).
+
+## P2 (Facebook publish)
+Stages: `publish` (dry run unless live), `verify` (read-only). Restore the assembly artifact with
+"Resume only: previous run id or run URL" (= `manifest_json.run_id`).
+- assembly replaces S8 with the side disclaimer slide (`app/disclaimer_slide.py`, font-safe text).
+- publish gates: SG-1, SG-6 (8 slides on disk == manifest), SG-5 + internal codes + caption length.
+- dry run: Page credential check (`GET /{page-id}`), `side_publications` row with dry_run=true,
+  status unchanged.
+- live (double lock: input "publish only: post to Facebook for real" AND repository variable
+  `SIDESTORY_PUBLISH_LIVE=true` → `DRY_RUN=false --live`): assembled → publishing → 8 unpublished
+  photos → one feed post (`attached_media` in slide order) → live row → published.
+- failures: upload / rejected post → hold `SAFE` (no visible post, retry is safe); unknown post
+  outcome (timeout after sending, 5xx) → hold `AMBIGUOUS` (next run searches the Page feed for the
+  same message and records it instead of posting again). Release a publish hold with
+  "p1 / publish: release a held episode and resume from its last artifact".
+- one live row per episode+channel (unique index) — a published episode is never posted twice.
 
 ## Secrets used
 `SUPABASE_URL`, `SUPABASE_KEY` (P0); `ANTHROPIC_API_KEY`, `GEMINI_API_SUB_PAY_KEY`,

@@ -4,8 +4,8 @@
 ## 본편 반향 (변경·추가 금지, 인용만)
 - 제목: {{ echo.title }}
 - 로그라인: {{ echo.logline }}
-- 결과 분류: {{ echo.outcome_class }}{% if echo.outcome %} (본편 결과 {{ echo.outcome }}){% endif %}
-- 시나리오: {{ echo.scenario_type or "-" }} / 이벤트: {{ echo.event_type or "-" }}
+- 결과 분류: {{ class_label }}{% if outcome_label %} (본편 결과: {{ outcome_label }}){% endif %}
+- 시나리오: {{ scenario_label or "-" }} / 이벤트: {{ echo.event_type or "-" }}
 - 본편 다음 훅: {{ echo.next_hook or "-" }}
 {%- if echo.main_threads %}
 - 본편 미해결 스레드(해결·진전 서술 금지): {{ echo.main_threads | join(" / ") }}
@@ -23,7 +23,7 @@
 {{ previous_hook }}
 {%- endif %}
 
-## 반응 비트 ({{ echo.outcome_class }})
+## 반응 비트 ({{ class_label }})
 {{ reaction }}
 
 ## 패널 1~6 비트 (7 데이터카드·8 면책은 시스템이 생성 — 출력하지 말 것)
@@ -38,6 +38,7 @@
 - setting·action에 인물 묘사(figure, person, silhouette, observer, someone 등) 금지 — Zero Block은 zero_block_pose로, 노드는 silhouettes로만 지정한다. Zero Block은 이름(Zero Block)으로만 지칭.
 - 글자 수: title ≤40, logline ≤100, key_text ≤40, narration ≤120, caption_fb ≤1,400.
 - 수치는 위 목록 값만. 새 수치·예측·매매 권유 금지. 데이터 제공처 이름 금지.
+- 결과는 위 한국어 결과명으로만 쓴다. 영문 대문자 분류 코드(DRAW, OBSERVATION, HERO_VICTORY, NO_BATTLE 등)를 title·logline·key_text·narration·caption_fb에 쓰지 않는다.
 - caption_fb 마지막 줄: {{ disclaimer }}
 
 ## 출력 (JSON 객체 하나만, 코드펜스 허용)

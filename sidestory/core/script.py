@@ -15,6 +15,7 @@ from sidestory.core import gates
 from sidestory.core.beats import LLM_PANELS, TOTAL_PANELS, beats_for
 from sidestory.core.canon_rules import DISCLAIMER, find_stage_violations
 from sidestory.core.models import EchoPack
+from sidestory.core.outcome import INTERNAL_CODES
 
 CAPTION_MAX = 1500
 CAMERA_MAX = 200
@@ -37,6 +38,16 @@ FIGURE_WORDS = re.compile(
 NEGATED = re.compile(
     r"\b(no|without|never|not)\s+(any\s+|other\s+|visible\s+|human\s+|written\s+)?\w+",
     re.IGNORECASE)
+
+# v8.10: internal outcome codes in reader-facing text (pilot 2 P2 "본편의 결과는 OBSERVATION").
+# Uppercase, whole token only: ordinary words (e.g. "draw" in English prose) are not hit.
+CODE_PATTERN = re.compile(
+    r"(?<![A-Za-z_])(" + "|".join(sorted(INTERNAL_CODES, key=len, reverse=True)) + r")(?![A-Za-z_])")
+
+
+def find_internal_codes(text: str) -> list[str]:
+    return sorted({m.group(1) for m in CODE_PATTERN.finditer(text or "")})
+
 
 DATA_CARD_IDX = 7
 DISCLAIMER_IDX = 8
@@ -225,6 +236,15 @@ def validate(script: dict[str, Any], echo: EchoPack, stage: str) -> tuple[SideSc
             cited = f"{p.key_text}\n{p.narration}"
             if echo.main_episode_id not in cited and (not echo.title or echo.title not in cited):
                 problems.append(f"P{p.idx} must cite main episode title '{echo.title}'")
+
+    reader_texts = {"title": parsed.title, "logline": parsed.logline,
+                    "caption_fb": parsed.caption_fb, "next_hook_side": parsed.next_hook_side,
+                    **{f"P{p.idx}": f"{p.key_text}\n{p.narration}" for p in panels}}
+    for where, text in reader_texts.items():
+        codes = find_internal_codes(text)
+        if codes:
+            problems.append(f"{where} must not show internal codes {codes} "
+                            "(use the Korean outcome name given in the prompt)")
 
     payload = parsed.model_dump()
     for gate in (gates.sg3_stage(payload, stage), gates.sg4_echo_contract(payload, echo),

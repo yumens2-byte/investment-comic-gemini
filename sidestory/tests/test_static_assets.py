@@ -51,14 +51,26 @@ def test_run_workflow_p1_wiring() -> None:
     wf = yaml.safe_load(text)
     stage_opts = wf[True]["workflow_dispatch"]["inputs"]["stage"]["options"]
     assert stage_opts == ["gate", "echo", "narrative", "image", "assembly", "inspect", "p1",
-                          "refgen"]
+                          "refgen", "publish", "verify"]
     steps = {s["name"]: s for s in wf["jobs"]["sidestory"]["steps"]}
     run_env = steps["Run sidestory stage"]["env"]
     for secret in ("ANTHROPIC_API_KEY", "GEMINI_API_SUB_PAY_KEY", "NOTION_API_KEY",
                    "NOTION_SIDE_SYSTEM_ID"):
         assert run_env[secret] == f"${{{{ secrets.{secret} }}}}"
         assert secret not in wf["jobs"]["sidestory"]["env"]  # step-scoped only
-    assert "FACE_PAGE_TOKEN" not in text and "FACE_PAGE_ID" not in text  # no publishing in P1
+    # P2: FACE_* only in the run step, only for publish / verify; never job-wide.
+    for secret in ("FACE_PAGE_ID", "FACE_PAGE_TOKEN"):
+        assert secret not in wf["jobs"]["sidestory"]["env"]
+        assert run_env[secret] == ("${{ (inputs.stage == 'publish' || inputs.stage == 'verify')"
+                                   f" && secrets.{secret} || '' }}}}")
+        assert text.count(f"secrets.{secret}") == 1
+    # Double lock: checkbox AND repository variable, publish only; job default stays dry.
+    lock = ("inputs.stage == 'publish' && inputs.publish_live"
+            " && vars.SIDESTORY_PUBLISH_LIVE == 'true'")
+    assert lock in run_env["LIVE"] and lock in run_env["DRY_RUN"]
+    assert run_env["DRY_RUN"].endswith("&& 'false' || 'true' }}")
+    assert wf["jobs"]["sidestory"]["env"]["DRY_RUN"] == "true"
+    assert wf[True]["workflow_dispatch"]["inputs"]["publish_live"]["default"] is False
     assert "inputs.stage == 'gate' || inputs.stage == 'echo'" in run_env["NO_PERSIST"]
     assert "--ref-revision" in steps["Run sidestory stage"]["run"]
     upload = steps["Upload side artifacts"]

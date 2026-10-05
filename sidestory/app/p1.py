@@ -6,6 +6,7 @@ compare-and-set status → SG-7. Any failure moves the episode to ``hold`` with 
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -14,7 +15,7 @@ from typing import Any
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from PIL import Image
 
-from sidestory.app.imaging import MIN_KEEP_RATIO, trim_panel
+from sidestory.app.imaging import MAX_KEPT_ASPECT, MIN_KEEP_RATIO, trim_panel
 from sidestory.app.pipeline import run_gate_and_echo, side_episode_id
 from sidestory.app.settings import CONFIG_DIR
 from sidestory.core import gates, lifecycle
@@ -22,6 +23,7 @@ from sidestory.core.beats import beats_for
 from sidestory.core.canon_rules import DISCLAIMER, REACTION_BEATS
 from sidestory.core.image_prompt import build_panel_spec, registered_refs
 from sidestory.core.models import EchoPack, GateResult
+from sidestory.core.outcome import CLASS_LABEL_KO, outcome_label_ko, scenario_label_ko
 from sidestory.core.panel_check import SG8, Expectation, correction, judge
 from sidestory.core.schedule import previous_slot
 from sidestory.core.script import SideScript, normalize, validate
@@ -54,6 +56,8 @@ class P1Deps:
     dxy_source: DxySource | None = None
     inspector: PanelInspector | None = None
     run_id: str | None = None         # GITHUB_RUN_ID of this run (artifact to restore later)
+    # P2: renders the side disclaimer slide over the composer's last slide (font-safe, no emoji)
+    disclaimer: Callable[[Path], Path] | None = None
 
 
 @dataclass
@@ -116,6 +120,9 @@ def render_user_prompt(*, side_episode_id_: str, echo: EchoPack, nn_stage: str,
     return env.get_template("user_side.j2").render(
         side_episode_id=side_episode_id_, echo=echo, nn_stage=nn_stage,
         previous_hook=previous_hook, reaction=REACTION_BEATS[echo.outcome_class],
+        class_label=CLASS_LABEL_KO[echo.outcome_class],
+        outcome_label=outcome_label_ko(echo.outcome),
+        scenario_label=scenario_label_ko(echo.scenario_type),
         beats=beats_for(echo.outcome_class), disclaimer=DISCLAIMER, feedback=feedback)
 
 
@@ -254,7 +261,10 @@ def _assembly(sid: str, side_day: date, row: dict[str, Any], deps: P1Deps,
         used, res = trim_panel(path, trim_dir)
         if res.kept_ratio < MIN_KEEP_RATIO:
             raise StageFailure(f"{path.name} band trim would keep only {res.kept_ratio:.0%} "
-                               "(misdetection) — review the panel")
+                               f"(< {MIN_KEEP_RATIO:.0%}, misdetection) — review the panel")
+        if res.aspect > MAX_KEPT_ASPECT:
+            raise StageFailure(f"{path.name} band trim would leave a {res.aspect:.2f}:1 strip "
+                               f"(> {MAX_KEPT_ASPECT:.0f}:1) — review the panel")
         if res.trimmed:
             trims[path.stem] = list(res.box)
         images[i] = used
@@ -266,6 +276,11 @@ def _assembly(sid: str, side_day: date, row: dict[str, Any], deps: P1Deps,
         raise StageFailure(f"composer rejected sources: {exc}") from exc
     if len(slides) != len(script.panels):
         raise StageFailure(f"expected {len(script.panels)} slides, got {len(slides)}")
+    if deps.disclaimer is not None and script.panels[-1].panel_type == "DISCLAIMER":
+        try:
+            deps.disclaimer(Path(slides[-1]))
+        except (OSError, ValueError) as exc:
+            raise StageFailure(f"side disclaimer slide failed: {exc}") from exc
     expected: dict[str, str] = {}
     for slide in slides:
         digest = sha256_file(Path(slide))
@@ -281,7 +296,7 @@ def _assembly(sid: str, side_day: date, row: dict[str, Any], deps: P1Deps,
         raise StageFailure(sg6.reason, [sg6])
     manifest = {"slides": expected, "script_sha256": gates.fingerprint(row["script_json"]),
                 "panels": {str(k): v["sha256"] for k, v in stored.items()},
-                "trimmed": trims}
+                "trimmed": trims, "run_id": deps.run_id}
     slides_json = [{"name": Path(s).name, "path": _rel(Path(s)), "sha256": expected[Path(s).name]}
                    for s in slides]
     return {"slides_json": slides_json, "manifest_json": manifest}, {"gates": [sg6]}

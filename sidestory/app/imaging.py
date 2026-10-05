@@ -18,7 +18,10 @@ BAND_DARK = 20.0          # ... and that tone is near black
 BAND_LIGHT = 235.0        # ... or near white
 MIN_BAND_PX = 8           # thinner than this is anti-aliasing, not a band
 MAX_SIDE_RATIO = 0.30     # never cut more than 30% from one side
-MIN_KEEP_RATIO = 0.60     # kept area below this = misdetection → hold
+# Kept area below this = misdetection → hold. v8.10: 0.60 → 0.50 (pilot 2 P5: a real white
+# letterbox around a wide scene kept 58.6% with no content lost).
+MIN_KEEP_RATIO = 0.50
+MAX_KEPT_ASPECT = 2.0     # kept region wider/taller than 2:1 = unusable strip → hold
 # Relaxed criteria, only next to a detected band: frame rule / anti-aliased fringe.
 RULE_MAX_STD = 15.0
 RULE_DARK = 30.0
@@ -36,6 +39,12 @@ class TrimResult:
     @property
     def trimmed(self) -> bool:
         return self.box != (0, 0, *self.size)
+
+    @property
+    def aspect(self) -> float:
+        """Long side / short side of the kept region (1.0 = square)."""
+        w, h = self.box[2] - self.box[0], self.box[3] - self.box[1]
+        return max(w, h) / max(1, min(w, h))
 
 
 def _edge_run(mean: np.ndarray, std: np.ndarray, *, max_std: float = BAND_MAX_STD,

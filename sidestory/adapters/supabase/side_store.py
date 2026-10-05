@@ -43,6 +43,22 @@ class SupabaseSideStore:
         data = getattr(resp, "data", None) or []
         return data[0] if data else None
 
+    def live_publication(self, side_episode_id: str, channel: str) -> dict[str, Any] | None:
+        resp = (
+            side_table(self._client, "side_publications")
+            .select("*")
+            .eq("side_episode_id", side_episode_id)
+            .eq("channel", channel)
+            .eq("dry_run", False)
+            .limit(1)
+            .execute()
+        )
+        data = getattr(resp, "data", None) or []
+        return data[0] if data else None
+
+    def insert_publication(self, row: dict[str, Any]) -> None:
+        side_table(self._client, "side_publications").insert(row).execute()
+
     def log(self, stage: str, status: str, detail: dict[str, Any]) -> None:
         side_table(self._client, "side_run_logs").insert(
             {"stage": stage, "status": status, "detail": detail}

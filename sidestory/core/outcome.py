@@ -36,6 +36,48 @@ _OUTCOME_TO_CLASS: dict[str, OutcomeClass] = {
 }
 
 
+# v8.10 (pilot 2: "본편의 결과는 OBSERVATION"): readers see Korean names only.
+OUTCOME_LABEL_KO: dict[str, str] = {
+    "HERO_VICTORY": "히어로 승리",
+    "HERO_TACTICAL_VICTORY": "히어로 전술적 승리",
+    "PYRRHIC_VICTORY": "상처뿐인 승리",
+    "DRAW": "무승부",
+    "VILLAIN_TEMP_VICTORY": "빌런의 일시적 우세",
+    "HERO_DEFEAT": "히어로 패배",
+    "SYSTEM_COLLAPSE": "시스템 붕괴",
+    "OBSERVATION": "관측(전투 없음)",
+    "PEACEFUL_GROWTH": "평온한 성장(전투 없음)",
+}
+CLASS_LABEL_KO: dict[OutcomeClass, str] = {
+    OutcomeClass.VICTORY: "승리",
+    OutcomeClass.DRAW: "무승부",
+    OutcomeClass.DEFEAT: "패배",
+    OutcomeClass.NO_BATTLE: "전투 없음",
+}
+# Mirror of main scenario_selector.ScenarioType (2026-10-05).
+SCENARIO_LABEL_KO: dict[str, str] = {
+    "ONE_VS_ONE": "1대1 대결",
+    "ALLIANCE": "연합 대결",
+    "NO_BATTLE": "전투 없음",
+}
+# Internal codes that must never reach reader-facing text.
+INTERNAL_CODES: frozenset[str] = (MAIN_OUTCOMES | {c.value for c in OutcomeClass}
+                                  | frozenset(SCENARIO_LABEL_KO))
+
+
+def scenario_label_ko(scenario: str | None) -> str | None:
+    if not scenario:
+        return None
+    key = scenario.strip().upper()
+    return SCENARIO_LABEL_KO.get(key, key)
+
+
+def outcome_label_ko(outcome: str | None) -> str | None:
+    if not outcome:
+        return None
+    return OUTCOME_LABEL_KO.get(outcome.strip().upper())
+
+
 class UnknownOutcome(ValueError):
     """Main produced an outcome the side track does not know — hold, never guess."""
 

@@ -574,15 +574,17 @@ def run_p1_checks(url: str, env: dict) -> None:
     import contextlib
     import io
     from datetime import date
+    from functools import partial
 
     from PIL import Image
 
     import engine.image.gemini_client as gemini
-    from sidestory.adapters.icg.composer_adapter import PilSlideComposer
+    from sidestory.adapters.icg.composer_adapter import KOREAN_FONT_CANDIDATES, PilSlideComposer
     from sidestory.adapters.icg.image_adapter import GeminiPanelGenerator
     from sidestory.adapters.supabase.client import side_client
     from sidestory.adapters.supabase.main_feed_reader import SupabaseMainFeedReader
     from sidestory.adapters.supabase.side_store import SupabaseSideStore
+    from sidestory.app.disclaimer_slide import render as render_disclaimer
     from sidestory.app.p1 import P1Deps, run_p1, run_stage
     from sidestory.app.settings import load_settings
     from sidestory.tests.p1_fixtures import (
@@ -626,6 +628,8 @@ def run_p1_checks(url: str, env: dict) -> None:
         deps = P1Deps(feed=feed, store=store, llm=FakeLLM([raw]), prompts=FakePrompts(),
                       images=GeminiPanelGenerator(), composer=PilSlideComposer(),
                       characters=make_refs(work), ref_root=work,
+                      disclaimer=partial(render_disclaimer, font_path=next(
+                          p for p in KOREAN_FONT_CANDIDATES if p.is_file())),
                       inspector=FakeInspector({(2, 1): dict(CLEAN, figures=[
                           {"kind": "other", "prominence": "major"}])}), run_id="777")
         with contextlib.redirect_stderr(io.StringIO()):
@@ -704,6 +708,44 @@ def run_p1_checks(url: str, env: dict) -> None:
               ref.status == "ok" and n == 5 and attached[0] == []
               and all(a == ["zero_block_front.png"] for a in attached[1:])
               and set(ref.files) == set(POSE_ORDER), f"{ref.as_dict()} {attached}")
+
+        # P2 publish over PostgREST (fake Facebook publisher, real side_publications table).
+        from sidestory.app.publish import PublishDeps, run_publish
+        from sidestory.tests.test_p2_publish import FakePublisher
+
+        store.update_episode(sid, {"status": "assembled", "error_message": None},
+                             expect_status="hold")
+        pdeps = PublishDeps(feed=feed, store=store, publisher=FakePublisher(), live=False)
+        dry = run_publish(date(2026, 10, 8), pdeps)
+        with psycopg.connect(url, autocommit=True) as db:
+            rows = db.execute("select dry_run, post_id from icg_side.side_publications"
+                              " where side_episode_id=%s", (sid,)).fetchall()
+        check("P11 publish dry run: credential check, dry row via API, status unchanged",
+              dry.status == "assembled" and [tuple(r) for r in rows] == [(True, None)]
+              and store.get_episode(sid)["status"] == "assembled", f"{dry.detail} {rows}")
+        pub = FakePublisher()
+        pdeps.publisher, pdeps.live = pub, True
+        live = run_publish(date(2026, 10, 8), pdeps)
+        with psycopg.connect(url, autocommit=True) as db:
+            rows = db.execute("select dry_run, post_id, jsonb_array_length(photo_ids) from"
+                              " icg_side.side_publications where side_episode_id=%s"
+                              " order by id", (sid,)).fetchall()
+            st = db.execute("select status, publish_hold from icg_side.side_episodes"
+                            " where side_episode_id=%s", (sid,)).fetchone()
+        check("P12 live publish: assembled→publishing→published, live row with 8 photos",
+              live.status == "published" and tuple(st) == ("published", None)
+              and [tuple(r) for r in rows] == [(True, None, 0), (False, "123_999", 8)]
+              and len(pub.posts) == 1, f"{live.detail} {rows} {st}")
+        again = run_publish(date(2026, 10, 8), pdeps)
+        try:
+            store.insert_publication({"side_episode_id": sid, "channel": "facebook",
+                                      "post_id": "dup", "photo_ids": [], "dry_run": False})
+            dup_blocked = False
+        except Exception as exc:  # noqa: BLE001
+            dup_blocked = "23505" in str(exc) or "duplicate" in str(exc)
+        check("P13 no second post: rerun is a no-op and the DB refuses a 2nd live row",
+              again.detail.get("reason") == "already published" and len(pub.posts) == 1
+              and dup_blocked, f"{again.detail} dup_blocked={dup_blocked}")
     finally:
         gemini._generate_one, gemini._get_client = real_one, real_client
         os.chdir(cwd)
