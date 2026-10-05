@@ -44,6 +44,11 @@ def load_canon_state() -> dict:
     return yaml.safe_load((CONFIG_DIR / "canon_state.yaml").read_text(encoding="utf-8")) or {}
 
 
+def load_characters() -> dict:
+    return yaml.safe_load(
+        (CONFIG_DIR / "characters_side.yaml").read_text(encoding="utf-8")) or {}
+
+
 def load_settings() -> Settings:
     # The side track must never run against the main schema (K-1).
     schema = os.environ.get("SUPABASE_SCHEMA", "")

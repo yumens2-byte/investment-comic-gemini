@@ -41,3 +41,32 @@ def test_diff_guard_rules() -> None:
     assert violations(["sidestory/core/x.py", ".github/workflows/sidestory_run.yml"]) == []
     assert violations(["engine/a.py"]) == []  # main-only change sets are out of scope
     assert violations(["sidestory/core/x.py", "engine/a.py"]) == ["engine/a.py"]
+
+
+def test_run_workflow_p1_wiring() -> None:
+    text = RUN_WF.read_text(encoding="utf-8")
+    wf = yaml.safe_load(text)
+    stage_opts = wf[True]["workflow_dispatch"]["inputs"]["stage"]["options"]
+    assert stage_opts == ["gate", "echo", "narrative", "image", "assembly", "p1"]
+    steps = {s["name"]: s for s in wf["jobs"]["sidestory"]["steps"]}
+    run_env = steps["Run sidestory stage"]["env"]
+    for secret in ("ANTHROPIC_API_KEY", "GEMINI_API_SUB_PAY_KEY", "NOTION_API_KEY",
+                   "NOTION_SIDE_SYSTEM_ID"):
+        assert run_env[secret] == f"${{{{ secrets.{secret} }}}}"
+        assert secret not in wf["jobs"]["sidestory"]["env"]  # step-scoped only
+    assert "FACE_PAGE_TOKEN" not in text and "FACE_PAGE_ID" not in text  # no publishing in P1
+    assert "inputs.stage == 'gate' || inputs.stage == 'echo'" in run_env["NO_PERSIST"]
+    upload = steps["Upload side artifacts"]
+    assert upload["with"]["path"] == "output/sidestory/"
+    assert "github.run_id" in upload["with"]["name"]
+    assert "fonts-noto-cjk" in steps["Install Korean font (slide composer)"]["run"]
+    restore = steps["Restore previous artifact"]
+    assert restore["with"]["path"] == "output/sidestory"
+
+
+def test_ledger_scope_matches_p1_output_dir() -> None:
+    sql = MIGRATION.read_text(encoding="utf-8")
+    assert "^output/sidestory/[0-9]{4}-[0-9]{2}-[0-9]{2}/panels$" in sql
+    from sidestory.app.p1 import P1Deps
+
+    assert P1Deps.__dataclass_fields__["output_root"].default.as_posix() == "output/sidestory"

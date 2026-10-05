@@ -1,6 +1,7 @@
 """SideStore over icg_side tables."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from sidestory.adapters.supabase.client import side_table
@@ -19,6 +20,17 @@ class SupabaseSideStore:
         side_table(self._client, "side_episodes").upsert(
             {"side_episode_id": side_episode_id, **fields}, on_conflict="side_episode_id"
         ).execute()
+
+    def update_episode(self, side_episode_id: str, fields: dict[str, Any],
+                       expect_status: str) -> bool:
+        resp = (
+            side_table(self._client, "side_episodes")
+            .update({**fields, "updated_at": datetime.now(timezone.utc).isoformat()})
+            .eq("side_episode_id", side_episode_id)
+            .eq("status", expect_status)
+            .execute()
+        )
+        return bool(getattr(resp, "data", None))
 
     def get_episode(self, side_episode_id: str) -> dict[str, Any] | None:
         resp = (

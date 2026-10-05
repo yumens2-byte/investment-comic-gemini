@@ -162,11 +162,19 @@ def test_registered_refs_and_sg2(tmp_path) -> None:
     assert gates.sg2_refs([]).passed  # environment-only scripts need no REF
 
 
-def test_repo_characters_yaml_is_pending_until_master_uploads_refs() -> None:
-    from sidestory.app.settings import load_characters
+def test_repo_refs_registered_and_match_committed_files() -> None:
+    """SG-2 against the real repo: every Zero Block REF is committed and its sha256 registered."""
+    import hashlib
 
-    chars = load_characters()
-    refs = registered_refs(chars, {"front", "side", "back", "attack", "defense"})
+    from sidestory.app.settings import load_characters
+    from sidestory.tests.conftest import REPO_ROOT
+
+    refs = registered_refs(load_characters(), {"front", "side", "back", "attack", "defense"})
     assert len(refs) == 5
-    result = gates.sg2_refs([(p, sha, None) for p, _, sha in refs])
-    assert not result.passed  # SG-2 must hold while sha256 == __PENDING__
+    checks = []
+    for pose, path, sha in refs:
+        file = REPO_ROOT / path
+        checks.append((pose, sha, hashlib.sha256(file.read_bytes()).hexdigest()
+                       if file.is_file() else None))
+    result = gates.sg2_refs(checks)
+    assert result.passed, result.reason
