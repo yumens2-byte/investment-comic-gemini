@@ -1,4 +1,4 @@
-"""Stage orchestration. P0 implements: gate, echo. Later stages raise NotImplementedError."""
+"""Stage orchestration. P0: gate, echo (here). P1: narrative, image, assembly, p1 (app/p1.py)."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -17,8 +17,9 @@ from sidestory.ports.store import SideStore
 # History window for inferring the broad index run start (> weekly cadence, see core/dollar.py).
 DOLLAR_HISTORY_DAYS = 21
 
-STAGES = ("gate", "echo", "narrative", "image", "assembly", "publish", "verify")
+STAGES = ("gate", "echo", "narrative", "image", "assembly", "p1", "publish", "verify")
 P0_STAGES = ("gate", "echo")
+P1_STAGES = ("narrative", "image", "assembly", "p1")
 
 
 def side_episode_id(side_day: date, seq: int = 1) -> str:
@@ -81,7 +82,9 @@ def run_gate_and_echo(
     main_day = date.fromisoformat(anchor.episode_date)
     broad = infer_broad_from_history(feed.dollar_history(
         (main_day - timedelta(days=DOLLAR_HISTORY_DAYS)).isoformat(), anchor.episode_date))
-    dxy = dxy_source.dxy_close(main_day) if dxy_source is not None else None
+    # Only completed sessions before the main KST date (main runs 01:36 KST = US D-1 midday).
+    dxy = (dxy_source.dxy_close(main_day - timedelta(days=1))
+           if dxy_source is not None else None)
     dollar = select_dollar(main_day, dxy, broad)
     echo = build_echo_pack(side_day.isoformat(), anchor, feed.market(anchor.episode_date),
                            feed.arc(), dollar)

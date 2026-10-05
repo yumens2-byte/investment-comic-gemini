@@ -34,7 +34,8 @@ LABEL_KO = {DollarIndexKind.DXY: "달러인덱스", DollarIndexKind.BROAD: "광�
 
 # Plausibility bands (reject unit/series mix-ups such as USD/KRW or a broad value as DXY).
 RANGE = {DollarIndexKind.DXY: (70.0, 130.0), DollarIndexKind.BROAD: (90.0, 150.0)}
-# DXY: daily market close. Allow weekend + one holiday between bar date and main date.
+# DXY: completed daily close strictly before the main KST date (see _validate).
+# Allow weekend + one holiday between bar date and main date.
 DXY_MAX_AGE_DAYS = 4
 # BROAD: weekly cadence observed in production → a run older than 9 days missed an update.
 BROAD_MAX_RUN_AGE_DAYS = 9
@@ -105,6 +106,11 @@ def _validate(c: DollarCandidate, reference: date) -> str | None:
         return f"invalid as_of {c.as_of!r}"
     if age < 0:
         return f"as_of {c.as_of} is after reference {reference}"
+    if c.kind is DollarIndexKind.DXY and age == 0:
+        # Main episode of KST date D is generated at 01:36 KST (= US D-1 midday), so it can
+        # never contain US session D. A DXY bar dated D is an in-progress bar, not a close
+        # (observed 2026-10-05: 102.29 fetched at 02:13 ET while main used Fri 10-02 data).
+        return f"in-progress bar {c.as_of} (same date as main episode)"
     limit = DXY_MAX_AGE_DAYS if c.kind is DollarIndexKind.DXY else BROAD_MAX_RUN_AGE_DAYS
     if age > limit:
         return f"stale: {age}d > {limit}d"

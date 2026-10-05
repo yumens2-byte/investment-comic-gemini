@@ -129,3 +129,14 @@ def test_yfinance_failure_returns_none() -> None:
 
     assert YFinanceDxySource(boom).dxy_close(date(2026, 10, 5)) is None
     assert YFinanceDxySource(lambda *a, **k: pd.DataFrame()).dxy_close(date(2026, 10, 5)) is None
+
+
+def test_same_day_dxy_bar_is_in_progress_and_rejected() -> None:
+    """Regression from the 2026-10-05 ops run: DXY 102.29 dated 10-05 fetched at 02:13 ET."""
+    d = select_dollar(MAIN_DAY, dxy(value=102.29, as_of="2026-10-05", change=1.08),
+                      infer_broad_from_history(BROAD_HISTORY))
+    assert d.chosen.kind is DollarIndexKind.BROAD
+    assert "in-progress" in d.rejected["DXY"]
+    friday = select_dollar(MAIN_DAY, dxy(value=101.93, as_of="2026-10-02", change=0.95),
+                           infer_broad_from_history(BROAD_HISTORY))
+    assert friday.chosen.kind is DollarIndexKind.DXY and friday.value == 101.93

@@ -43,11 +43,18 @@ def sg7_unchanged(before: str | None, after: str | None) -> GateResult:
 
 
 def _texts(script: dict[str, Any]) -> list[str]:
-    out = [str(script.get(k) or "") for k in ("title", "logline", "caption")]
+    """All reader-facing copy (title, captions, panel text, side hooks)."""
+    keys = ("title", "logline", "caption", "caption_fb", "next_hook_side")
+    out = [str(script.get(k) or "") for k in keys]
+    out += [str(t) for t in script.get("side_threads") or []]
     for panel in script.get("panels") or []:
         if isinstance(panel, dict):
-            out += [str(panel.get(k) or "") for k in ("key_text", "narration")]
+            out += [str(panel.get(k) or "") for k in ("key_text", "narration", "market_ref")]
     return [t for t in out if t]
+
+
+def copy_texts(script: dict[str, Any]) -> list[str]:
+    return _texts(script)
 
 
 def sg3_stage(script: dict[str, Any], stage: str) -> GateResult:
@@ -89,6 +96,19 @@ def sg5_copy(final_caption: str, all_copy: Iterable[str]) -> GateResult:
     for text in all_copy:
         problems += [f"vendor term: {t}" for t in find_vendor_terms(text)]
     return GateResult(gate="SG-5", passed=not problems, reason="; ".join(sorted(set(problems))))
+
+
+def sg2_refs(refs: Iterable[tuple[str, str, str | None]]) -> GateResult:
+    """REF integrity: (label, registered sha256, actual sha256 or None if file missing)."""
+    problems: list[str] = []
+    for label, registered, actual in refs:
+        if not re.fullmatch(r"[0-9a-f]{64}", registered or ""):
+            problems.append(f"{label}: REF not registered ({registered})")
+        elif actual is None:
+            problems.append(f"{label}: REF file missing")
+        elif actual != registered:
+            problems.append(f"{label}: REF sha256 mismatch")
+    return GateResult(gate="SG-2", passed=not problems, reason="; ".join(problems))
 
 
 def sg6_manifest(expected: dict[str, str], actual: dict[str, str]) -> GateResult:

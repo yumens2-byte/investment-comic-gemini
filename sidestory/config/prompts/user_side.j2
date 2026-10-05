@@ -1,0 +1,53 @@
+[외전 슬롯] {{ side_episode_id }} / 연결 본편 {{ echo.main_episode_id }} ({{ echo.main_date }})
+[캐논 단계] {{ nn_stage }} — Zero Block 독백·관찰만. 노드 실명·대사 금지(원경 실루엣만). 세력 선언 금지.
+
+## 본편 반향 (변경·추가 금지, 인용만)
+- 제목: {{ echo.title }}
+- 로그라인: {{ echo.logline }}
+- 결과 분류: {{ echo.outcome_class }}{% if echo.outcome %} (본편 결과 {{ echo.outcome }}){% endif %}
+- 시나리오: {{ echo.scenario_type or "-" }} / 이벤트: {{ echo.event_type or "-" }}
+- 본편 다음 훅: {{ echo.next_hook or "-" }}
+{%- if echo.main_threads %}
+- 본편 미해결 스레드(해결·진전 서술 금지): {{ echo.main_threads | join(" / ") }}
+{%- endif %}
+- 사용 가능한 수치(이 값만 그대로 사용, 소수 둘째 자리):
+{%- for key, value in echo.market.items() if value is not none %}
+  - {{ key }} = {{ value }}
+{%- endfor %}
+{%- if echo.dollar %}
+  - {{ echo.dollar.label_ko }} = {{ "%.2f"|format(echo.dollar.value) }} (기준일 {{ echo.dollar.as_of }})
+{%- endif %}
+{%- if previous_hook %}
+
+## 직전 외전 훅 (이어받기)
+{{ previous_hook }}
+{%- endif %}
+
+## 반응 비트 ({{ echo.outcome_class }})
+{{ reaction }}
+
+## 패널 1~6 비트 (7 데이터카드·8 면책은 시스템이 생성 — 출력하지 말 것)
+{%- for b in beats %}
+- P{{ b.idx }} [{{ b.panel_type }}] {{ b.beat }} / zero_block_pose ∈ {{ b.allowed_poses | join(",") }} / silhouettes ≤ {{ b.max_silhouettes }}{% if b.must_cite_main %} / 본편 제목 「{{ echo.title }}」 key_text 또는 narration에 그대로 인용{% endif %}
+{%- endfor %}
+
+## 규칙
+- 본편 캐릭터(히어로·빌런)는 그리지 않는다: setting/action에 본편 인물 묘사·ID 금지. 본편은 텍스트 인용만.
+- setting·action·camera는 영어(이미지 생성용), key_text·narration·caption은 한국어.
+- 글자 수: title ≤40, logline ≤100, key_text ≤40, narration ≤120, caption_fb ≤1,400.
+- 수치는 위 목록 값만. 새 수치·예측·매매 권유 금지. 데이터 제공처 이름 금지.
+- caption_fb 마지막 줄: {{ disclaimer }}
+
+## 출력 (JSON 객체 하나만, 코드펜스 허용)
+{"title": "...", "logline": "...", "caption_fb": "...",
+ "panels": [{"idx": 1, "panel_type": "COVER", "camera": "...", "setting": "...", "action": "...",
+             "key_text": "...", "narration": "...", "market_ref": null,
+             "zero_block_pose": "none", "silhouettes": []}, ... P6까지],
+ "side_threads": ["외전 자체 미해결 스레드 ≤3"], "next_hook_side": "다음 외전 훅"}
+{%- if feedback %}
+
+## 직전 출력 반려 사유 (모두 수정해서 전체를 다시 출력)
+{%- for f in feedback %}
+- {{ f }}
+{%- endfor %}
+{%- endif %}

@@ -84,7 +84,14 @@ class FakeStore:
         return set(self.anchored)
 
     def upsert_episode(self, sid, fields):
-        self.episodes[sid] = fields
+        self.episodes[sid] = {"side_episode_id": sid, **fields}
+
+    def update_episode(self, sid, fields, expect_status):
+        row = self.episodes.get(sid)
+        if row is None or row.get("status") != expect_status:
+            return False
+        row.update(fields)
+        return True
 
     def get_episode(self, sid):
         return self.episodes.get(sid)
