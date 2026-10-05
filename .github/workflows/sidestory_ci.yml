@@ -1,0 +1,83 @@
+name: "🧪 Sidestory CI"
+
+# Side-only CI. Main ci.yml is not modified (K-1).
+on:
+  push:
+    branches: [main]
+    paths:
+      - "sidestory/**"
+      - ".github/workflows/sidestory_*.yml"
+  pull_request:
+    paths:
+      - "sidestory/**"
+      - ".github/workflows/sidestory_*.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHONPATH: .
+      DRY_RUN: "true"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt ruff
+      - name: Lint (ruff, side only)
+        run: ruff check sidestory --line-length=100
+      - name: Test (side)
+        run: python -m pytest sidestory/tests -v -p no:cacheprovider
+      - name: Main paths untouched by side PR (DR-5)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: python -m sidestory.tests.diff_guard "origin/${BASE_REF}"
+
+  db-contract:
+    # Real PostgreSQL + PostgREST: migration isolation, views, fingerprint, ledger, CLI E2E.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: local-side-contract
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PYTHONPATH: .
+      DRY_RUN: "true"
+      DATABASE_TEST_URL: postgresql://postgres:local-side-contract@localhost:5432/postgres
+      POSTGREST_BIN: /tmp/postgrest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt 'psycopg[binary]==3.3.6'
+      - name: Install pg_dump 16 client
+        run: sudo apt-get install -y --no-install-recommends postgresql-client-16 || true
+      - name: Download PostgREST (local, test credentials only)
+        run: |
+          curl -fsSL -o /tmp/postgrest.tar.xz \
+            https://github.com/PostgREST/postgrest/releases/download/v12.2.3/postgrest-v12.2.3-linux-static-x64.tar.xz
+          tar -xf /tmp/postgrest.tar.xz -C /tmp
+      - run: python -m sidestory.tests.db_contract
+      - if: failure()
+        run: cat /tmp/sidestory_postgrest.log

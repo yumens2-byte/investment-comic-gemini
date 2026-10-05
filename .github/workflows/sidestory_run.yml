@@ -1,0 +1,79 @@
+name: "🌐 Sidestory Run (Facebook side canon)"
+
+# SIDESTORY track — isolated from the main X pipeline (K-1).
+#  - Separate concurrency group (main uses icg-<date>).
+#  - SUPABASE_SCHEMA is pinned to icg_side; main schema is read only via views.
+#  - X / Telegram channel secrets are intentionally NOT injected.
+# Schedule: Tue/Thu 10:17 KST (= 01:17 UTC Tue/Thu), after main publish_sns (06:06 KST).
+# The schedule is inert until repository variable SIDESTORY_SCHEDULE_ENABLED == 'true' (P4).
+
+on:
+  schedule:
+    - cron: "17 1 * * 2,4"
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: "gate | echo (P0)"
+        required: true
+        default: "gate"
+        type: choice
+        options: [gate, echo]
+      date:
+        description: "Side slot date KST (YYYY-MM-DD). Empty = today KST"
+        required: false
+        default: ""
+      force:
+        description: "Ignore Tue/Thu slot check"
+        required: false
+        default: false
+        type: boolean
+      persist:
+        description: "Write draft to icg_side (echo stage only)"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: sidestory-${{ inputs.date || 'today' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sidestory:
+    if: github.event_name == 'workflow_dispatch' || vars.SIDESTORY_SCHEDULE_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PYTHONPATH: .
+      SUPABASE_SCHEMA: icg_side
+      ICG_GENERATION_REVISION: "1"
+      DRY_RUN: "true"
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run sidestory stage
+        env:
+          STAGE: ${{ inputs.stage || 'echo' }}
+          SIDE_DATE: ${{ inputs.date }}
+          FORCE: ${{ inputs.force && '--force' || '' }}
+          NO_PERSIST: ${{ (github.event_name == 'workflow_dispatch' && !inputs.persist) && '--no-persist' || '' }}
+        run: |
+          ARGS=(--stage "$STAGE")
+          if [ -n "$SIDE_DATE" ]; then ARGS+=(--date "$SIDE_DATE"); fi
+          if [ -n "$FORCE" ]; then ARGS+=("$FORCE"); fi
+          if [ -n "$NO_PERSIST" ]; then ARGS+=("$NO_PERSIST"); fi
+          python -m sidestory "${ARGS[@]}"
