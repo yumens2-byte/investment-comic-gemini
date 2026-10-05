@@ -4,7 +4,9 @@ name: "🌐 Sidestory Run (Facebook side canon)"
 #  - Separate concurrency group (main uses icg-<date>).
 #  - SUPABASE_SCHEMA is pinned to icg_side; main schema is read only via views.
 #  - SG-8 (v8.9): image / p1 / inspect stages check each panel picture with Claude vision.
-#  - X / Telegram channel secrets and FACE_* are intentionally NOT injected (no publishing in P1).
+#  - X / Telegram channel secrets are never injected. FACE_* reach only the publish / verify
+#    stages. A real post needs BOTH the "publish only: post to Facebook for real" input AND the
+#    repository variable SIDESTORY_PUBLISH_LIVE == 'true' (P2 double lock); otherwise dry run.
 # Schedule: Tue/Thu 10:17 KST (= 01:17 UTC Tue/Thu), after main publish_sns (06:06 KST).
 # The schedule is inert until repository variable SIDESTORY_SCHEDULE_ENABLED == 'true' (P4).
 
@@ -14,11 +16,11 @@ on:
   workflow_dispatch:
     inputs:
       stage:
-        description: "gate | echo (P0) · narrative | image | assembly | inspect | p1 (P1, paid) · refgen (Zero Block REF, paid)"
+        description: "gate | echo (P0) · narrative | image | assembly | inspect | p1 (P1, paid) · refgen (Zero Block REF, paid) · publish | verify (P2, Facebook)"
         required: true
         default: "gate"
         type: choice
-        options: [gate, echo, narrative, image, assembly, inspect, p1, refgen]
+        options: [gate, echo, narrative, image, assembly, inspect, p1, refgen, publish, verify]
       date:
         description: "Side slot date KST (YYYY-MM-DD). Empty = today KST"
         required: false
@@ -34,7 +36,7 @@ on:
         default: false
         type: boolean
       retry_hold:
-        description: "p1 only: release a held episode and resume from its last artifact"
+        description: "p1 / publish: release a held episode and resume from its last artifact"
         required: false
         default: false
         type: boolean
@@ -42,6 +44,11 @@ on:
         description: "refgen only: REF revision number r<N> (1..999). Use a new number for new prompts"
         required: false
         default: "1"
+      publish_live:
+        description: "publish only: post to Facebook for real (also needs repository variable SIDESTORY_PUBLISH_LIVE=true). Unchecked = dry run"
+        required: false
+        default: false
+        type: boolean
       artifact_run_id:
         description: "Resume only: previous run id or run URL whose artifact to restore. Leave EMPTY for a first run"
         required: false
@@ -153,6 +160,11 @@ jobs:
           FORCE: ${{ inputs.force && '--force' || '' }}
           NO_PERSIST: ${{ (github.event_name == 'workflow_dispatch' && !inputs.persist && (inputs.stage == 'gate' || inputs.stage == 'echo')) && '--no-persist' || '' }}
           RETRY_HOLD: ${{ inputs.retry_hold && '--retry-hold' || '' }}
+          # P2 double lock: input checkbox AND repository variable, publish stage only.
+          LIVE: ${{ (inputs.stage == 'publish' && inputs.publish_live && vars.SIDESTORY_PUBLISH_LIVE == 'true') && '--live' || '' }}
+          DRY_RUN: ${{ (inputs.stage == 'publish' && inputs.publish_live && vars.SIDESTORY_PUBLISH_LIVE == 'true') && 'false' || 'true' }}
+          FACE_PAGE_ID: ${{ (inputs.stage == 'publish' || inputs.stage == 'verify') && secrets.FACE_PAGE_ID || '' }}
+          FACE_PAGE_TOKEN: ${{ (inputs.stage == 'publish' || inputs.stage == 'verify') && secrets.FACE_PAGE_TOKEN || '' }}
           REF_REVISION: ${{ inputs.ref_revision || '1' }}
           # P1 providers (narrative / image / inspect / p1 stages; SG-8 uses ANTHROPIC_API_KEY)
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -163,14 +175,15 @@ jobs:
           ARGS=(--stage "$STAGE" --date "$SIDE_DATE")
           if [ -n "$FORCE" ]; then ARGS+=("$FORCE"); fi
           if [ -n "$NO_PERSIST" ]; then ARGS+=("$NO_PERSIST"); fi
-          if [ -n "$RETRY_HOLD" ] && [ "$STAGE" = "p1" ]; then ARGS+=("$RETRY_HOLD"); fi
+          if [ -n "$RETRY_HOLD" ] && { [ "$STAGE" = "p1" ] || [ "$STAGE" = "publish" ]; }; then ARGS+=("$RETRY_HOLD"); fi
+          if [ -n "$LIVE" ]; then ARGS+=("$LIVE"); fi
           if [ "$STAGE" = "refgen" ]; then
             if ! printf '%s' "$REF_REVISION" | grep -Eq '^[0-9]{1,3}$'; then
               echo "::error::ref_revision must be 1..999 (got '$REF_REVISION')"; exit 1
             fi
             ARGS+=(--ref-revision "$REF_REVISION")
           fi
-          echo "STAGE=$STAGE SIDE_DATE=$SIDE_DATE FORCE=$FORCE NO_PERSIST=$NO_PERSIST RETRY_HOLD=$RETRY_HOLD SIDESTORY_DXY_SOURCE=$SIDESTORY_DXY_SOURCE"
+          echo "STAGE=$STAGE SIDE_DATE=$SIDE_DATE FORCE=$FORCE NO_PERSIST=$NO_PERSIST RETRY_HOLD=$RETRY_HOLD LIVE=$LIVE DRY_RUN=$DRY_RUN SIDESTORY_DXY_SOURCE=$SIDESTORY_DXY_SOURCE"
           python -m sidestory "${ARGS[@]}"
 
       - name: Upload side artifacts
