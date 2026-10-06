@@ -1,0 +1,53 @@
+name: Market Talk offline contracts
+on:
+  pull_request:
+    paths:
+      - 'sidestory/**'
+      - '.github/workflows/sidestory_market_talk*.yml'
+      - '.github/workflows/sidestory_run.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: |
+          pip install -r requirements.txt
+          pip install --require-hashes -r sidestory/market_talk/requirements.lock
+      - run: python -m pytest sidestory/tests/market_talk sidestory/tests/test_p2_publish.py sidestory/tests/test_boundary.py -q
+      - run: |
+          npm ci --ignore-scripts --prefix sidestory/tests/market_talk
+          npm test --prefix sidestory/tests/market_talk
+  postgres-concurrency:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install 'psycopg[binary]==3.3.6'
+      - run: python sidestory/tests/market_talk/postgres_contract.py
+        env:
+          MARKET_TALK_TEST_DATABASE_URL: 'postgresql://postgres@127.0.0.1:5432/postgres'

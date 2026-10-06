@@ -193,12 +193,12 @@ def test_ambiguous_post_reconciles_instead_of_double_posting(env) -> None:
     assert len(pub.uploads) == uploads
 
 
-def test_ambiguous_post_not_found_posts_once(env) -> None:
+def test_ambiguous_post_not_found_stays_held(env) -> None:
     pub = FakePublisher(fail_post=PublishError("HTTP 500", ambiguous=True))
     run_publish(TUE, deps(env, pub, live=True))
     res = run_publish(TUE, deps(env, pub, live=True), retry_hold=True)
-    assert res.status == "published" and res.detail["reconciled"] is False
-    assert pub.finds == 1 and len(pub.posts) == 1
+    assert res.status == "hold" and res.detail["reconciled"] is False
+    assert pub.finds == 1 and len(pub.posts) == 0
 
 
 def test_ambiguous_and_page_unreadable_stays_hold(env) -> None:

@@ -1,0 +1,6 @@
+# Versions used for offline validation on 2026-10-06. No change to main dependencies.
+supabase==2.32.0
+pydantic==2.13.5
+PyYAML==6.0.3
+requests==2.34.2
+anthropic==1.11.0
