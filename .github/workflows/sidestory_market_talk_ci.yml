@@ -1,4 +1,4 @@
-name: Market Talk offline contracts
+name: 🌐 Market Talk offline contracts
 on:
   pull_request:
     paths:
