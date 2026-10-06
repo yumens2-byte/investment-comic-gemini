@@ -52,14 +52,14 @@ jobs:
           REQUEST_NOTE: ${{ inputs.review_note }}
           REQUEST_ACTOR: ${{ github.actor }}
           EVENT_NAME: ${{ github.event_name }}
+          MARKET_TALK_SCHEDULE_ENABLED: ${{ vars.MARKET_TALK_SCHEDULE_ENABLED || 'false' }}
           FACE_PAGE_TOKEN: ${{ secrets.FACE_PAGE_TOKEN }}
         shell: bash
         run: |
           args=(--stage "$REQUEST_STAGE" --output output/market-talk-report.json)
           if [[ -n "$REQUEST_REVISION" ]]; then args+=(--revision "$REQUEST_REVISION"); fi
           if [[ "$REQUEST_STAGE" == "approve" ]]; then
-            [[ "$EVENT_NAME" == "workflow_dispatch" && "$REQUEST_CONFIRM" == "YES" ]]
-            args+=(--confirm YES --actor "$REQUEST_ACTOR" --note "$REQUEST_NOTE")
+            args+=(--confirm "$REQUEST_CONFIRM" --actor "$REQUEST_ACTOR" --note "$REQUEST_NOTE")
           fi
           if [[ "$REQUEST_STAGE" == "publish" ]]; then
             if [[ "$EVENT_NAME" == "schedule" || "$REQUEST_CONFIRM" == "YES" ]]; then

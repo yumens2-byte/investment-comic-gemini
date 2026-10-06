@@ -89,12 +89,46 @@ def test_invalid_boolean_fails_closed(monkeypatch, name):
         cli.flag(name)
 
 
-def test_no_approved_queue_is_normal_skip(monkeypatch, capsys):
+def test_no_approved_queue_is_normal_skip(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("FACE_PAGE_ID", "123")
     monkeypatch.setattr(cli, "connection", lambda: object())
     monkeypatch.setattr(cli, "TalkStore", lambda _: SimpleNamespace(next_due=lambda *a: None))
-    assert cli.main(["--stage", "publish", "--live"]) == 0
-    assert json.loads(capsys.readouterr().out)["status"] == "SKIPPED_NO_APPROVED_CONTENT"
+    output = tmp_path / "skip.json"
+    assert cli.main(["--stage", "publish", "--live", "--output", str(output)]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "SKIPPED_NO_APPROVED_CONTENT"
+    assert json.loads(output.read_text()) == report
+
+
+@pytest.mark.parametrize("note", ["", "short", "          "])
+def test_missing_review_evidence_blocks_before_database(tmp_path, monkeypatch, capsys, note):
+    def forbidden():
+        pytest.fail("invalid human review must not reach the database")
+
+    monkeypatch.setattr(cli, "connection", forbidden)
+    output = tmp_path / "approval.json"
+    assert (
+        cli.main(
+            [
+                "--stage",
+                "approve",
+                "--revision",
+                "a" * 64,
+                "--confirm",
+                "YES",
+                "--actor",
+                "reviewer",
+                "--note",
+                note,
+                "--output",
+                str(output),
+            ]
+        )
+        == 1
+    )
+    report = json.loads(output.read_text())
+    assert report == json.loads(capsys.readouterr().out)
+    assert report == {"status": "BLOCKED", "blockers": ["REVIEW_NOTE_REQUIRED"]}
 
 
 def test_empty_inspect_reads_policy_without_write_or_provider(tmp_path, monkeypatch, capsys):

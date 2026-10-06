@@ -113,6 +113,17 @@ def main(argv=None):
     p.add_argument("--not-posted", action="store_true")
     args = p.parse_args(argv)
     try:
+        if args.stage == "approve":
+            blockers = []
+            if not args.revision:
+                blockers.append("REVISION_REQUIRED")
+            if args.confirm != "YES" or not args.actor.strip():
+                blockers.append("HUMAN_CONFIRMATION_REQUIRED")
+            if len(args.note.strip()) < 10:
+                blockers.append("REVIEW_NOTE_REQUIRED")
+            if blockers:
+                emit_report({"status": "BLOCKED", "blockers": blockers}, args.output)
+                return 1
         if args.live and args.stage != "publish":
             raise ValueError("--live is only valid for publish")
         page = os.environ.get("FACE_PAGE_ID", "")
@@ -209,7 +220,9 @@ def main(argv=None):
             if args.stage == "publish" and not revision:
                 revision = store.next_due(page, now)
                 if not revision:
-                    print(json.dumps({"status": "SKIPPED_NO_APPROVED_CONTENT"}))
+                    emit_report(
+                        {"status": "SKIPPED_NO_APPROVED_CONTENT", "allowed": False}, args.output
+                    )
                     return 0
             if args.input:
                 draft = Draft.model_validate_json(args.input.read_text())
