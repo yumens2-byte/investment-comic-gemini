@@ -14,13 +14,19 @@ class TalkStore:
     def rpc(self, name, **params):
         return self.db.rpc(name, params).execute().data
 
-    def policy(self, page_id):
+    def optional_policy(self, page_id):
         rows = (
             self.db.table("facebook_page_policy").select("*").eq("page_id", page_id).execute().data
         )
-        if not isinstance(rows, list) or len(rows) != 1:
+        if not isinstance(rows, list) or len(rows) > 1:
+            raise ValueError("Page policy unavailable")
+        return rows[0] if rows else None
+
+    def policy(self, page_id):
+        policy = self.optional_policy(page_id)
+        if policy is None:
             raise ValueError("Page policy missing")
-        return rows[0]
+        return policy
 
     def recent(self, page_id):
         rows = (

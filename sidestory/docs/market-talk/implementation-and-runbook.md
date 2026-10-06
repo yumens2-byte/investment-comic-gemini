@@ -150,3 +150,11 @@ python -m sidestory.market_talk --stage resume --actor OPERATOR \
 `validation.md`에 실제 실행 결과를 기록한다. PGlite 검사는 PostgreSQL SQL/권한/원자 동작의 계약 검사다. 실제 Supabase/PostgREST 전체 스택, 다중 DB 연결 경쟁, 실제 Meta 권한·게시, 모델의 한국어 품질은 별도 운영 전 검증 대상이다.
 
 롤백은 신규 스케줄/라이브 플래그 비활성화와 Page pause를 먼저 수행한다. DB 원장과 이미 발행한 글은 삭제하지 않는다. 기존 외전의 최근글 미발견 재게시 방지 수정은 안전 보완이므로 원복 여부를 별도로 판단한다.
+
+## 초기 inspect 입력 안내 및 오류 보고서
+
+`inspect`에서 revision/input을 비워두면 Page 정책 등록·활성/관리 상태, 캐릭터 허용목록, live 공통 제어 설정을 읽기 전용으로 점검한다. `SETUP_REQUIRED`와 blockers는 초기 준비 미완료를 뜻하며 정상 종료한다. `INSPECTED`도 Meta 권한 또는 원고 승인·실제 게시 성공을 뜻하지 않는다. 준비 점검에는 DB 연결이 필요하지만 Facebook/LLM 호출과 DB 변경은 없다.
+
+등록된 원고를 검사하려면 정확한 revision을 입력한다. 원고 준비·submit은 CLI에서 별도로 수행한다. 실패 결과도 지정한 output 파일에 BLOCKED/error_type으로 저장하며 원래 예외 문구·키·토큰은 출력하지 않는다.
+
+운영 실행 #37538153708은 stage=inspect, revision 빈 값에서 ValueError로 실패하고 보고서가 생성되지 않았다. 기본 inspect와 CLI의 필수 입력 요구가 맞지 않는 경로를 수정했다. 다른 준비 조건의 미충족은 보고서 blockers를 보고 확인하며, 이 수정으로 자동 게시를 활성화하지 않는다.
