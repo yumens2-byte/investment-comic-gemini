@@ -3,7 +3,7 @@ on:
   pull_request:
     paths:
       - 'sidestory/**'
-      - '.github/workflows/market_talk*.yml'
+      - '.github/workflows/sidestory_market_talk*.yml'
       - '.github/workflows/sidestory_run.yml'
   workflow_dispatch:
 permissions:

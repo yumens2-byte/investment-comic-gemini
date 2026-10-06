@@ -39,7 +39,9 @@ ruff format --check sidestory/market_talk sidestory/tests/market_talk
 - 폐기용 PostgreSQL 16에서 독립 연결 2개가 같은 Page 발행권을 경쟁하는 검사.
 - 독립 연결 2개의 비용 예약 경쟁, NULL claim 거부, UNKNOWN 차단, 본편 sentinel 불변성 검사.
 
-로컬 컨테이너에 일반 PostgreSQL 서버가 없어 이 다중 연결 검사는 GitHub CI에서 실행한다. 최종 원격 실행 결과는 PR checks에서 확인한다. PGlite 단일 세션 Promise 검사를 다중 연결 잠금 검증으로 표시하지 않는다.
+실제 PostgreSQL 16 다중 연결 계약 **5개 통과**: [실행 기록](https://github.com/yumens2-byte/investment-comic-gemini/actions/runs/37490596620). 신규 Python/SQL 계약 CI와 기존 외전 PostgreSQL/PostgREST 계약도 통과했다. PGlite 검사는 별도이며 다중 연결 잠금 검증으로 표시하지 않는다.
+
+최초 외전 CI는 기능 테스트 308개 통과 후 DR-5 경로 검사에서 실패했다. 신규 문서를 `sidestory/docs/market-talk/`, 신규 workflow를 `.github/workflows/sidestory_market_talk*.yml`로 옮겨 기존 경계 규칙을 준수하도록 수정했다. 규칙 자체는 변경하지 않았다. 최종 전체 CI 상태는 PR #99 checks에서 확인한다.
 
 ## 변경 영향
 
@@ -53,7 +55,7 @@ ruff format --check sidestory/market_talk sidestory/tests/market_talk
 | `sidestory/app/publish.py` | 결과 불명확+최근글 미발견 시 재게시하지 않고 보류 |
 | `sidestory/tests/test_p2_publish.py` | 기존 미발견 재게시 기대값을 중복 방지 요구로 수정 |
 
-신규 파일은 `sidestory/market_talk/`, `sidestory/tests/market_talk/`, `sidestory/supabase/`, `docs/market-talk/`, 두 Market Talk workflow에 한정한다. 본편 `engine/`, `scripts/`, 본편 카논 및 시장 계산 소스는 변경하지 않았다. 의존성은 신규 트랙용 version/hash lock으로 추가했으며 본편 requirements 파일은 수정하지 않았다.
+신규 파일은 `sidestory/market_talk/`, `sidestory/tests/market_talk/`, `sidestory/supabase/`, `sidestory/docs/market-talk/`, 두 Market Talk workflow에 한정한다. 본편 `engine/`, `scripts/`, 본편 카논 및 시장 계산 소스는 변경하지 않았다. 의존성은 신규 트랙용 version/hash lock으로 추가했으며 본편 requirements 파일은 수정하지 않았다.
 
 ## 운영 전에 남는 조건
 
