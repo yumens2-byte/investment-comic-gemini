@@ -5,7 +5,7 @@ Calls (Graph API, version from SIDESTORY_GRAPH_VERSION, default below):
   POST /{page-id}/photos  source=<png>, published=false    unpublished photo → id
   POST /{page-id}/feed    message, attached_media[i]={"media_fbid": id}   → post id
   GET  /{page-id}/feed?fields=id,message&limit=N       reconcile an ambiguous post
-  GET  /{post-id}?fields=id,permalink_url,created_time,is_published
+  GET  /{post-id}?fields=id,permalink_url,created_time,is_published,message
 
 The token is sent as a form/query field and is redacted from every error message.
 Retries: none here. A feed POST that may have reached Facebook is reported as ambiguous.
@@ -111,5 +111,42 @@ class FacebookPagePublisher:
 
     def get_post(self, post_id: str) -> dict[str, Any]:
         return self._call("GET", post_id,
-                          params={"fields": "id,permalink_url,created_time,is_published"},
+                          params={"fields": "id,permalink_url,created_time,is_published,message"},
                           side_effect=False)
+
+    def recent_receipts(self, since: str) -> list[dict[str, str]]:
+        """Bounded, paginated observation. Incomplete history blocks publication.
+
+        Never follow a provider URL (which may contain access tokens); use only its
+        cursor with the already configured Page endpoint.
+        """
+        from datetime import datetime
+
+        cutoff = datetime.fromisoformat(since)
+        params = {"fields": "id,created_time", "limit": "100", "since": str(int(cutoff.timestamp()))}
+        receipts = []
+        seen = set()
+        for _ in range(10):
+            body = self._call("GET", f"{self.page_id}/feed", params=params, side_effect=False)
+            if not isinstance(body, dict) or not isinstance(body.get("data"), list):
+                raise PublishError("invalid Page history")
+            for item in body["data"]:
+                if not isinstance(item, dict) or not item.get("id") or not item.get("created_time"):
+                    raise PublishError("incomplete Page receipt")
+                try:
+                    when = datetime.fromisoformat(item["created_time"].replace("Z", "+00:00"))
+                    if when.tzinfo is None:
+                        raise ValueError("missing timezone")
+                except (ValueError, TypeError, AttributeError):
+                    raise PublishError("invalid Page receipt timestamp") from None
+                if when >= cutoff:
+                    receipts.append({"id": str(item["id"]), "created_time": when.isoformat()})
+            paging = body.get("paging") or {}
+            if not paging.get("next"):
+                return receipts
+            after = (paging.get("cursors") or {}).get("after")
+            if not isinstance(after, str) or not after or after in seen:
+                raise PublishError("incomplete Page pagination")
+            seen.add(after)
+            params["after"] = after
+        raise PublishError("Page history exceeds bounded scan; operator review required")

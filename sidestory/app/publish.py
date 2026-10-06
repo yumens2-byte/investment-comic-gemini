@@ -194,6 +194,9 @@ def run_publish(side_day: date, deps: PublishDeps, *, retry_hold: bool = False) 
                 raise _Hold(f"previous post outcome unknown and the Page could not be checked: "
                             f"{exc} — check the Page before retrying", AMBIGUOUS) from exc
             result.detail["reconciled"] = post_id is not None
+            if post_id is None:
+                raise _Hold("previous post not found; absence is not proof of non-delivery — "
+                            "verify the Page before any new post", AMBIGUOUS)
         if post_id is None:
             for i, slide in enumerate(slides, start=1):
                 try:

@@ -122,6 +122,15 @@ def main(argv: list[str] | None = None) -> int:
             from sidestory.adapters.facebook.graph import FacebookPagePublisher
 
             publisher = FacebookPagePublisher(settings.face_page_id, settings.face_page_token)
+            from sidestory.market_talk.__main__ import flag
+
+            if args.live and flag("FACEBOOK_CONTROL_ENABLED"):
+                from sidestory.app.pipeline import side_episode_id
+                from sidestory.market_talk.publishing import ControlledPublisher
+                from sidestory.market_talk.store import TalkStore
+
+                publisher = ControlledPublisher(publisher, TalkStore(client), settings.face_page_id,
+                                                side_episode_id(side_day), "sidestory")
         pdeps = PublishDeps(feed=feed, store=store, publisher=publisher, live=args.live)
         res = (run_publish(side_day, pdeps, retry_hold=args.retry_hold)
                if args.stage == "publish" else run_verify(side_day, pdeps))
