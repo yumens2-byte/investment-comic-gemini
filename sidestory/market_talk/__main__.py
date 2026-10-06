@@ -49,6 +49,40 @@ def current(client, context):
     return fields["canon_version"], digest(rows[0])
 
 
+def readiness(store, page):
+    """Configuration visibility only; never checks Meta or approves content."""
+    policy = store.optional_policy(page)
+    blockers = []
+    if policy is None:
+        blockers.append("PAGE_POLICY_REQUIRED")
+    elif not policy["enabled"] or not policy["exclusive_managed"]:
+        blockers.append("PAGE_POLICY_DISABLED_OR_UNMANAGED")
+    if not os.environ.get("MARKET_TALK_CHARACTER_IDS", "").strip():
+        blockers.append("CHARACTER_ALLOWLIST_REQUIRED")
+    for name in ("FACEBOOK_CONTROL_ENABLED", "MARKET_TALK_LIVE"):
+        if not flag(name):
+            blockers.append(name + "_DISABLED")
+    return {
+        "status": "SETUP_REQUIRED" if blockers else "INSPECTED",
+        "mode": "dry_run",
+        "allowed": False,
+        "needs_human_review": True,
+        "page_policy_registered": policy is not None,
+        "blockers": blockers,
+        "errors": [],
+        "meta_permissions_verified": False,
+        "next_step": "Review Page policy and character allowlist, then prepare and submit a draft before revision inspection.",
+    }
+
+
+def emit_report(report, output):
+    out = json.dumps(report, ensure_ascii=False, indent=2)
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(out + "\n", encoding="utf-8")
+    print(out)
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
@@ -87,7 +121,9 @@ def main(argv=None):
         client = connection()
         store = TalkStore(client)
         now = utcnow()
-        if args.stage in {"pause", "resume", "reconcile", "hold"}:
+        if args.stage == "inspect" and not args.input and not args.revision:
+            report = readiness(store, page)
+        elif args.stage in {"pause", "resume", "reconcile", "hold"}:
             if args.confirm != "YES" or not args.actor or len(args.note.strip()) < 20:
                 raise ValueError("explicit YES, actor and documented reason required")
             if args.stage == "hold":
@@ -226,15 +262,11 @@ def main(argv=None):
                     )
                     report = publish(revision, store, pub, now=now, canon_hash=ch, snapshot_hash=sh)
             report.setdefault("revision", draft.revision)
-        out = json.dumps(report, ensure_ascii=False, indent=2)
-        if args.output:
-            args.output.parent.mkdir(parents=True, exist_ok=True)
-            args.output.write_text(out + "\n", encoding="utf-8")
-        print(out)
+        emit_report(report, args.output)
         return 0 if not report.get("errors") else 1
     except Exception as exc:
         # No SDK exception text, request URLs, raw source material or tokens in reports.
-        print(json.dumps({"status": "BLOCKED", "error_type": type(exc).__name__}))
+        emit_report({"status": "BLOCKED", "error_type": type(exc).__name__}, args.output)
         return 1
 
 

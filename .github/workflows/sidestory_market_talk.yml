@@ -7,7 +7,7 @@ on:
         options: [inspect, approve, publish]
         default: inspect
       revision:
-        description: Exact reviewed SHA-256 revision (empty publish selects earliest approved due item)
+        description: SHA-256 revision (empty inspect checks setup; empty publish selects approved due item)
         type: string
         default: ''
       confirm:

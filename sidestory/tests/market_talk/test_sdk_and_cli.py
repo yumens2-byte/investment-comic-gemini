@@ -95,3 +95,59 @@ def test_no_approved_queue_is_normal_skip(monkeypatch, capsys):
     monkeypatch.setattr(cli, "TalkStore", lambda _: SimpleNamespace(next_due=lambda *a: None))
     assert cli.main(["--stage", "publish", "--live"]) == 0
     assert json.loads(capsys.readouterr().out)["status"] == "SKIPPED_NO_APPROVED_CONTENT"
+
+
+def test_empty_inspect_reads_policy_without_write_or_provider(tmp_path, monkeypatch, capsys):
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json=[])
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr("postgrest._sync.client.Client", lambda **kwargs: http)
+    client = create_client(
+        "https://example.supabase.co", "test-key", options=ClientOptions(httpx_client=http)
+    )
+    monkeypatch.setattr(cli, "connection", lambda: client)
+    monkeypatch.setenv("FACE_PAGE_ID", "123")
+    monkeypatch.setenv("MARKET_TALK_CHARACTER_IDS", "")
+    monkeypatch.setenv("MARKET_TALK_LIVE", "false")
+    monkeypatch.setenv("FACEBOOK_CONTROL_ENABLED", "false")
+    output = tmp_path / "report.json"
+    assert cli.main(["--stage", "inspect", "--output", str(output)]) == 0
+    report = json.loads(output.read_text())
+    assert report == json.loads(capsys.readouterr().out)
+    assert report["status"] == "SETUP_REQUIRED" and report["allowed"] is False
+    assert "PAGE_POLICY_REQUIRED" in report["blockers"]
+    assert "CHARACTER_ALLOWLIST_REQUIRED" in report["blockers"]
+    assert len(requests) == 1 and requests[0].method == "GET"
+    assert requests[0].url.path == "/rest/v1/facebook_page_policy"
+    assert requests[0].url.params["page_id"] == "eq.123"
+    assert requests[0].headers["Accept-Profile"] == "icg_side"
+    http.close()
+
+
+def test_inspect_configuration_never_claims_permission_or_publish_approval(monkeypatch):
+    monkeypatch.setenv("MARKET_TALK_CHARACTER_IDS", "approved-id")
+    monkeypatch.setenv("MARKET_TALK_LIVE", "true")
+    monkeypatch.setenv("FACEBOOK_CONTROL_ENABLED", "true")
+    store = SimpleNamespace(optional_policy=lambda _: {"enabled": True, "exclusive_managed": True})
+    report = cli.readiness(store, "123")
+    assert report["status"] == "INSPECTED" and report["blockers"] == []
+    assert report["allowed"] is False and report["meta_permissions_verified"] is False
+    assert report["needs_human_review"] is True
+
+
+def test_cli_failure_artifact_does_not_leak_exception_secrets(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("FACE_PAGE_ID", "123")
+
+    def fail():
+        raise ValueError("secret-token https://private.example/credentials")
+
+    monkeypatch.setattr(cli, "connection", fail)
+    output = tmp_path / "blocked.json"
+    assert cli.main(["--output", str(output)]) == 1
+    report = {"status": "BLOCKED", "error_type": "ValueError"}
+    assert json.loads(output.read_text()) == report
+    assert json.loads(capsys.readouterr().out) == report
