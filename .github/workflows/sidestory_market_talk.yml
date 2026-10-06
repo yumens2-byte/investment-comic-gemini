@@ -1,4 +1,4 @@
-name: Market Talk (reviewed Facebook text)
+name: 🌐 Market Talk (reviewed Facebook text)
 on:
   workflow_dispatch:
     inputs:
