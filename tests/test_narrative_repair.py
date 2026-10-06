@@ -17,9 +17,17 @@ from engine.publish.manifest import build_manifest, validate_manifest
 
 def test_actual_episode_cannot_pass_by_copying_unanswered_question():
     fixture = json.loads((Path(__file__).parent / "fixtures/continuity_false_resolution_20261002.json").read_text())
-    score = score_story_continuity(fixture["script"], {"previous_episode": fixture["previous_episode"]})
-    assert score.status == "fail"
-    assert "unverified_resolved_thread" in score.missing_requirements
+    previous = fixture["previous_episode"]
+    # 2026-10-05 gate rebalance: thread-contract errors are judged once (production gate
+    # + persist/image/publish re-checks), no longer double-counted by the continuity score.
+    assert "unverified_resolved_thread" in validate_thread_transitions(fixture["script"], previous)
+    from engine.narrative.production_quality import validate_production_episode
+
+    codes = [v.code for v in validate_production_episode(
+        fixture["script"], context_pack={"previous_episode": previous})]
+    assert "UNVERIFIED_RESOLVED_THREAD" in codes
+    score = score_story_continuity(fixture["script"], {"previous_episode": previous})
+    assert "unverified_resolved_thread" not in score.missing_requirements
 
 
 def contract():

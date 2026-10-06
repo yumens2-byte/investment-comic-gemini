@@ -47,6 +47,8 @@ class ContinuityScore:
     total_score: float
     missing_requirements: list[str] = field(default_factory=list)
     matched_terms: list[str] = field(default_factory=list)
+    # 2026-10-05 gate rebalance: non-blocking findings (reported, never gate status).
+    advisories: list[str] = field(default_factory=list)
 
     @property
     def status(self) -> str:
@@ -60,7 +62,7 @@ class ContinuityScore:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "version": "continuity-score-2",
+            "version": "continuity-score-3",
             "source_episode_id": self.source_episode_id,
             "seed": self.seed,
             "opening_overlap_score": self.opening_overlap_score,
@@ -72,6 +74,7 @@ class ContinuityScore:
             "status": self.status,
             "missing_requirements": list(self.missing_requirements),
             "matched_terms": list(self.matched_terms),
+            "advisories": list(self.advisories),
         }
 
 
@@ -135,8 +138,13 @@ def score_story_continuity(
     full_text = _panel_text(script_dict)
     from engine.narrative.thread_contracts import validate_thread_transitions
 
-    missing.extend(validate_thread_transitions(
-        script_dict, previous, (context_pack or {}).get("_resolution_review")))
+    # 2026-10-05 gate rebalance: thread-contract errors no longer enter
+    # missing_requirements. They are judged (and block) in the production gate
+    # (production_quality.validate_production_episode) and the persist/image/publish
+    # re-checks; counting them here too made one defect fail two gates at once.
+    # validate_thread_transitions is still used below only for the informational
+    # thread_resolution_score.
+    advisories: list[str] = []
     thread_applicable = bool(unresolved)
     thread_score = 0.0
     if unresolved:
@@ -149,7 +157,9 @@ def score_story_continuity(
         thread_score = round(30.0 * (sum(thread_scores) / len(thread_scores)), 2)
 
         if thread_score < 10:
-            missing.append("unresolved_thread_acknowledgement")
+            # Lexical (exact eojeol) overlap is a weak proxy for reader-perceived
+            # continuity; report it as an advisory instead of blocking the episode.
+            advisories.append("unresolved_thread_acknowledgement")
 
     relationship_delta = previous.get("relationship_delta") or {}
     relationship_applicable = isinstance(relationship_delta, dict) and bool(relationship_delta)
@@ -207,14 +217,26 @@ def score_story_continuity(
         if beat_score < 10:
             missing.append("must_reference_previous_panel_text")
 
-    applicable_max = (
+    # Gate total (2026-10-06 code review CR-1): thread acknowledgement is advisory,
+    # so it may only *help* an episode, never fail it. Take the better of
+    #   (a) the score without the thread component, and
+    #   (b) the legacy score that includes it.
+    # (b) keeps every episode that passed before the rebalance passing; (a) stops a
+    # weak lexical thread match from failing an otherwise continuous episode.
+    gate_max = (
         (40.0 if opening_applicable else 0.0)
-        + (30.0 if thread_applicable else 0.0)
         + (20.0 if relationship_applicable else 0.0)
         + (10.0 if beat_applicable else 0.0)
     )
-    earned = opening_score + thread_score + relationship_score + beat_score
-    total = round(100.0 * earned / applicable_max, 2) if applicable_max else 0.0
+    gate_earned = opening_score + relationship_score + beat_score
+    if gate_max:
+        gate_total = 100.0 * gate_earned / gate_max
+    else:
+        # Only the advisory component applies → nothing gates this episode.
+        gate_total = 100.0 if thread_applicable else 0.0
+    legacy_max = gate_max + (30.0 if thread_applicable else 0.0)
+    legacy_total = 100.0 * (gate_earned + thread_score) / legacy_max if legacy_max else 0.0
+    total = round(max(gate_total, legacy_total), 2)
     if seed and "opening_hook_payoff" in missing:
         # Missing the opening payoff is the most visible continuity break; cap
         # the total so strict/shadow gates cannot treat incidental defaults as pass.
@@ -232,4 +254,5 @@ def score_story_continuity(
         total_score=total,
         missing_requirements=list(dict.fromkeys(missing)),
         matched_terms=list(dict.fromkeys(matched_terms)),
+        advisories=list(dict.fromkeys(advisories)),
     )

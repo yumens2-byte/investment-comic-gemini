@@ -166,8 +166,7 @@ Ending Tone: **{{ ending_tone }}**
   - {{ directive }}
 {% endfor %}
 {% endif %}
-- HARD RULE: Panel 1 narration or key_text must include this exact anchor before today's market cause: "이전 회차의 단서: {{ narrative_context_pack.previous_episode.next_hook or narrative_context_pack.previous_episode.must_continue_from }}"
-- HARD RULE: If unresolved_threads are listed, copy at least one listed thread verbatim into the top-level resolved_threads array.
+- HARD RULE: Panel 1 narration must include this exact anchor (do NOT use key_text: it is limited to 40 chars and shortened after generation) before today's market cause: "이전 회차의 단서: {{ narrative_context_pack.previous_episode.next_hook or narrative_context_pack.previous_episode.must_continue_from }}"
 {% endif %}
 
 {% endif %}

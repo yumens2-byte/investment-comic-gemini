@@ -107,13 +107,16 @@ def build_continuity_retry_feedback(
         "- missing_requirements: "
         + (", ".join(score.missing_requirements) or "continuity_score_below_threshold"),
     ]
+    if score.advisories:
+        lines.append("- advisories (non-blocking): " + ", ".join(score.advisories))
     if score.seed:
         anchor = f"이전 회차의 단서: {score.seed}"
         lines.extend(
             [
                 f"- previous_next_hook_to_pay_off: {score.seed}",
                 f"- EXACT_OPENING_ANCHOR: {anchor}",
-                "- Required: panel 1 narration or key_text must include EXACT_OPENING_ANCHOR verbatim before today's market cause.",
+                "- Required: panel 1 narration must include EXACT_OPENING_ANCHOR verbatim before today's market cause "
+                "(do NOT use key_text: it is limited to 40 chars and shortened after generation).",
             ]
         )
     if unresolved:

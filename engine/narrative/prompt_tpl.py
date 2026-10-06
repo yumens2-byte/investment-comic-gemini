@@ -173,7 +173,8 @@ def _append_narrative_context_fallback(rendered: str, context_pack: dict | None)
         seed = previous_episode.get("next_hook") or must_continue
         if seed:
             lines.append(
-                "- HARD RULE: Panel 1 narration or key_text must include this exact anchor "
+                "- HARD RULE: Panel 1 narration must include this exact anchor (do NOT use key_text: "
+                "it is limited to 40 chars and shortened after generation) "
                 f'before today\'s market cause: "이전 회차의 단서: {seed}"'
             )
         if unresolved:

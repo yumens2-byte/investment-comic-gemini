@@ -1354,9 +1354,46 @@ def step_analysis(episode_date: str, logger_inst) -> dict:
         raise
 
 
+def _save_failed_narrative(
+    episode_date: str, episode_id: str, script_dict: dict | None, exc: BaseException,
+    logger_inst, *, quality_attempt: int | None = None,
+) -> None:
+    """Persist the last generated script when STEP 4 fails (artifact only, no DB write).
+
+    output/episodes/ is uploaded by run_market.yml with if: always(), so the failed
+    script becomes inspectable evidence. Saving must never mask the original error.
+    """
+    if not script_dict:
+        return
+    try:
+        import json
+
+        ep_dir = Path("output") / "episodes" / episode_date
+        ep_dir.mkdir(parents=True, exist_ok=True)
+        path = ep_dir / f"{episode_id}_script_failed.json"
+        from engine.common.logger import mask_secret
+
+        payload = dict(script_dict)
+        payload["_failure"] = {
+            "error_type": type(exc).__name__,
+            "error": mask_secret(str(exc)),
+            # The saved script is the LAST SUCCESSFULLY GENERATED one (this quality-loop
+            # attempt). If a later generate_episode call raised, the error belongs to that
+            # later attempt, not to this script.
+            "script_quality_attempt": quality_attempt,
+        }
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str),
+                        encoding="utf-8")
+        logger_inst.warning("STEP_4", f"[FailedScript] 실패 대본 저장: {path}")
+    except Exception as save_exc:  # noqa: BLE001 — evidence only
+        logger.warning("[step_narrative] 실패 대본 저장 실패 (무시): %s", save_exc)
+
+
 def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -> dict:
     """STEP 4: Claude 스토리 생성 → EpisodeScript."""
     ts = logger_inst.step_start("STEP_4", "Claude 내러티브 생성")
+    # 2026-10-05: 품질 게이트 실패 시에도 마지막 생성 대본을 남겨 원인 분석이 가능하게 한다.
+    last_generated: dict = {}
     try:
         from engine.narrative.claude_client import generate_episode
 
@@ -1468,6 +1505,23 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
             script_dict = script.model_dump()
             if ctx.get("episode_decision"):
                 script_dict["_episode_decision"] = ctx["episode_decision"]
+            last_generated["script"] = script_dict
+            last_generated["quality_attempt"] = continuity_attempt
+
+            # 2026-10-05 gate rebalance: 근거 없는 PROGRESSED는 실패 대신 OPEN으로
+            # 결정론적 강등 + 감사 기록(_thread_downgrades). RESOLVED는 강등하지 않는다.
+            from engine.narrative.thread_contracts import downgrade_unverified_progress
+
+            for record in downgrade_unverified_progress(
+                script_dict,
+                (ctx.get("narrative_context_pack") or {}).get("previous_episode") or {},
+            ):
+                logger_inst.warning(
+                    "STEP_4",
+                    "[ThreadDowngrade] %s PROGRESSED→OPEN reasons=%s"
+                    % (record["thread_id"], ",".join(record["reasons"])),
+                    meta=record,
+                )
 
             grounding_warnings = validate_story_grounding(
                 script_dict,
@@ -1510,7 +1564,8 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
             }
             logger_inst.info(
                 "STEP_4",
-                "[StoryContinuity] previous=%s score=%.1f status=%s strict=%s attempt=%d/%d warnings=%d"
+                "[StoryContinuity] previous=%s score=%.1f status=%s strict=%s attempt=%d/%d "
+                "warnings=%d advisories=%s"
                 % (
                     script_dict["_continuity_quality"].get("previous_source_episode_id"),
                     script_dict["_continuity_quality"].get("total_score", 0),
@@ -1519,6 +1574,8 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
                     continuity_attempt,
                     max_quality_attempts,
                     len(continuity_warnings),
+                    ",".join(script_dict["_continuity_quality"].get("advisories") or [])
+                    or "none",
                 ),
             )
             logger_inst.info(
@@ -1624,6 +1681,8 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
         )
         return script_dict
     except Exception as exc:
+        _save_failed_narrative(episode_date, episode_id, last_generated.get("script"), exc,
+                               logger_inst, quality_attempt=last_generated.get("quality_attempt"))
         logger_inst.step_fail("STEP_4", ts, exc)
         raise
 

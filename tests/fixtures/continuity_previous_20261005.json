@@ -1,0 +1,37 @@
+{
+  "_source": "icg.daily_analysis analysis_date=2026-10-05 analysis_ctx_json.narrative_context_pack.previous_episode (2026-10-05 STEP_4 failure)",
+  "previous_episode": {
+    "title": "균열의 방패—데트 타이탄과의 무승부",
+    "outcome": "DRAW",
+    "version": "continuity-1",
+    "hero_ids": ["CHAR_HERO_002"],
+    "next_hook": "방패에 생긴 균열을 퓨처스 걸은 아직 보지 못했다—누군가 그녀에게 전달할 것인가.",
+    "event_type": "BATTLE",
+    "villain_id": "CHAR_VILLAIN_001",
+    "source_date": "2026-10-03",
+    "scenario_type": "ONE_VS_ONE",
+    "resolved_threads": [],
+    "source_episode_id": "ICG-2026-10-03-001",
+    "must_continue_from": "방패에 생긴 균열을 퓨처스 걸은 아직 보지 못했다—누군가 그녀에게 전달할 것인가.",
+    "relationship_delta": {},
+    "structured_threads": [
+      {"type": "MYSTERY", "status": "OPEN", "promise": "아이언 식큐리티 누나가 손바닥에 놓아준 온기—그 행방을 퓨처스 걸은 여전히 모르고 있다.", "thread_id": "THREAD_C80952EB8CB7", "payoff_due_in": 2, "setup_episode_id": "ICG-2026-10-01-001", "owner_character_ids": [], "last_progress_episode_id": "ICG-2026-10-03-001"},
+      {"type": "MYSTERY", "status": "OPEN", "promise": "퓨처스 걸이 품에 넣은 찢긴 페이지—그 절반의 숫자가 EDT의 노트패드와 어떻게 이어지는지, 누군가는 알고 있다.", "thread_id": "THREAD_FD6FEDA8B0DF", "payoff_due_in": 2, "setup_episode_id": "ICG-2026-10-01-001", "owner_character_ids": [], "last_progress_episode_id": "ICG-2026-10-03-001"},
+      {"type": "MYSTERY", "status": "OPEN", "promise": "노트패드의 마지막 페이지를 찢은 것이 누구인지, 언제, 무엇을 지웠는지는 여전히 밝혀지지 않았다.", "thread_id": "THREAD_1C3F4236B5C1", "payoff_due_in": 2, "setup_episode_id": "ICG-2026-10-01-001", "owner_character_ids": [], "last_progress_episode_id": "ICG-2026-10-03-001"},
+      {"type": "MYSTERY", "status": "OPEN", "promise": "방패에 생긴 균열을 퓨처스 걸은 아직 보지 못했다—누군가 그녀에게 전달할 것인가.", "thread_id": "THREAD_A6688BE66D76", "payoff_due_in": 2, "setup_episode_id": "ICG-2026-10-03-001", "owner_character_ids": []},
+      {"type": "MYSTERY", "status": "OPEN", "promise": "퓨처스 걸이 품에 넣은 찢긴 페이지—그 절반의 숫자가 EDT의 노트패드와 어떻게 이어지는지는 여전히 밝혀지지 않았다.", "thread_id": "THREAD_F737FAD90AEA", "payoff_due_in": 2, "setup_episode_id": "ICG-2026-10-03-001", "owner_character_ids": []}
+    ],
+    "unresolved_threads": [
+      "아이언 식큐리티 누나가 손바닥에 놓아준 온기—그 행방을 퓨처스 걸은 여전히 모르고 있다.",
+      "퓨처스 걸이 품에 넣은 찢긴 페이지—그 절반의 숫자가 EDT의 노트패드와 어떻게 이어지는지, 누군가는 알고 있다.",
+      "노트패드의 마지막 페이지를 찢은 것이 누구인지, 언제, 무엇을 지웠는지는 여전히 밝혀지지 않았다."
+    ],
+    "final_panel_summary": "무승부. 방패는 버텼으나 부채의 산은 사라지지 않았다. 때로는 잃어야 더 큰 것을 지킨다—그 진실이 그녀의 가슴을 조용히 두드렸다."
+  },
+  "story_beat_plan": {
+    "panel_beats": [
+      {"panel_idx": 1, "dramatic_function": "HOOK", "required_character": ["CHAR_HERO_001"], "must_reference_previous": true,
+       "continuity_payoff": "Acknowledge previous episode hook: 방패에 생긴 균열을 퓨처스 걸은 아직 보지 못했다—누군가 그녀에게 전달할 것인가."}
+    ]
+  }
+}

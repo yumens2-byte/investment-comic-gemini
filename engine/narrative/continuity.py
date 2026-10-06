@@ -112,7 +112,9 @@ def build_continuity_bundle(
     for transition in script_dict.get("thread_transitions") or []:
         if transition.get("thread_id") in ledger:
             ledger[transition["thread_id"]]["status"] = transition["status"]
-            ledger[transition["thread_id"]]["last_progress_episode_id"] = episode_id
+            # 2026-10-06 CR-7: an OPEN (incl. downgraded) transition is not progress.
+            if transition.get("status") in {"PROGRESSED", "RESOLVED"}:
+                ledger[transition["thread_id"]]["last_progress_episode_id"] = episode_id
     for item in structured_threads:
         ledger.setdefault(item["thread_id"], item)
     structured_threads = list(ledger.values())[:8]

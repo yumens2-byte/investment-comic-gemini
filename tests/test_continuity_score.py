@@ -63,8 +63,10 @@ def test_score_story_continuity_does_not_treat_hook_as_thread_resolution() -> No
 
     score = score_story_continuity(script, context, plan)
 
-    assert score.status != "pass"
-    assert "unresolved_thread_acknowledgement" in score.missing_requirements
+    # 2026-10-05 gate rebalance: thread acknowledgement is advisory, not blocking.
+    assert "unresolved_thread_acknowledgement" in score.advisories
+    assert "unresolved_thread_acknowledgement" not in score.missing_requirements
+    # Core intent unchanged: a hook keyword match never counts as a thread resolution.
     assert score.thread_resolution_score == 0.0
 
 

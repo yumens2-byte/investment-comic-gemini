@@ -481,6 +481,7 @@ def generate_episode(
     for attempt in range(1, _MAX_RETRIES + 1):
         # 3회차는 haiku로 fallback (except 블록 로깅에서도 참조하므로 try 밖에서 결정)
         model = _MODEL_PRIMARY if attempt <= 2 else _MODEL_FALLBACK
+        resp = None  # 실패 시 토큰 사용량 기록용 (응답 수신 후 검증 실패한 경우)
         try:
             logger.info(
                 "[claude] 에피소드 생성 시도 %d/%d (scenario=%s)",
@@ -556,6 +557,7 @@ def generate_episode(
         except Exception as exc:
             last_error = exc
             logger.warning("[claude] 시도 %d 실패: %s", attempt, exc)
+            failed_usage = getattr(resp, "usage", None)
             _notify(
                 attempt_observer,
                 "warning",
@@ -567,6 +569,9 @@ def generate_episode(
                     "model": model,
                     "exception_type": type(exc).__name__,
                     "exception": str(exc),
+                    # 응답을 받은 뒤 검증에서 실패한 경우에만 값이 있음 (비용 추적)
+                    "input_tokens": getattr(failed_usage, "input_tokens", None),
+                    "output_tokens": getattr(failed_usage, "output_tokens", None),
                 },
             )
 

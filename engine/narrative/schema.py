@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class StoryBeat(BaseModel):
@@ -110,6 +110,19 @@ class ThreadTransition(BaseModel):
     evidence_quote: str = ""
     new_fact: str = ""
     resolution_result: str = ""
+
+    # 2026-10-05: LLM이 OPEN thread의 미사용 칸을 null로 보내 스키마 실패 → 재생성 낭비.
+    # 판정(thread_contracts.validate_thread_transitions)은 이미 None을 ""로 취급하므로
+    # 스키마도 같은 의미로 정규화한다. 판정 결과는 바뀌지 않는다.
+    @field_validator("evidence_quote", "new_fact", "resolution_result", mode="before")
+    @classmethod
+    def _none_text_to_empty(cls, value: Any) -> Any:
+        return "" if value is None else value
+
+    @field_validator("evidence_panel_idxs", mode="before")
+    @classmethod
+    def _none_idxs_to_empty(cls, value: Any) -> Any:
+        return [] if value is None else value
 
 
 class EpisodeScript(BaseModel):
