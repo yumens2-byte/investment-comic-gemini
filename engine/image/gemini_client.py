@@ -315,7 +315,7 @@ def _persist_exclusive(path: Path, data: bytes) -> None:
             temporary.unlink(missing_ok=True)
 
 
-def _write_private_inputs(panel_idx: int, plan, refs: list[Path]) -> None:
+def _write_private_inputs(panel_idx: int, plan, refs: list[Path]) -> dict:
     import uuid
     configured = os.environ.get("ICG_IMAGE_DIAGNOSTICS_DIR")
     if not configured:
@@ -332,6 +332,7 @@ def _write_private_inputs(panel_idx: int, plan, refs: list[Path]) -> None:
     with path.open("x", encoding="utf-8") as handle:
         path.chmod(0o600)
         json.dump(record, handle, ensure_ascii=False)
+    return record
 
 
 def generate_panel(
@@ -365,7 +366,7 @@ def generate_panel(
     retries = max_retries() if enabled else 2
     plan = ReviewedRetryPlan.from_bundle(retry_plan, prompt_text, ref_paths) if enabled and retry_plan else None
     if plan:
-        _write_private_inputs(panel_idx, plan, ref_paths)
+        private_inputs = _write_private_inputs(panel_idx, plan, ref_paths)
     if guard is None:
         guard = ProductionGenerationGuard(
             scope=output_dir.as_posix(), panel=panel_idx,
@@ -373,6 +374,8 @@ def generate_panel(
             refs=ref_paths, retry_plan_id=plan.plan_id if plan else None,
         )
     variant = guard.select_retry_variant(plan.prompts, f"\n[model={_MODEL};aspect={aspect_ratio}]") if plan else 0
+    if plan:
+        guard.store_diagnostic("inputs", private_inputs)
     if guard.reuse(output_path):
         try:
             _validate_png(output_path.read_bytes())
@@ -422,11 +425,13 @@ def generate_panel(
                 evidence = private / f"response-{panel_idx}-{uuid.uuid4().hex}.json"
                 with evidence.open("x", encoding="utf-8") as handle:
                     evidence.chmod(0o600)
-                    json.dump({"panel": panel_idx, "plan_id": plan.plan_id,
-                               "attempt": used + attempt, "finish_reason": reason,
-                               "prompt_hash": hashlib.sha256(prompt.encode()).hexdigest(),
-                               "prompt_tokens": exc.prompt_tokens, "output_tokens": exc.output_tokens,
-                               "details": exc.details}, handle, ensure_ascii=False)
+                    private_record = {"panel": panel_idx, "plan_id": plan.plan_id,
+                                      "run_id": os.environ.get("GITHUB_RUN_ID", "local"),
+                                      "attempt": used + attempt, "finish_reason": reason,
+                                      "prompt_hash": hashlib.sha256(prompt.encode()).hexdigest(),
+                                      "prompt_tokens": exc.prompt_tokens, "output_tokens": exc.output_tokens,
+                                      "details": exc.details}
+                    json.dump(private_record, handle, ensure_ascii=False)
             record.update(status="terminal" if terminal else "failed", cost_usd=known_cost,
                           error=str(exc), latency_sec=round(time.monotonic() - started, 2))
             _write_jsonl_log(log_path, record)
@@ -441,6 +446,9 @@ def generate_panel(
                        actual_cost=known_cost, reason=reason)
             except GenerationHold as hold:
                 raise GenerationHold(f"{hold}; {refusal}") from exc
+            if plan:
+                # Settle the paid result first; evidence failure must never trigger a new call.
+                guard.store_diagnostic("refusal", private_record)
             if terminal:
                 if plan and reason in CONTENT_REASONS and known_cost is not None:
                     total_cost += known_cost

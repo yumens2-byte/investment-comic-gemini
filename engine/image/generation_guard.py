@@ -164,3 +164,11 @@ class ProductionGenerationGuard:
             if self.fingerprint == wanted:
                 return i
         raise GenerationHold('Retry cursor outside reviewed inputs')
+
+    def store_diagnostic(self, kind: str, payload: dict) -> None:
+        receipt = self._rpc('image_generation_store_diagnostic', {
+            'p_scope': self.scope, 'p_panel': self.panel, 'p_plan_id': self.retry_plan_id,
+            'p_kind': kind, 'p_payload': payload,
+        })
+        if receipt.get('stored') is not True:
+            raise GenerationHold('Private diagnostic persistence not confirmed')

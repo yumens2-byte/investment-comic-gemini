@@ -63,3 +63,46 @@ DB image_generation_retry_plans에는 같은 plan_id, scope, panel, revision, cu
 6. 기능 flag를 OFF로 둔 상태에서 배포·통합 검증한 다음 제한 파일럿으로 활성화를 검증한다. 이후 운영반영 절차를 진행한다.
 
 부분 실패의 별도 DB status, 전용 Telegram 집계 템플릿, 동적 예약액, Retry-After 기반 일시 429 재시도는 이번 핵심 구현에 포함하지 않았다. 기존 narrative_done 상태·실패 알림·발행 완전성 검사를 유지한다. 이 문서의 단위테스트 완료를 운영 복구 완료로 해석하지 않는다.
+
+
+## 후속 개발·통합 검증 (2026-10-08)
+
+이 절의 결과가 위 초기 개발 기록의 잔여 항목을 최신화한다.
+
+### 완료
+
+- 운영 workflow와 같은 Python 3.11.16에서 최종 전체 테스트 **1,611 passed / 63.88초**. 기존 1,609개에 진단 영구 저장 실패 관련 2개를 추가했다.
+- 마지막 보완 후 관련 단위·복구 회귀 **116 passed / 1.14초**.
+- PostgreSQL WASM(PGlite 0.5.8 / PostgreSQL 18.3)에서 실제 DDL·PL/pgSQL 실행 11개 시나리오 통과. 이 테스트는 tests/integration/image_retry_sql.mjs로 재현 가능하다. PGLITE_MODULE_PATH를 설치한 모듈의 dist/index.js 절대 경로로 지정한다. single backend의 queued concurrency는 다중 세션 검증이라고 표시하지 않는다.
+- 실제 Supabase PostgreSQL 17.6 환경에서는 별도 icg_retry_it_20261008 스키마에 합성 데이터만 생성해 테스트했다. 운영 icg 테이블을 복제하거나 수정하지 않았다. 테스트 advisory lock 키도 731098로 분리해 운영의 731091과 경합하지 않게 했다.
+- 서로 다른 backend PID를 가진 **8개 동시 요청에서 token 1개, hold 7개**를 확인했다. 생성 요청은 실제 Gemini 호출이 아니라 원장 예약 RPC 호출이었다.
+- 실제 DB에서 정산 멱등성, 충돌 정산, 거절 입력 재호출 차단, 다음 variant cursor, lifetime 3회 제한, 진단 저장, anon 진단 조회 금지 등의 assertion 9개 통과. 최종 합성 call row는 3개였다.
+- 테스트 스키마를 DROP으로 제거하고 to_regnamespace 결과가 NULL임을 확인했다. Supabase migration history에는 격리 테스트 생성 및 제거 2건이 남는다.
+- 전후 운영 원장 비교 결과 P1~P3 state/revision/cost/fingerprint/output_hash 및 P4 terminal/cost가 동일하다. 운영 에피소드는 narrative_done 상태다.
+
+### 진단 영구 저장 구현
+
+icg.image_generation_diagnostics와 image_generation_store_diagnostic RPC를 운영 적용용 SQL에 추가했다. 계획 PK와 연결된 별도 테이블이며 RLS 활성화, anon/authenticated 접근 금지, service_role SELECT/INSERT만 허용한다. payload는 JSON object와 256KiB 상한을 강제한다. current persisted script와 검토 plan이 다르면 저장하지 않는다.
+
+generate_panel은 유료 호출 전 검토된 전체 입력을 DB에 보존하고, 거절 응답을 먼저 정산한 뒤 공급자 상세 이유를 DB에 보존한다. 진단 저장이 실패하면 추가 유료 호출을 하지 않는다. 로컬 0700/0600 파일도 유지한다. 이 구현은 **운영 icg에 SQL을 적용한 이후**에만 실제 영구 보존을 수행한다. 이번 테스트에서 운영 SQL을 배포하거나 기능 flag를 활성화하지 않았다.
+
+### 파일럿 준비 점검 결과
+
+2026-10-08 episode_assets를 읽기 전용으로 확인했다.
+
+- image_prompts_json은 NULL이다.
+- script_json에 _reviewed_image_inputs와 _reviewed_image_retry_plans가 없다.
+- image_generation_calls에는 성공 P1~P3 입력 fingerprint가 있지만, fingerprint만으로 원본 전체 프롬프트를 복원할 수 없다.
+
+따라서 해당 회차를 현재 상태에서 새 코드를 켜고 즉시 재실행하면 안 된다. 최초 입력을 런타임 블록으로 재구성하더라도 기존 fingerprint와 일치하는지 검증해야 한다. 원본 PNG는 실행 37690049331 아티팩트에 남아 있다. 원본 입력 일치 확인, P4 비전투 장면 검토 및 receipt/plan 등록이 완료되지 않아 실제 유료 파일럿은 실행하지 않았다.
+
+### 운영 전 잔여 작업
+
+1. 운영 SQL 반영과 feature flag 연결: 배포 대상 SQL은 최신 브랜치의 docs/sql/image-generation-retry.sql이다. 기존 revision/recovery SQL 적용 여부 및 실제 DDL을 확인한 후 운영 적용해야 한다.
+2. 실패 회차의 원본 입력 복원·fingerprint 일치 검증, P1~P3 PNG 해시 검증, P4 대본/대체 장면 검토, 기존 terminal 정산 receipt 및 패널별 plan 등록.
+3. 검토된 입력과 예산을 확인한 제한 Gemini 파일럿. 현재까지 실제 provider 유료 호출은 0건이다.
+4. 기존 고정 0.10 USD 예약 모델 검증, 조건부 429 재시도 및 전용 Telegram 집계는 여전히 별도 항목이다.
+
+### 별도 발견 사항
+
+기존 icg 테이블 목록에서 14개 테이블의 RLS 비활성화가 확인됐다. 추가 권한 조회에서 anon은 icg schema USAGE 및 episode_assets SELECT/UPDATE 권한을 가진다. 기존 운영 데이터 접근 제어 문제이며 이번 이미지 재시도 구현에 포함해 임의로 권한을 변경하지 않았다. 기존 서비스의 권한 사용 방식을 점검한 뒤 별도 보안 변경으로 처리해야 한다. 신규 retry plan/diagnostic 테이블은 서버 역할 전용으로 설계·검증했다.

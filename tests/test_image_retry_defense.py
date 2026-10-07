@@ -253,3 +253,22 @@ def test_private_refusal_evidence_preserves_details(harness):
     evidence = json.loads(next((root / 'private').glob('response-*.json')).read_text())
     assert evidence['details']['finish_message'] == 'provider explanation'
     assert evidence['attempt'] == 1
+
+
+def test_private_persistence_failure_prevents_paid_call(harness):
+    run, guard, gen, _, _, _, _ = harness
+    guard.store_diagnostic.side_effect = GenerationHold('storage unavailable')
+    with pytest.raises(GenerationHold):
+        run()
+    gen.assert_not_called()
+
+
+def test_private_refusal_persistence_failure_settles_before_hold(harness):
+    run, guard, gen, sleep, _, _, _ = harness
+    guard.store_diagnostic.side_effect = [None, GenerationHold('storage unavailable')]
+    gen.side_effect = adapter.NoImageResponse('PROHIBITED_CONTENT',100,0)
+    with pytest.raises(GenerationHold):
+        run()
+    assert guard.finish_reviewed.call_count == 1
+    assert gen.call_count == 1
+    sleep.assert_not_called()

@@ -140,3 +140,32 @@ end $$;
 revoke all on function icg.image_generation_retry_cursor(text,integer,text) from public,anon,authenticated;
 grant execute on function icg.image_generation_retry_cursor(text,integer,text) to service_role;
 notify pgrst,'reload schema';
+
+-- Provider evidence survives runner shutdown; readable only by the server role.
+create table icg.image_generation_diagnostics (
+ id uuid primary key default gen_random_uuid(), scope text not null, panel integer not null,
+ plan_id text not null, kind text not null check(kind in ('inputs','refusal')),
+ payload jsonb not null check(jsonb_typeof(payload)='object' and octet_length(payload::text)<=262144),
+ created_at timestamptz not null default clock_timestamp(),
+ foreign key(plan_id,scope,panel) references icg.image_generation_retry_plans(plan_id,scope,panel)
+);
+alter table icg.image_generation_diagnostics enable row level security;
+revoke all on icg.image_generation_diagnostics from public,anon,authenticated,service_role;
+grant select,insert on icg.image_generation_diagnostics to service_role;
+create function icg.image_generation_store_diagnostic(p_scope text,p_panel integer,p_plan_id text,p_kind text,p_payload jsonb)
+returns jsonb language plpgsql security invoker set search_path='' as $$
+begin
+ if p_kind is null or p_kind not in ('inputs','refusal') or p_payload is null
+ or jsonb_typeof(p_payload)<>'object' or octet_length(p_payload::text)>262144
+ or not exists(select 1 from icg.image_generation_retry_plans plan
+ join icg.episode_assets e on 'output/episodes/'||e.episode_date::text||'/panels'=plan.scope
+ and e.episode_no=1 and e.status='narrative_done' and e.script_json=plan.script_json
+ where plan.plan_id=p_plan_id and plan.scope=p_scope and plan.panel=p_panel)
+ then return jsonb_build_object('hold','invalid or stale diagnostic identity'); end if;
+ insert into icg.image_generation_diagnostics(scope,panel,plan_id,kind,payload)
+ values(p_scope,p_panel,p_plan_id,p_kind,p_payload);
+ return jsonb_build_object('stored',true);
+end $$;
+revoke all on function icg.image_generation_store_diagnostic(text,integer,text,text,jsonb) from public,anon,authenticated;
+grant execute on function icg.image_generation_store_diagnostic(text,integer,text,text,jsonb) to service_role;
+notify pgrst,'reload schema';
