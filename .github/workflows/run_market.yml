@@ -126,7 +126,6 @@ jobs:
       ICG_GENERATION_REVISION: ${{ inputs.generation_revision || '1' }}
       ICG_IMAGE_RETRY_V2_ENABLED: ${{ inputs.image_retry_v2 || 'false' }}
       ICG_IMAGE_MAX_RETRIES: '2'
-      ICG_IMAGE_DIAGNOSTICS_DIR: ${{ runner.temp }}/icg-image-diagnostics
       RUN_STAGE: ${{ inputs.stage || 'all' }}
       FORCE_RUN: ${{ inputs.force || 'false' }}
       SCENARIO_V2_ENABLED: ${{ (inputs.scenario_v2 != '' && inputs.scenario_v2 != 'auto') && inputs.scenario_v2 || vars.SCENARIO_V2_ENABLED || 'false' }}
@@ -151,6 +150,10 @@ jobs:
       ICG_ROLLOUT_VERSION: narrative-context-story-quality-v2
 
     steps:
+      - name: Initialize private image diagnostics
+        run: |
+          printf 'ICG_IMAGE_DIAGNOSTICS_DIR=%s/icg-image-diagnostics\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+
       - name: Checkout
         uses: actions/checkout@v4
 
