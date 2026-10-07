@@ -23,6 +23,31 @@ def test_run_market_workflow_yaml_parses() -> None:
     assert _workflow_yaml()
 
 
+def test_job_env_uses_only_supported_expression_contexts() -> None:
+    allowed = {"github", "needs", "strategy", "matrix", "vars", "secrets", "inputs"}
+    for job in _workflow_yaml()["jobs"].values():
+        for value in job.get("env", {}).values():
+            for expression in re.findall(r"\$\{\{(.*?)\}\}", str(value)):
+                contexts = set(re.findall(r"\b([A-Za-z_]\w*)\.", expression))
+                assert contexts <= allowed, f"Unsupported job env contexts: {contexts - allowed}"
+
+
+def test_diagnostics_directory_is_exported_at_runtime(tmp_path) -> None:
+    import os
+    import subprocess
+
+    job = _workflow_yaml()["jobs"]["pipeline"]
+    assert "ICG_IMAGE_DIAGNOSTICS_DIR" not in job["env"]
+    step = job["steps"][0]
+    assert step["name"] == "Initialize private image diagnostics"
+    runner_temp = tmp_path / "runner temp"
+    runner_temp.mkdir()
+    github_env = tmp_path / "github-env"
+    subprocess.run(["bash", "-e", "-c", step["run"]], check=True,
+                   env={**os.environ, "RUNNER_TEMP": str(runner_temp), "GITHUB_ENV": str(github_env)})
+    assert github_env.read_text() == f"ICG_IMAGE_DIAGNOSTICS_DIR={runner_temp}/icg-image-diagnostics\n"
+
+
 @pytest.mark.parametrize("requested_date", ["", "2026-09-14"])
 def test_recovery_uses_resolved_preflight_date(tmp_path, monkeypatch, requested_date):
     """Run the workflow's real date export and restore the selected day's panels."""
