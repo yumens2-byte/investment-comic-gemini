@@ -104,8 +104,7 @@ class Draft(Strict):
     def body(self):
         if self.context.policy_version == "market-talk-2":
             return (
-                f"{self.text.commentary}\n\n"
-                f"{self.context.character_name} : “{self.text.dialogue}”"
+                f"{self.text.commentary}\n\n{self.context.character_name} : “{self.text.dialogue}”"
             )
         selected = {e.id: e for e in self.context.evidence}
         facts = "\n".join(selected[i].statement for i in self.text.evidence_ids)
