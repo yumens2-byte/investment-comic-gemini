@@ -24,6 +24,15 @@ import time
 from pathlib import Path
 
 from engine.image.generation_guard import GenerationHold, ProductionGenerationGuard
+from engine.image.retry_policy import (
+    CONTENT_REASONS,
+    REVIEW_REASONS,
+    ReviewedRetryPlan,
+    max_retries,
+    normalized_reason,
+    retry_delay,
+    retry_enabled,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +145,26 @@ def _response_finish_reason(response: object) -> str:
     return str(_obj_value(candidates[0], "finish_reason", "unknown"))
 
 
+def _response_diagnostics(response: object) -> dict:
+    """Allowlisted provider evidence; excludes content/image bytes and headers."""
+    def clean(value):
+        if hasattr(value, "model_dump"):
+            return value.model_dump(mode="json")
+        if isinstance(value, list):
+            return [clean(item) for item in value]
+        if isinstance(value, dict):
+            return {key: clean(item) for key, item in value.items()}
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        return str(value)
+    candidates = _obj_value(response, "candidates", []) or []
+    first = candidates[0] if candidates else None
+    feedback = _obj_value(response, "prompt_feedback")
+    return {"finish_message": str(_obj_value(first, "finish_message", "") or "")[:2000],
+            "safety_ratings": clean(_obj_value(first, "safety_ratings", [])),
+            "prompt_block_reason": str(_obj_value(feedback, "block_reason", "") or "")}
+
+
 def _write_jsonl_log(log_path: Path, record: dict) -> None:
     """gemini_run.log에 JSONL 레코드 추가."""
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -181,12 +210,15 @@ def _generate_one(
         else:
             raise GenerationHold(f"Missing mandatory REF: {ref_path}")
 
-    config = None
+    config = types.GenerateContentConfig(
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
+    )
     if aspect_ratio:
         # 정사각 이미지를 9:16 영상에 넣으면 상하 44% 가 검은 여백이 된다
         # (2026-09-07 W36 실측). 생성 단계에서 비율을 맞춘다.
         config = types.GenerateContentConfig(
-            image_config=types.ImageConfig(aspect_ratio=aspect_ratio)
+            image_config=types.ImageConfig(aspect_ratio=aspect_ratio),
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
         )
 
     response = client.models.generate_content(
@@ -197,6 +229,10 @@ def _generate_one(
 
     prompt_tokens, output_tokens = _extract_usage_tokens(response)
 
+    reason = _response_finish_reason(response)
+    if normalized_reason(reason) in CONTENT_REASONS | REVIEW_REASONS:
+        raise NoImageResponse(reason, prompt_tokens, output_tokens, _response_diagnostics(response))
+
     # 응답에서 이미지 추출
     for part in _response_parts(response):
         inline_data = _obj_value(part, "inline_data")
@@ -205,14 +241,15 @@ def _generate_one(
             if data:
                 return data, prompt_tokens, output_tokens
 
-    raise NoImageResponse(_response_finish_reason(response), prompt_tokens, output_tokens)
+    raise NoImageResponse(_response_finish_reason(response), prompt_tokens, output_tokens, _response_diagnostics(response))
 
 
 class NoImageResponse(RuntimeError):
     """A completed provider response without an image, preserving billed usage."""
 
-    def __init__(self, reason: str, prompt_tokens: int, output_tokens: int):
+    def __init__(self, reason: str, prompt_tokens: int, output_tokens: int, details: dict | None = None):
         super().__init__(f"Gemini completed without image (finish_reason={reason})")
+        self.details = details or {}
         self.reason = reason
         self.prompt_tokens = prompt_tokens
         self.output_tokens = output_tokens
@@ -278,6 +315,26 @@ def _persist_exclusive(path: Path, data: bytes) -> None:
             temporary.unlink(missing_ok=True)
 
 
+def _write_private_inputs(panel_idx: int, plan, refs: list[Path]) -> dict:
+    import uuid
+    configured = os.environ.get("ICG_IMAGE_DIAGNOSTICS_DIR")
+    if not configured:
+        raise GenerationHold("Private image diagnostics directory required")
+    root = Path(configured).resolve()
+    if root == Path("output").resolve() or Path("output").resolve() in root.parents:
+        raise GenerationHold("Private diagnostics must be outside public artifacts")
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    root.chmod(0o700)
+    path = root / f"panel-{panel_idx}-{uuid.uuid4().hex}.json"
+    record = {"panel": panel_idx, "plan_id": plan.plan_id,
+              "prompts": list(plan.prompts),
+              "ref_sha256": [hashlib.sha256(ref.read_bytes()).hexdigest() for ref in refs]}
+    with path.open("x", encoding="utf-8") as handle:
+        path.chmod(0o600)
+        json.dump(record, handle, ensure_ascii=False)
+    return record
+
+
 def generate_panel(
     panel_idx: int,
     prompt_text: str,
@@ -287,6 +344,8 @@ def generate_panel(
     aspect_ratio: str | None = None,
     *,
     guard=None,
+    retry_plan: dict | None = None,
+    sleeper=time.sleep,
 ) -> tuple[Path | None, float]:
     """Generate with durable pre-call reservations; ambiguous outcomes always HOLD.
 
@@ -303,21 +362,42 @@ def generate_panel(
             raise GenerationHold(f"Missing mandatory REF: {ref}")
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"P{panel_idx}.png"
+    enabled = retry_enabled()
+    retries = max_retries() if enabled else 2
+    plan = ReviewedRetryPlan.from_bundle(retry_plan, prompt_text, ref_paths) if enabled and retry_plan else None
+    if plan:
+        private_inputs = _write_private_inputs(panel_idx, plan, ref_paths)
     if guard is None:
         guard = ProductionGenerationGuard(
             scope=output_dir.as_posix(), panel=panel_idx,
             prompt=prompt_text + f"\n[model={_MODEL};aspect={aspect_ratio}]",
-            refs=ref_paths,
+            refs=ref_paths, retry_plan_id=plan.plan_id if plan else None,
         )
+    variant = guard.select_retry_variant(plan.prompts, f"\n[model={_MODEL};aspect={aspect_ratio}]") if plan else 0
+    if plan:
+        guard.store_diagnostic("inputs", private_inputs)
     if guard.reuse(output_path):
         try:
             _validate_png(output_path.read_bytes())
         except Exception as exc:
             raise GenerationHold("Successful artifact failed PNG validation") from exc
         return output_path, 0.0
-    client = _get_client()
     total_cost = 0.0
-    for attempt in range(1, 4):
+    def settle(token, *, state, actual_cost, output_hash=None, reason=None):
+        if plan:
+            guard.finish_reviewed(token, state=state, actual_cost=actual_cost,
+                                  output_hash=output_hash, reason=reason)
+        else:
+            guard.finish(token, state=state, actual_cost=actual_cost, output_hash=output_hash)
+
+    used = getattr(guard, "retry_attempts_used", 0) if plan else 0
+    if type(used) is not int or not 0 <= used <= 3:
+        raise GenerationHold("Invalid durable retry count")
+    allowed_calls = min(retries + 1, 3 - used)
+    if allowed_calls <= 0:
+        raise PanelGenerationFailed("image retry exhausted")
+    client = _get_client()
+    for attempt in range(1, allowed_calls + 1):
         token = guard.reserve()
         started = time.monotonic()
         record = {
@@ -328,7 +408,7 @@ def generate_panel(
         }
         # Every reservation fingerprints these exact provider inputs. A new prompt
         # needs a new reviewed revision, even after a completed retryable failure.
-        prompt = prompt_text
+        prompt = plan.prompts[variant] if plan else prompt_text
         try:
             image_bytes, input_tokens, output_tokens = _generate_one(
                 client, prompt, ref_paths, aspect_ratio=aspect_ratio
@@ -338,6 +418,20 @@ def generate_panel(
                 exc.prompt_tokens or exc.output_tokens
             ) else None
             terminal = _terminal_error(exc)
+            reason = normalized_reason(exc.reason)
+            if plan:
+                private = Path(os.environ["ICG_IMAGE_DIAGNOSTICS_DIR"]).resolve()
+                import uuid
+                evidence = private / f"response-{panel_idx}-{uuid.uuid4().hex}.json"
+                with evidence.open("x", encoding="utf-8") as handle:
+                    evidence.chmod(0o600)
+                    private_record = {"panel": panel_idx, "plan_id": plan.plan_id,
+                                      "run_id": os.environ.get("GITHUB_RUN_ID", "local"),
+                                      "attempt": used + attempt, "finish_reason": reason,
+                                      "prompt_hash": hashlib.sha256(prompt.encode()).hexdigest(),
+                                      "prompt_tokens": exc.prompt_tokens, "output_tokens": exc.output_tokens,
+                                      "details": exc.details}
+                    json.dump(private_record, handle, ensure_ascii=False)
             record.update(status="terminal" if terminal else "failed", cost_usd=known_cost,
                           error=str(exc), latency_sec=round(time.monotonic() - started, 2))
             _write_jsonl_log(log_path, record)
@@ -348,15 +442,30 @@ def generate_panel(
             if terminal:
                 _record_provider_refusal(panel_idx, exc.reason, known_cost)
             try:
-                guard.finish(token, state="terminal" if terminal else "failed",
-                             actual_cost=known_cost)
+                settle(token, state="terminal" if terminal else "failed",
+                       actual_cost=known_cost, reason=reason)
             except GenerationHold as hold:
                 raise GenerationHold(f"{hold}; {refusal}") from exc
+            if plan:
+                # Settle the paid result first; evidence failure must never trigger a new call.
+                guard.store_diagnostic("refusal", private_record)
             if terminal:
+                if plan and reason in CONTENT_REASONS and known_cost is not None:
+                    total_cost += known_cost
+                    if attempt < allowed_calls and variant + 1 < len(plan.prompts):
+                        variant += 1
+                        guard.activate_prompt(plan.prompts[variant] + f"\n[model={_MODEL};aspect={aspect_ratio}]")
+                        sleeper(retry_delay(attempt))
+                        continue
+                    raise PanelGenerationFailed(f"content retry exhausted; {refusal}", total_cost) from exc
                 raise GenerationHold(f"provider refused image; {refusal}") from exc
             total_cost += known_cost if known_cost is not None else _calc_cost(
                 _estimate_prompt_tokens(prompt, ref_paths), _ESTIMATED_IMAGE_OUTPUT_TOKENS
             )
+            if enabled and known_cost is None:
+                raise GenerationHold("Image usage missing; reconciliation required") from exc
+            if enabled and attempt < allowed_calls:
+                sleeper(retry_delay(attempt))
             continue
         except Exception as exc:
             # Even server errors can have ambiguous billing; never automatically retry.
@@ -364,7 +473,7 @@ def generate_panel(
             record.update(status="terminal" if terminal else "unknown", error=str(exc),
                           latency_sec=round(time.monotonic() - started, 2))
             _write_jsonl_log(log_path, record)
-            guard.finish(token, state="terminal" if terminal else "unknown", actual_cost=None)
+            settle(token, state="terminal" if terminal else "unknown", actual_cost=None)
             raise GenerationHold("Provider outcome requires reconciliation: " + str(exc)) from exc
 
         measured = bool(input_tokens or output_tokens)
@@ -382,11 +491,15 @@ def generate_panel(
         except Exception as exc:
             record.update(status="failed", error=str(exc))
             _write_jsonl_log(log_path, record)
-            guard.finish(token, state="failed", actual_cost=actual_cost)
+            settle(token, state="failed", actual_cost=actual_cost)
+            if enabled and actual_cost is None:
+                raise GenerationHold("Image usage missing; reconciliation required")
+            if enabled and attempt < allowed_calls:
+                sleeper(retry_delay(attempt))
             continue
         try:
             _persist_exclusive(output_path, image_bytes)
-            guard.finish(token, state="success", actual_cost=actual_cost,
+            settle(token, state="success", actual_cost=actual_cost,
                          output_hash=hashlib.sha256(image_bytes).hexdigest())
         except Exception as exc:
             # A paid result exists or its ledger commit failed; preserve it and stop.
@@ -396,7 +509,17 @@ def generate_panel(
         record.update(status="success", output=str(output_path))
         _write_jsonl_log(log_path, record)
         return output_path, total_cost
+    if enabled:
+        raise PanelGenerationFailed("image retry exhausted", total_cost)
     return None, total_cost
+
+
+class PanelGenerationFailed(GenerationHold):
+    """A settled panel failure; independent panels can still be generated."""
+
+    def __init__(self, message: str, cost: float = 0.0):
+        super().__init__(message)
+        self.cost = cost
 
 
 def generate_episode(
@@ -416,6 +539,7 @@ def generate_episode(
     """
     log_path = output_dir / "gemini_run.log"
     results: list[Path | None] = []
+    summary = []
     total_cost = 0.0
 
     for panel in panels:
@@ -423,15 +547,24 @@ def generate_episode(
         prompt = panel.get("prompt_text", "")
         refs = panel.get("ref_image_paths", [])
 
-        path, panel_cost = generate_panel(
-            panel_idx=idx,
-            prompt_text=prompt,
-            ref_paths=refs,
-            output_dir=output_dir,
-            log_path=log_path,
-        )
+        try:
+            kwargs = {"retry_plan": panel.get("retry_plan")} if retry_enabled() else {}
+            path, panel_cost = generate_panel(
+                panel_idx=idx, prompt_text=prompt, ref_paths=refs,
+                output_dir=output_dir, log_path=log_path, **kwargs,
+            )
+        except PanelGenerationFailed as exc:
+            logger.warning("[gemini] panel=%s settled failure: %s", idx, exc)
+            path, panel_cost = None, exc.cost
         results.append(path)
         total_cost += panel_cost
+        summary.append({"panel": idx, "status": "success" if path else "failed",
+                        "cost_usd": panel_cost})
+        if retry_enabled():
+            (output_dir / "generation-summary.json").write_text(
+                json.dumps({"panels": summary, "complete": False, "cost_usd": total_cost}),
+                encoding="utf-8",
+            )
 
     success_count = sum(1 for p in results if p is not None)
     logger.info(
@@ -440,4 +573,9 @@ def generate_episode(
         len(results),
         total_cost,
     )
+    if retry_enabled():
+        (output_dir / "generation-summary.json").write_text(
+            json.dumps({"panels": summary, "complete": success_count == len(panels),
+                        "cost_usd": total_cost}), encoding="utf-8",
+        )
     return results, total_cost

@@ -1811,10 +1811,10 @@ def step_image(
                     + ",".join(issue.code for issue in performance_quality.issues)
                 )
 
-        from engine.image.action_safety import check_script_actions
+        from engine.image.action_safety import check_observation_actions, check_script_actions
         from engine.image.generation_guard import GenerationHold
 
-        unsafe_actions = check_script_actions(script_dict)
+        unsafe_actions = check_script_actions(script_dict) + check_observation_actions(script_dict)
         if unsafe_actions:
             # Stop before any reservation or paid provider call; narrative must be revised.
             raise GenerationHold(
@@ -1836,6 +1836,7 @@ def step_image(
                 "panel_idx": pp.panel_idx,
                 "prompt_text": pp.prompt_text,
                 "ref_image_paths": pp.ref_image_paths,
+                "retry_plan": (script_dict.get("_reviewed_image_retry_plans") or {}).get(str(pp.panel_idx)),
             }
             for pp in panel_prompts
             if script_dict["panels"][pp.panel_idx - 1].get("panel_type")

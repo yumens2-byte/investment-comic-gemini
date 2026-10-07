@@ -6,6 +6,12 @@ on:
     - cron: '36 16 * * 0-5'
   workflow_dispatch:
     inputs:
+      image_retry_v2:
+        description: '검토·등록된 이미지 재시도 계획 사용 (true/false). 패널 총 3회 한도'
+        type: choice
+        options: ['false', 'true']
+        required: false
+        default: 'false'
       generation_revision:
         description: '명시적 수정 이미지 회차 1..100. 비용 한도는 기존 회차와 합산'
         required: false
@@ -118,6 +124,9 @@ jobs:
       DRY_RUN: ${{ (inputs.dry_run != '' && inputs.dry_run != 'auto') && inputs.dry_run || secrets.DRY_RYN || secrets.DRY_RUN || 'false' }}
       TARGET_DATE: ${{ inputs.target_date || '' }}
       ICG_GENERATION_REVISION: ${{ inputs.generation_revision || '1' }}
+      ICG_IMAGE_RETRY_V2_ENABLED: ${{ inputs.image_retry_v2 || 'false' }}
+      ICG_IMAGE_MAX_RETRIES: '2'
+      ICG_IMAGE_DIAGNOSTICS_DIR: ${{ runner.temp }}/icg-image-diagnostics
       RUN_STAGE: ${{ inputs.stage || 'all' }}
       FORCE_RUN: ${{ inputs.force || 'false' }}
       SCENARIO_V2_ENABLED: ${{ (inputs.scenario_v2 != '' && inputs.scenario_v2 != 'auto') && inputs.scenario_v2 || vars.SCENARIO_V2_ENABLED || 'false' }}
