@@ -30,6 +30,8 @@ def main():
         )
         db.execute("insert into icg.main_sentinel values(1,'unchanged')")
         db.execute(migration.read_text())
+        automatic = next(migration.parent.glob("*_market_talk_automatic.sql"))
+        db.execute(automatic.read_text())
         db.execute(
             "insert into icg_side.facebook_page_policy(page_id,enabled,exclusive_managed,observed_at,daily_budget_usd,monthly_budget_usd) values('race',true,true,now(),1,2)"
         )

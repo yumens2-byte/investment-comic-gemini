@@ -4,7 +4,7 @@ on:
     inputs:
       stage:
         type: choice
-        options: [inspect, approve, publish]
+        options: [inspect, approve, publish, automate]
         default: inspect
       revision:
         description: SHA-256 revision (empty inspect checks setup; empty publish selects approved due item)
@@ -37,6 +37,10 @@ jobs:
       FACEBOOK_CONTROL_ENABLED: ${{ vars.FACEBOOK_CONTROL_ENABLED || 'false' }}
       MARKET_TALK_LIVE: ${{ vars.MARKET_TALK_LIVE || 'false' }}
       MARKET_TALK_CHARACTER_IDS: ${{ vars.MARKET_TALK_CHARACTER_IDS }}
+      MARKET_TALK_AUTO_ENABLED: ${{ vars.MARKET_TALK_AUTO_ENABLED || 'false' }}
+      MARKET_TALK_MODEL: ${{ vars.MARKET_TALK_MODEL }}
+      MARKET_TALK_INPUT_USD_PER_MTOK: ${{ vars.MARKET_TALK_INPUT_USD_PER_MTOK || '0' }}
+      MARKET_TALK_OUTPUT_USD_PER_MTOK: ${{ vars.MARKET_TALK_OUTPUT_USD_PER_MTOK || '0' }}
       DRY_RUN: 'true'
     steps:
       - uses: actions/checkout@v4
@@ -46,7 +50,7 @@ jobs:
       - run: pip install --require-hashes -r sidestory/market_talk/requirements.lock
       - name: Inspect, review or publish exact immutable revision
         env:
-          REQUEST_STAGE: ${{ inputs.stage || 'publish' }}
+          REQUEST_STAGE: ${{ inputs.stage || (vars.MARKET_TALK_AUTO_ENABLED == 'true' && 'automate' || 'publish') }}
           REQUEST_REVISION: ${{ inputs.revision }}
           REQUEST_CONFIRM: ${{ inputs.confirm }}
           REQUEST_NOTE: ${{ inputs.review_note }}
@@ -54,6 +58,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           MARKET_TALK_SCHEDULE_ENABLED: ${{ vars.MARKET_TALK_SCHEDULE_ENABLED || 'false' }}
           FACE_PAGE_TOKEN: ${{ secrets.FACE_PAGE_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         shell: bash
         run: |
           args=(--stage "$REQUEST_STAGE" --output output/market-talk-report.json)
@@ -61,7 +66,7 @@ jobs:
           if [[ "$REQUEST_STAGE" == "approve" ]]; then
             args+=(--confirm "$REQUEST_CONFIRM" --actor "$REQUEST_ACTOR" --note "$REQUEST_NOTE")
           fi
-          if [[ "$REQUEST_STAGE" == "publish" ]]; then
+          if [[ "$REQUEST_STAGE" == "publish" || "$REQUEST_STAGE" == "automate" ]]; then
             if [[ "$EVENT_NAME" == "schedule" || "$REQUEST_CONFIRM" == "YES" ]]; then
               export DRY_RUN=false
               args+=(--live)

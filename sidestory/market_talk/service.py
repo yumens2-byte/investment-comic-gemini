@@ -1,4 +1,4 @@
-"""Explicit review stages. No LLM result may approve itself."""
+"""Exact-revision review stages; automatic mode uses a separate bounded review call."""
 
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ def publish(revision, store, publisher, *, now, canon_hash, snapshot_hash):
     if report["errors"]:
         raise ValueError(",".join(report["errors"]))
     if row["status"] not in {"APPROVED", "PUBLISHED"}:
-        raise ValueError("exact revision must be human-approved")
+        raise ValueError("exact revision must be approved")
     if now < draft.due_at:
         return {"status": "NOT_DUE"}
     publisher.check()

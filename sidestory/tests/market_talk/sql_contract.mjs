@@ -18,6 +18,8 @@ const rpc = async (fn,values) => (await query(`select icg_side.${fn}(${values.ma
 await db.exec('create role anon; create role authenticated; create role service_role bypassrls; create schema icg_side; grant usage on schema icg_side to service_role;');
 const file = fs.readdirSync(path.join(root,'supabase/migrations')).find(p=>p.endsWith('_market_talk.sql'));
 await db.exec(fs.readFileSync(path.join(root,'supabase/migrations',file),'utf8'));
+const automatic = fs.readdirSync(path.join(root,'supabase/migrations')).find(p=>p.endsWith('_market_talk_automatic.sql'));
+await db.exec(fs.readFileSync(path.join(root,'supabase/migrations',automatic),'utf8'));
 await db.exec('set role service_role');
 async function page(id,enabled=true) {
   await query('insert into icg_side.facebook_page_policy(page_id,enabled,exclusive_managed,daily_budget_usd,monthly_budget_usd) values($1,$2,true,1,2)',[id,enabled]);
@@ -84,6 +86,12 @@ await query(`insert into icg_side.talk_items(revision,page_id,semantic_key,body_
 check('corrected claim can have a new reviewed revision',true);
 
 await page('p9');
+await page('coexist');
+await query("update icg_side.facebook_page_policy set exclusive_managed=false where page_id='coexist'");
+check('coexistence requires explicit opt-in',(await rpc('facebook_begin',['coexist','one','sidestory',hash,expiry])).status==='CHANNEL_HOLD');
+await query("update icg_side.facebook_page_policy set coexistence_allowed=true where page_id='coexist'");
+check('coexistence allows controlled sender without false exclusive claim',(await rpc('facebook_begin',['coexist','one','sidestory',hash,expiry])).status==='SENDING');
+check('coexistence still blocks concurrent sender',(await rpc('facebook_begin',['coexist','two','sidestory',hash,expiry])).status==='UNKNOWN');
 // Cost ceilings retain uncertain charges; no automatic refunds.
 await query("update icg_side.facebook_page_policy set daily_budget_usd=5,monthly_budget_usd=1 where page_id='p9'");
 await rpc('talk_cost_reserve',['p9','c1',.8]);

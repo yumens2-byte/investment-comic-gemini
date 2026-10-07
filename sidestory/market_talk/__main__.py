@@ -55,7 +55,9 @@ def readiness(store, page):
     blockers = []
     if policy is None:
         blockers.append("PAGE_POLICY_REQUIRED")
-    elif not policy["enabled"] or not policy["exclusive_managed"]:
+    elif not policy["enabled"] or not (
+        policy["exclusive_managed"] or policy.get("coexistence_allowed", False)
+    ):
         blockers.append("PAGE_POLICY_DISABLED_OR_UNMANAGED")
     if not os.environ.get("MARKET_TALK_CHARACTER_IDS", "").strip():
         blockers.append("CHARACTER_ALLOWLIST_REQUIRED")
@@ -89,6 +91,7 @@ def main(argv=None):
         "--stage",
         choices=[
             "inspect",
+            "automate",
             "prepare",
             "preview",
             "submit",
@@ -124,7 +127,7 @@ def main(argv=None):
             if blockers:
                 emit_report({"status": "BLOCKED", "blockers": blockers}, args.output)
                 return 1
-        if args.live and args.stage != "publish":
+        if args.live and args.stage not in {"publish", "automate"}:
             raise ValueError("--live is only valid for publish")
         page = os.environ.get("FACE_PAGE_ID", "")
         if not page:
@@ -132,7 +135,40 @@ def main(argv=None):
         client = connection()
         store = TalkStore(client)
         now = utcnow()
-        if args.stage == "inspect" and not args.input and not args.revision:
+        if args.stage == "automate":
+            from sidestory.market_talk.automation import automatic_draft
+
+            if not flag("MARKET_TALK_AUTO_ENABLED"):
+                emit_report({"status": "BLOCKED", "blockers": ["AUTOMATION_DISABLED"]}, args.output)
+                return 1
+            if args.live and (
+                flag("DRY_RUN", "true")
+                or not flag("MARKET_TALK_LIVE")
+                or not flag("FACEBOOK_CONTROL_ENABLED")
+            ):
+                emit_report({"status": "BLOCKED", "blockers": ["LIVE_GATES_DISABLED"]}, args.output)
+                return 1
+            report = automatic_draft(
+                client,
+                store,
+                page,
+                canon_path=ROOT / "config/characters.yaml",
+                allowed=set(
+                    filter(None, os.environ.get("MARKET_TALK_CHARACTER_IDS", "").split(","))
+                ),
+                now=now,
+                source_commit=os.environ.get("GITHUB_SHA", ""),
+                model=os.environ.get("MARKET_TALK_MODEL", ""),
+                input_rate=os.environ.get("MARKET_TALK_INPUT_USD_PER_MTOK", "0"),
+                output_rate=os.environ.get("MARKET_TALK_OUTPUT_USD_PER_MTOK", "0"),
+                current=current,
+            )
+            if report["status"] == "AUTO_APPROVED" and args.live:
+                return main(
+                    ["--stage", "publish", "--revision", report["revision"], "--live"]
+                    + (["--output", str(args.output)] if args.output else [])
+                )
+        elif args.stage == "inspect" and not args.input and not args.revision:
             report = readiness(store, page)
         elif args.stage in {"pause", "resume", "reconcile", "hold"}:
             if args.confirm != "YES" or not args.actor or len(args.note.strip()) < 20:
@@ -276,7 +312,7 @@ def main(argv=None):
                     report = publish(revision, store, pub, now=now, canon_hash=ch, snapshot_hash=sh)
             report.setdefault("revision", draft.revision)
         emit_report(report, args.output)
-        return 0 if not report.get("errors") else 1
+        return 0 if not report.get("errors") and report.get("status") != "BLOCKED" else 1
     except Exception as exc:
         # No SDK exception text, request URLs, raw source material or tokens in reports.
         emit_report({"status": "BLOCKED", "error_type": type(exc).__name__}, args.output)

@@ -73,6 +73,28 @@ class TalkStore:
     def approve(self, revision, actor, note):
         return self.rpc("talk_approve", p_revision=revision, p_actor=actor, p_note=note)
 
+    def daily_auto_item(self, page_id, start, end):
+        rows = (
+            self.db.table("talk_items")
+            .select("*")
+            .eq("page_id", page_id)
+            .gte("due_at", start.isoformat())
+            .lt("due_at", end.isoformat())
+            .execute()
+            .data
+        )
+        if not isinstance(rows, list):
+            raise ValueError("automatic queue unavailable")
+        rows = [
+            r
+            for r in rows
+            if r.get("payload", {}).get("context", {}).get("provenance_reviewer")
+            == "market-talk:auto-v1"
+        ]
+        if len(rows) > 1:
+            raise ValueError("multiple automatic daily drafts")
+        return rows[0] if rows else None
+
     def begin(self, page_id, key, track, body, expires_at):
         return self.rpc(
             "facebook_begin",
