@@ -62,6 +62,7 @@ def prepare_context(client, canon_path, allowed, now, source_commit):
     )
     expires = datetime.combine(day, time(23, 59), KST)
     context = Context(
+        policy_version="market-talk-2",
         **fields_canon,
         topic="시장 기록을 보며 나누는 캐릭터 잡담",
         claim_key="auto-snapshot-" + source_day.isoformat(),
