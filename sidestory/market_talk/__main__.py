@@ -315,7 +315,17 @@ def main(argv=None):
         return 0 if not report.get("errors") and report.get("status") != "BLOCKED" else 1
     except Exception as exc:
         # No SDK exception text, request URLs, raw source material or tokens in reports.
-        emit_report({"status": "BLOCKED", "error_type": type(exc).__name__}, args.output)
+        from sidestory.market_talk.generation import ModelResponseError
+
+        report = {"status": "BLOCKED", "error_type": type(exc).__name__}
+        if isinstance(exc, ModelResponseError):
+            report.update(
+                phase=exc.phase,
+                blockers=[exc.code],
+                reservation_retained=True,
+                automatic_retry=False,
+            )
+        emit_report(report, args.output)
         return 1
 
 

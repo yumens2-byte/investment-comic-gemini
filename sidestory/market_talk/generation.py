@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from decimal import ROUND_UP, Decimal
 
 from pydantic import StrictBool
@@ -17,6 +18,33 @@ relationships or future story events. No numbers, tickers, links, hashtags or re
 claims in commentary/dialogue. Facts are rendered verbatim separately. A short reflective
 observation and explicitly fictional character remark, not trading advice. 10-260 Korean
 characters commentary and 5-100 characters dialogue. No engagement bait."""
+
+
+class ModelResponseError(ValueError):
+    """Safe diagnostic: never contains model text or SDK exception details."""
+
+    def __init__(self, phase, code):
+        super().__init__(code)
+        self.phase = phase
+        self.code = code
+
+
+def parse_response(text, schema, phase):
+    # Accept a single whole JSON fence; never fish JSON out of surrounding prose.
+    text = text.strip()
+    fence = re.fullmatch(r"```(?:json)?\s*\n(.*?)\n```", text, re.DOTALL)
+    if fence:
+        text = fence.group(1).strip()
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        raise ModelResponseError(phase, "MODEL_RESPONSE_INVALID_JSON") from None
+    if not isinstance(data, dict):
+        raise ModelResponseError(phase, "MODEL_RESPONSE_INVALID_SCHEMA")
+    try:
+        return schema.model_validate(data)
+    except ValueError:
+        raise ModelResponseError(phase, "MODEL_RESPONSE_INVALID_SCHEMA") from None
 
 
 def generate(
@@ -65,7 +93,7 @@ def generate(
     if response.stop_reason != "end_turn":
         raise ValueError("incomplete generation; reservation retained")
     text = "".join(b.text for b in response.content if getattr(b, "type", "") == "text")
-    return Copy.model_validate(json.loads(text))
+    return parse_response(text, Copy, "generation")
 
 
 class Review(Strict):
@@ -113,4 +141,4 @@ def review(draft: Draft, store, page_id, *, model, input_rate, output_rate, clie
     if response.stop_reason != "end_turn":
         raise ValueError("incomplete automatic review; reservation retained")
     text = "".join(b.text for b in response.content if getattr(b, "type", "") == "text")
-    return Review.model_validate_json(text)
+    return parse_response(text, Review, "review")
