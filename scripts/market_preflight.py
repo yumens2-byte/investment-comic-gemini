@@ -30,7 +30,28 @@ def assert_image_ledger_allowed(episode_date: str, episode_id: str, stage: str) 
     if any(row['state'] == 'terminal' for row in calls):
         from engine.image.generation_guard import GenerationHold
         from engine.image.recovery import require_terminal_recovery
-
+        from engine.image.retry_policy import retry_enabled
+        if retry_enabled() and stage == 'image':
+            from engine.common.supabase_client import get_client, get_schema
+            rows = icg_table('episode_assets').select('script_json').eq(
+                'episode_date', episode_date).eq('episode_no', int(episode_id.rsplit('-', 1)[1])).limit(1).execute().data
+            script = rows[0].get('script_json') if isinstance(rows, list) and rows else None
+            plans = script.get('_reviewed_image_retry_plans') if isinstance(script, dict) else None
+            required = [p['idx'] for p in (script or {}).get('panels', [])
+                        if p.get('panel_type') not in {'TEXT_CARD', 'DISCLAIMER'}]
+            if not isinstance(plans, dict) or not required:
+                raise GenerationBlocked(episode_id, 'reviewed_retry_plans_missing')
+            for idx in required:
+                plan = plans.get(str(idx))
+                if not isinstance(plan, dict):
+                    raise GenerationBlocked(episode_id, 'reviewed_retry_plans_missing')
+                receipt = get_client().schema(get_schema()).rpc('image_generation_retry_cursor', {
+                    'p_scope': f'output/episodes/{episode_date}/panels', 'p_panel': idx,
+                    'p_plan_id': plan.get('plan_id'),
+                }).execute().data
+                if not isinstance(receipt, dict) or receipt.get('hold') or not receipt.get('fingerprint'):
+                    raise GenerationBlocked(episode_id, 'image_generation_reconciliation_hold')
+            return
         # A receipt binds persisted inputs; regenerating narrative would invalidate it.
         if stage != 'image' or revision < 2:
             raise GenerationBlocked(episode_id, 'image_generation_reconciliation_hold')

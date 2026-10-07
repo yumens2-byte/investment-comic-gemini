@@ -22,7 +22,7 @@ def generation_revision() -> int:
 
 
 class ProductionGenerationGuard:
-    def __init__(self, *, scope: str, panel: int, prompt: str, refs: list[Path]):
+    def __init__(self, *, scope: str, panel: int, prompt: str, refs: list[Path], retry_plan_id: str | None = None):
         parts = PurePosixPath(scope.replace('\\', '/')).parts
         if '..' in parts:
             raise GenerationHold('Invalid generation identity')
@@ -38,7 +38,9 @@ class ProductionGenerationGuard:
         except OSError as exc:
             raise GenerationHold('Mandatory reference unavailable') from exc
         self.scope, self.panel = scope, panel
+        self.retry_plan_id = retry_plan_id
         self.revision = generation_revision()
+        self._ref_hashes = ref_hashes
         self.fingerprint = hashlib.sha256(json.dumps(
             [prompt, ref_hashes], ensure_ascii=False, separators=(',', ':')
         ).encode()).hexdigest()
@@ -68,9 +70,12 @@ class ProductionGenerationGuard:
                 'p_fingerprint': self.fingerprint}
 
     def reuse(self, output_path: Path) -> bool:
-        name = 'image_generation_inspect' if self.revision == 1 else 'image_generation_inspect_v2'
+        name = ('image_generation_inspect_retry' if self.retry_plan_id else
+                'image_generation_inspect' if self.revision == 1 else 'image_generation_inspect_v2')
         params = self._identity()
-        if self.revision > 1:
+        if self.retry_plan_id:
+            params["p_plan_id"] = self.retry_plan_id
+        elif self.revision > 1:
             params['p_revision'] = self.revision
         receipt = self._rpc(name, params)
         digest = receipt.get('output_hash')
@@ -94,9 +99,12 @@ class ProductionGenerationGuard:
         return False
 
     def reserve(self) -> str:
-        name = 'image_generation_reserve' if self.revision == 1 else 'image_generation_reserve_v2'
+        name = ('image_generation_reserve_retry' if self.retry_plan_id else
+                'image_generation_reserve' if self.revision == 1 else 'image_generation_reserve_v2')
         params = self._identity()
-        if self.revision > 1:
+        if self.retry_plan_id:
+            params["p_plan_id"] = self.retry_plan_id
+        elif self.revision > 1:
             params['p_revision'] = self.revision
         receipt = self._rpc(name, params)
         token = receipt.get('token')
@@ -117,3 +125,42 @@ class ProductionGenerationGuard:
         })
         if receipt.get('settled') is not True:
             raise GenerationHold('Settlement not confirmed')
+
+    def activate_prompt(self, prompt: str) -> None:
+        if not self.retry_plan_id:
+            raise GenerationHold("Reviewed retry plan required for changed inputs")
+        self.fingerprint = hashlib.sha256(json.dumps(
+            [prompt, self._ref_hashes], ensure_ascii=False, separators=(",", ":")
+        ).encode()).hexdigest()
+
+    def finish_reviewed(self, token: str, *, state: str, actual_cost: float | None,
+                        reason: str | None = None, output_hash: str | None = None):
+        if not self.retry_plan_id:
+            raise GenerationHold("Reviewed retry ledger required")
+        if state not in {"success", "failed", "terminal", "unknown"}:
+            raise GenerationHold("Invalid generation outcome")
+        if actual_cost is not None and (isinstance(actual_cost, bool)
+                or not math.isfinite(actual_cost) or actual_cost < 0):
+            raise GenerationHold("Invalid generation cost")
+        receipt = self._rpc("image_generation_finish_retry", {
+            **self._identity(), "p_plan_id": self.retry_plan_id, "p_token": token,
+            "p_state": state, "p_actual_cost": actual_cost,
+            "p_output_hash": output_hash, "p_reason": reason,
+        })
+        if receipt.get("settled") is not True:
+            raise GenerationHold("Settlement not confirmed")
+
+    def select_retry_variant(self, prompts: tuple[str, ...], suffix: str) -> int:
+        receipt = self._rpc('image_generation_retry_cursor', {
+            'p_scope': self.scope, 'p_panel': self.panel, 'p_plan_id': self.retry_plan_id,
+        })
+        used = receipt.get('attempts_used')
+        if type(used) is not int or not 0 <= used <= 3:
+            raise GenerationHold('Invalid durable retry count')
+        self.retry_attempts_used = used
+        wanted = receipt.get('fingerprint')
+        for i, prompt in enumerate(prompts):
+            self.activate_prompt(prompt + suffix)
+            if self.fingerprint == wanted:
+                return i
+        raise GenerationHold('Retry cursor outside reviewed inputs')

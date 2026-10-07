@@ -99,3 +99,22 @@ def check_script_actions(script: dict) -> list[ActionViolation]:
             continue
         violations.extend(check_action(panel.get("action", ""), panel.get("idx", i + 1)))
     return violations
+
+
+def check_observation_actions(script: dict) -> list[ActionViolation]:
+    """Reject destructive actor motion in observation-only briefs before spending."""
+    decision = script.get("_episode_decision") or {}
+    if decision.get("scenario_type") != "NO_BATTLE" or decision.get("action_mode") != "OBSERVATION":
+        return []
+    motion = re.compile(
+        rf"\b(?:{_ATTACK_VERBS}|attack\w*|destroy\w*|drives?\s+(?:them|his fists|her fists)\s+into)\b",
+        re.IGNORECASE,
+    )
+    found = []
+    for i, panel in enumerate(script.get("panels") or []):
+        if panel.get("panel_type") in COMPOSITOR_PANEL_TYPES:
+            continue
+        match = motion.search(str(panel.get("action") or ""))
+        if match:
+            found.append(ActionViolation("OBSERVATION_ACTION_CONFLICT", panel.get("idx", i + 1), match.group(0)))
+    return found
