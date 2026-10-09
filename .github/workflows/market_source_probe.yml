@@ -1,0 +1,44 @@
+name: Market Source Probe (fresh, no writes)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - scripts/market_source_probe.py
+      - .github/workflows/market_source_probe.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: market-source-probe
+  cancel-in-progress: false
+
+jobs:
+  fresh-source-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: 105dc521059fd7169905103faebb90276dc73cf8
+          path: market-talk-contract
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Fetch actual provider observations and validate exact reviewed contract
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: python -m scripts.market_source_probe --policy-root market-talk-contract
+      - name: Keep read-only provider evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: market-source-probe-${{ github.sha }}
+          path: output/market-source-probe.json
+          if-no-files-found: error
+          retention-days: 14

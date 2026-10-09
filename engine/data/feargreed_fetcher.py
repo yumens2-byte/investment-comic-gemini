@@ -95,7 +95,8 @@ def _call_api() -> dict:
     return resp.json()
 
 
-def fetch_all(target_date: str | None = None, *, source_status: dict | None = None) -> dict[str, int | str | None]:
+def fetch_all(target_date: str | None = None, *, source_status: dict | None = None,
+              use_cache: bool = True) -> dict[str, int | str | None]:
     """
     Fear & Greed 지수 수집 (alternative.me).
 
@@ -117,7 +118,7 @@ def fetch_all(target_date: str | None = None, *, source_status: dict | None = No
         }
         실패 시 None 값 반환.
     """
-    cached = _get_cache()
+    cached = _get_cache() if use_cache else None
     cached_meta = cached.get("_source_status") if cached else None
     metadata_matches = (
         isinstance(cached_meta, dict) and cached_meta.get("status") == "ok"
@@ -164,14 +165,15 @@ def fetch_all(target_date: str | None = None, *, source_status: dict | None = No
             )
         if source_status is not None:
             source_status["fear_greed"] = metadata
-        _save_cache({**result, "_source_status": metadata} if entry.get("timestamp") is not None else result)
+        if use_cache:
+            _save_cache({**result, "_source_status": metadata} if entry.get("timestamp") is not None else result)
 
         logger.info("[F&G] score=%d label=%s", score_int, label)
         return result
 
     except Exception as exc:
         logger.warning("[F&G] 수집 실패 (영향 없음): %s", exc)
-        stale = _get_cache(allow_stale=True)
+        stale = _get_cache(allow_stale=True) if use_cache else None
         if stale:
             if source_status is not None:
                 original = stale.get("_source_status")
