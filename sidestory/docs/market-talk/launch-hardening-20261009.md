@@ -1,5 +1,13 @@
 # Market Talk 출시 전 보완 및 운영 계약
 
+## 운영 반영 현황 — 2026-10-09 추가 기록
+
+아래의 ‘운영 미적용’ 표기는 개발 당시 상태다. 이후 상류 PR #110/#111/#112/#113을 병합했고, 실제 읽기 전용 원천 검증 run `37927300846`이 통과했다. VIX/SPY/Nasdaq은 실제 2026-10-08 응답을 선택하며 다른 날짜의 값을 재표기하지 않는다. 검증된 신규 수치와 12개 지표의 출처를 운영 2026-10-09 snapshot에 함께 갱신했다. 기존 행 created_at 및 추가 crypto/sentiment 필드는 유지했다. STEP_2 전체 재실행으로 주장하지 않는다.
+
+두 신규 migration을 운영 적용했고, service_role 읽기로 계약 버전 3 및 저장된 source 정책 통과를 재검증했다. 신규 테이블 RLS, security_invoker view/RPC, anon/authenticated 차단, service_role DELETE 차단을 확인했다. 보안 advisor에 신규 경고는 없으며 기존 프로젝트 경고는 이번 변경 범위 밖이다.
+
+메인과 외전을 합친 Python 테스트 2069건(건너뜀 없음), 격리 PostgreSQL SQL 계약 47건 및 이미지 진단 계약 8건이 통과했다. `sidestory_market_talk_release_probe.yml`은 main 반영 시 기존 repository 설정으로 비공개 DB 계약/저장 source/설정을 읽기 전용 확인한다. Meta/모델 키는 주입하지 않는다. PREPARED는 DB 준비 완료이며 정식 오픈 승인이나 Meta 권한 증명이 아니다. 실운영 원고 검수, Meta 권한, 제한 게시 영수증 및 watcher 확인은 잔여 조건이다. 활성화 플래그를 변경하지 않는다.
+
 2026-10-09. 이 문서는 이전 MVP 운영 문서의 자동화·출처·게시 확인 관련 설명을 대체한다. 개발 기준 main: `b8c995c4a987fcb4e0a5747dd18913cb956daacb`. 개발 브랜치에서 검증하며 운영 적용·실제 모델 호출·Facebook 게시를 수행하지 않는다.
 
 ## 변경된 동작
