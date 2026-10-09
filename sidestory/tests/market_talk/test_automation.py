@@ -6,7 +6,9 @@ import pytest
 
 from sidestory.market_talk import automation as auto
 from sidestory.market_talk.content import digest
+from sidestory.market_talk.diagnostics import PhaseFailure
 from sidestory.market_talk.generation import Review, review
+from sidestory.market_talk.policy import FIELDS, UNITS
 from sidestory.tests.market_talk.test_content_and_delivery import NOW, Store, sample
 
 
@@ -153,6 +155,23 @@ class Query:
 def snapshot():
     return dict(
         snapshot_date="2026-10-06",
+        created_at=NOW.isoformat(),
+        data_quality=dict(
+            status="complete",
+            fallbacks=[],
+            missing_after=[],
+            blocked_fields=[],
+            source_status={
+                field: dict(
+                    status="ok",
+                    provider="test-fixture",
+                    unit=UNITS[field],
+                    observed_at=NOW.isoformat(),
+                    market_session_date="2026-10-05",
+                )
+                for field in FIELDS
+            },
+        ),
         vix=15.5,
         us10y=4.4,
         oil_wti=80,
@@ -208,7 +227,7 @@ def test_review_strict_schema_and_once_only_reservation():
     assert review(
         sample(), store, "123", model="fixture", input_rate=1, output_rate=2, client=client
     ).accepted
-    with pytest.raises(ValueError, match="duplicate"):
+    with pytest.raises(PhaseFailure, match="reservation"):
         review(sample(), store, "123", model="fixture", input_rate=1, output_rate=2, client=client)
     assert len(calls) == 1
     with pytest.raises(ValueError):

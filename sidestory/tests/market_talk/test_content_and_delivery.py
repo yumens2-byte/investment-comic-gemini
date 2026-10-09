@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from sidestory.market_talk.content import Context, Copy, Draft, digest, validate
+from sidestory.market_talk.diagnostics import PhaseFailure
 from sidestory.market_talk.generation import generate
 from sidestory.market_talk.publishing import ControlledPublisher
 from sidestory.market_talk.service import inspect, publish
@@ -57,6 +58,25 @@ class Store:
         self.writes = []
         self.fail_finish = False
         self.cost = set()
+        self.model_events = []
+        self.outcomes = []
+
+    def require_hardening(self):
+        return None
+
+    def record_outcome(self, *args):
+        self.outcomes.append(args)
+
+    def model_state(self, *args):
+        self.model_events.append(args)
+
+    def delivery(self, page, revision):
+        return dict(
+            state=self.state,
+            post_id="123_1",
+            body_hash=digest(self.draft.body),
+            started_at=NOW.isoformat(),
+        )
 
     def recent(self, page):
         return []
@@ -70,7 +90,7 @@ class Store:
             "payload": self.draft.model_dump(mode="json"),
             "body": self.draft.body,
             "page_id": "123",
-            "status": "APPROVED",
+            "status": "PUBLISHED" if self.state == "PUBLISHED" else "APPROVED",
         }
 
     def observe(self, page, posts):
@@ -90,6 +110,8 @@ class Store:
         if self.fail_finish:
             raise RuntimeError("db unavailable")
         self.state = state
+        if hasattr(self, "row") and self.row and state == "PUBLISHED":
+            self.row["status"] = state
         self.writes.append(state)
 
     def cost_reserve(self, page, key, amount):
@@ -112,9 +134,15 @@ class Provider:
 
     def create_post(self, message, photos):
         self.calls += 1
+        self.message = message
         if self.error:
             raise self.error
         return "123_1"
+
+    def get_post(self, post_id):
+        return dict(
+            id=post_id, message=self.message, is_published=True, created_time=NOW.isoformat()
+        )
 
 
 def check(d, **kwargs):
@@ -266,7 +294,7 @@ def test_paid_preview_reserved_once_and_token_bounded():
         sample().context, s, "123", model="test-model", input_rate=1, output_rate=2, client=client
     )
     assert result == sample().text and calls[0]["max_tokens"] == 600
-    with pytest.raises(ValueError, match="duplicate"):
+    with pytest.raises(PhaseFailure, match="reservation"):
         generate(
             sample().context,
             s,

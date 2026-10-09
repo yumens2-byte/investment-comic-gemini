@@ -9,6 +9,7 @@ from decimal import ROUND_UP, Decimal
 from pydantic import StrictBool
 
 from sidestory.market_talk.content import Context, Copy, Draft, Strict, digest
+from sidestory.market_talk.diagnostics import phase_call
 
 SYSTEM = """Write a Korean market-character commentary as JSON only:
 {"evidence_ids":["id"],"commentary":"...","dialogue":"..."}.
@@ -45,6 +46,26 @@ def parse_response(text, schema, phase):
         return schema.model_validate(data)
     except ValueError:
         raise ModelResponseError(phase, "MODEL_RESPONSE_INVALID_SCHEMA") from None
+
+
+def bounded_response(client, store, page, key, phase, ceiling, schema, **kwargs):
+    phase_call(phase + "_reservation", store.cost_reserve, page, key, ceiling)
+    phase_call(phase + "_reservation", store.model_state, page, key, phase, "RESERVED")
+    try:
+        response = phase_call(phase, client.messages.create, **kwargs)
+    except Exception:
+        phase_call(phase, store.model_state, page, key, phase, "UNKNOWN")
+        raise
+    try:
+        if response.stop_reason != "end_turn":
+            raise ModelResponseError(phase, "MODEL_RESPONSE_INCOMPLETE")
+        text = "".join(b.text for b in response.content if getattr(b, "type", "") == "text")
+        result = parse_response(text, schema, phase)
+    except Exception:
+        phase_call(phase, store.model_state, page, key, phase, "FAILED")
+        raise
+    phase_call(phase, store.model_state, page, key, phase, "COMPLETE")
+    return result
 
 
 def generate(
@@ -86,14 +107,19 @@ def generate(
     ceiling = ceiling.quantize(Decimal(".000001"), rounding=ROUND_UP)
     # Same context/attempt cannot be regenerated just by changing wording/model settings.
     key = request_key or digest([context.model_dump(mode="json"), attempt])
-    store.cost_reserve(page_id, key, ceiling)
-    response = client.messages.create(
-        model=model, system=SYSTEM, messages=messages, max_tokens=maximum
+    return bounded_response(
+        client,
+        store,
+        page_id,
+        key,
+        "generation",
+        ceiling,
+        Copy,
+        model=model,
+        system=SYSTEM,
+        messages=messages,
+        max_tokens=maximum,
     )
-    if response.stop_reason != "end_turn":
-        raise ValueError("incomplete generation; reservation retained")
-    text = "".join(b.text for b in response.content if getattr(b, "type", "") == "text")
-    return parse_response(text, Copy, "generation")
 
 
 class Review(Strict):
@@ -134,11 +160,16 @@ def review(draft: Draft, store, page_id, *, model, input_rate, output_rate, clie
     maximum = 300
     ceiling = (Decimal(tokens) * rates[0] + Decimal(maximum) * rates[1]) / Decimal(1000000)
     ceiling = ceiling.quantize(Decimal(".000001"), rounding=ROUND_UP)
-    store.cost_reserve(page_id, digest(["auto-review-v1", draft.revision]), ceiling)
-    response = client.messages.create(
-        model=model, system=system, messages=messages, max_tokens=maximum
+    return bounded_response(
+        client,
+        store,
+        page_id,
+        digest(["auto-review-v1", draft.revision]),
+        "review",
+        ceiling,
+        Review,
+        model=model,
+        system=system,
+        messages=messages,
+        max_tokens=maximum,
     )
-    if response.stop_reason != "end_turn":
-        raise ValueError("incomplete automatic review; reservation retained")
-    text = "".join(b.text for b in response.content if getattr(b, "type", "") == "text")
-    return parse_response(text, Review, "review")

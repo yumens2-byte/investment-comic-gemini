@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from sidestory.market_talk import __main__ as cli
+from sidestory.market_talk.diagnostics import PhaseFailure
 from sidestory.market_talk.generation import ModelResponseError, generate, review
 from sidestory.tests.market_talk.test_content_and_delivery import Store, sample
 
@@ -65,7 +66,7 @@ def test_invalid_generation_fails_without_releasing_cost_or_retry(text, code):
             client=client(text),
         )
     assert exc.value.phase == "generation" and exc.value.code == code
-    with pytest.raises(ValueError, match="duplicate"):
+    with pytest.raises(PhaseFailure, match="reservation"):
         generate(
             sample().context,
             store,
@@ -99,7 +100,7 @@ def test_cli_reports_safe_phase_without_model_text(monkeypatch, capsys):
     monkeypatch.setenv("FACE_PAGE_ID", "123")
     monkeypatch.setenv("MARKET_TALK_AUTO_ENABLED", "true")
     monkeypatch.setattr(cli, "connection", lambda: object())
-    monkeypatch.setattr(cli, "TalkStore", lambda _: object())
+    monkeypatch.setattr(cli, "TalkStore", lambda _: Store())
 
     def fail(*a, **kw):
         raise ModelResponseError("generation", "MODEL_RESPONSE_INVALID_JSON")

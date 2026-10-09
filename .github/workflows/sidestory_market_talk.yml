@@ -4,7 +4,7 @@ on:
     inputs:
       stage:
         type: choice
-        options: [inspect, approve, publish, automate]
+        options: [inspect, approve, publish, automate, verify, watch, pause, resume, reconcile, hold]
         default: inspect
       revision:
         description: SHA-256 revision (empty inspect checks setup; empty publish selects approved due item)
@@ -15,9 +15,21 @@ on:
         type: string
         default: ''
       review_note:
-        description: Evidence, session and canon review result (approve only)
+        description: Evidence, session and canon review result or operation reason (approve ≥10 characters; operations ≥20)
         type: string
         default: ''
+      slot_date:
+        description: Optional KST YYYY-MM-DD slot for watch or scheduled testing
+        type: string
+        default: ''
+      post_id:
+        description: Exact Facebook post ID for reconciliation
+        type: string
+        default: ''
+      not_posted:
+        description: Reconcile as not posted only after operator investigation
+        type: boolean
+        default: false
   schedule:
     - cron: '30 9 * * 1-5' # KST 18:30 weekdays. No catch-up publishing.
 permissions:
@@ -54,6 +66,9 @@ jobs:
           REQUEST_REVISION: ${{ inputs.revision }}
           REQUEST_CONFIRM: ${{ inputs.confirm }}
           REQUEST_NOTE: ${{ inputs.review_note }}
+          REQUEST_SLOT_DATE: ${{ inputs.slot_date }}
+          REQUEST_POST_ID: ${{ inputs.post_id }}
+          REQUEST_NOT_POSTED: ${{ inputs.not_posted }}
           REQUEST_ACTOR: ${{ github.actor }}
           EVENT_NAME: ${{ github.event_name }}
           MARKET_TALK_SCHEDULE_ENABLED: ${{ vars.MARKET_TALK_SCHEDULE_ENABLED || 'false' }}
@@ -63,7 +78,13 @@ jobs:
         run: |
           args=(--stage "$REQUEST_STAGE" --output output/market-talk-report.json)
           if [[ -n "$REQUEST_REVISION" ]]; then args+=(--revision "$REQUEST_REVISION"); fi
-          if [[ "$REQUEST_STAGE" == "approve" ]]; then
+          if [[ -n "$REQUEST_SLOT_DATE" ]]; then args+=(--slot-date "$REQUEST_SLOT_DATE"); fi
+          if [[ "$EVENT_NAME" == "schedule" ]]; then args+=(--scheduled); fi
+          if [[ "$REQUEST_STAGE" == "reconcile" ]]; then
+            if [[ -n "$REQUEST_POST_ID" ]]; then args+=(--post-id "$REQUEST_POST_ID"); fi
+            if [[ "$REQUEST_NOT_POSTED" == "true" ]]; then args+=(--not-posted); fi
+          fi
+          if [[ "$REQUEST_STAGE" =~ ^(approve|pause|resume|reconcile|hold)$ ]]; then
             args+=(--confirm "$REQUEST_CONFIRM" --actor "$REQUEST_ACTOR" --note "$REQUEST_NOTE")
           fi
           if [[ "$REQUEST_STAGE" == "publish" || "$REQUEST_STAGE" == "automate" ]]; then
@@ -73,9 +94,12 @@ jobs:
             fi
           fi
           python -m sidestory.market_talk "${args[@]}"
+      - name: Safe operational summary
+        if: always()
+        run: python -m sidestory.market_talk.reporting
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: market-talk-report-${{ github.run_id }}
           path: output/market-talk-report.json
-          if-no-files-found: ignore
+          if-no-files-found: error

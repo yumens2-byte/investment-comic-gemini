@@ -1,0 +1,75 @@
+name: Market Talk release probe (read only)
+on:
+  push:
+    branches: [main]
+    paths:
+      - sidestory/market_talk/**
+      - .github/workflows/sidestory_market_talk_release_probe.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: market-talk-release-probe
+  cancel-in-progress: false
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      FACE_PAGE_ID: ${{ secrets.FACE_PAGE_ID }}
+      MARKET_TALK_CHARACTER_IDS: ${{ vars.MARKET_TALK_CHARACTER_IDS }}
+      FACEBOOK_CONTROL_ENABLED: ${{ vars.FACEBOOK_CONTROL_ENABLED || 'false' }}
+      MARKET_TALK_LIVE: ${{ vars.MARKET_TALK_LIVE || 'false' }}
+      DRY_RUN: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install --require-hashes -r sidestory/market_talk/requirements.lock
+      - name: Inspect installed contract, persisted source and configuration
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          from sidestory.market_talk.__main__ import connection, readiness
+          from sidestory.market_talk.content import utcnow
+          from sidestory.market_talk.diagnostics import failure_report, phase_call
+          from sidestory.market_talk.policy import SOURCE_VIEW, validate_source
+          from sidestory.market_talk.store import TalkStore
+
+          report = {'status': 'BLOCKED', 'mode': 'read_only', 'launch_ready': False,
+                    'database_writes': 0, 'paid_calls': 0, 'publishes': 0,
+                    'unverified': ['meta_permissions', 'reviewed_live_content', 'facebook_receipt', 'watcher']}
+          try:
+              client = phase_call('connection', connection)
+              store = TalkStore(client)
+              phase_call('db_contract', store.require_hardening)
+              rows = phase_call('source', lambda: client.schema('icg_side').table(SOURCE_VIEW).select('*').order('snapshot_date', desc=True).limit(1).execute().data)
+              if len(rows) != 1:
+                  raise ValueError('source row required')
+              phase_call('source', validate_source, rows[0], utcnow())
+              report['source_date'] = rows[0]['snapshot_date']
+              report['source_status'] = 'PASS'
+              report['contract_version'] = 3
+              report['configuration'] = phase_call('configuration', readiness, store, os.environ.get('FACE_PAGE_ID', ''))
+              report['status'] = 'PREPARED'
+          except Exception as exc:
+              report.update(failure_report(exc, 'release_probe'))
+          body = json.dumps(report, ensure_ascii=False, sort_keys=True, allow_nan=False)
+          path = Path('output/market-talk-release-probe.json')
+          path.parent.mkdir(parents=True, exist_ok=True)
+          path.write_text(body + '\n', encoding='utf-8')
+          print('MARKET_TALK_RELEASE_EVIDENCE=' + body)
+          raise SystemExit(0 if report['status'] == 'PREPARED' else 1)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: market-talk-release-probe-${{ github.sha }}
+          path: output/market-talk-release-probe.json
+          if-no-files-found: error
+          retention-days: 14

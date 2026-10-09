@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+from sidestory.market_talk.diagnostics import DeliveryError
 from sidestory.ports.publisher import PublishError
 
 
@@ -35,14 +36,27 @@ class ControlledPublisher:
             since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
             self.store.observe(self.page_id, self.publisher.recent_receipts(since))
             claim = self.store.begin(self.page_id, self.key, self.track, message, self.expires_at)
-        except Exception as exc:
-            raise PublishError("Page gate unavailable; no post attempted") from exc
+        except Exception:
+            raise DeliveryError("PAGE_GATE_UNAVAILABLE", phase="page_gate") from None
         if claim["status"] == "PUBLISHED":
             return claim["post_id"]
         if claim["status"] != "SENDING":
-            raise PublishError(
-                "Page gate blocked: " + claim["status"], ambiguous=claim["status"] == "UNKNOWN"
+            code = (
+                claim["status"]
+                if claim["status"]
+                in {
+                    "UNKNOWN",
+                    "CHANNEL_HOLD",
+                    "OBSERVATION_REQUIRED",
+                    "EXPIRED",
+                    "PAGE_LIMIT",
+                    "TALK_LIMIT",
+                    "REJECTED",
+                    "APPROVAL_OR_TIME_REQUIRED",
+                }
+                else "UNEXPECTED_GATE_RESULT"
             )
+            raise DeliveryError(code, ambiguous=claim["status"] == "UNKNOWN", phase="page_gate")
         token = claim["token"]
         try:
             post_id = self.publisher.create_post(message, photo_ids)
@@ -52,26 +66,23 @@ class ControlledPublisher:
             try:
                 self.store.finish(self.page_id, self.key, token, state, reason=state)
             except Exception:
-                raise PublishError(
-                    "Result persistence failed; reconcile before retry", ambiguous=True
-                ) from None
-            raise
+                raise DeliveryError("DELIVERY_PERSISTENCE_FAILED", ambiguous=True) from None
+            raise DeliveryError(
+                "META_RESULT_UNKNOWN" if exc.ambiguous else "META_REQUEST_REJECTED",
+                ambiguous=exc.ambiguous,
+            ) from None
         except Exception:
             try:
                 self.store.finish(
                     self.page_id, self.key, token, "UNKNOWN", reason="unexpected_provider_error"
                 )
             finally:
-                raise PublishError(
-                    "Uncertain provider result; reconcile before retry", ambiguous=True
-                ) from None
+                raise DeliveryError("META_RESULT_UNKNOWN", ambiguous=True) from None
         if not post_id:
             self.store.finish(self.page_id, self.key, token, "UNKNOWN", reason="missing_post_id")
-            raise PublishError("Missing receipt; reconcile before retry", ambiguous=True)
+            raise DeliveryError("META_RECEIPT_MISSING", ambiguous=True)
         try:
             self.store.finish(self.page_id, self.key, token, "PUBLISHED", post_id=str(post_id))
         except Exception:
-            raise PublishError(
-                "Posted but receipt persistence failed; reconcile before retry", ambiguous=True
-            ) from None
+            raise DeliveryError("DELIVERY_PERSISTENCE_FAILED", ambiguous=True) from None
         return str(post_id)
