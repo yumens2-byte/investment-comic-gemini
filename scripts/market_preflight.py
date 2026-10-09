@@ -79,9 +79,15 @@ def inspect_market(episode_date: str, stage: str, *, dry_run: bool) -> dict:
               'allowed': False, 'database_writes': 0, 'paid_calls': 0, 'publishes': 0,
               'unverified': ['new_data_collection', 'new_narrative', 'new_images', 'live_delivery']}
     try:
-        _assert_generation_allowed(episode_date, episode_id)
-        assert_image_ledger_allowed(episode_date, episode_id, stage)
-        report['live_generation_allowed'] = True
+        if stage == 'data':
+            # Snapshot refresh cannot generate narrative, mutate image calls,
+            # or publish. Existing generation holds remain intact.
+            report['data_collection_only'] = True
+            report['live_generation_allowed'] = False
+        else:
+            _assert_generation_allowed(episode_date, episode_id)
+            assert_image_ledger_allowed(episode_date, episode_id, stage)
+            report['live_generation_allowed'] = True
     except GenerationBlocked as exc:
         report['live_generation_allowed'] = False
         report['live_block_reason'] = exc.reason
