@@ -467,7 +467,10 @@ def step_data(episode_date: str, logger_inst) -> None:
         # yfinance 값이 있으면 우선, 실패 시 FRED 값 유지 (fallback 체인 유지).
         try:
             _override_status: dict = {}
-            _macro_overrides = market_fetcher.fetch_macro_overrides(source_status=_override_status)
+            _macro_overrides = market_fetcher.fetch_macro_overrides(
+                source_status=_override_status,
+                vix_session=market_fetcher.matched_equity_session(source_status),
+            )
         except Exception as _ov_exc:
             _macro_overrides = {}
             logger_inst.warning("STEP_2", f"[MacroOverride] 수집 실패 — FRED 값 유지: {_ov_exc}")

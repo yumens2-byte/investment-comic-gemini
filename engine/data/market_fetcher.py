@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from concurrent.futures import TimeoutError as FuturesTimeoutError
+from datetime import date
 from math import isfinite
 
 import pandas as pd
@@ -75,7 +76,7 @@ def _extract_closes(data: pd.DataFrame, ticker: str) -> pd.Series:
     return data["Close"].dropna()
 
 
-def _fetch_ticker_safe(ticker: str, period: str = "5d", *, with_source: bool = False) -> dict:
+def _fetch_ticker_safe(ticker: str, period: str = "5d", *, with_source: bool = False, session_date: str | None = None) -> dict:
     """
     yfinance 단일 티커 수집. timeout + MultiIndex 대응.
     데이터 부족/일시 장애는 3회 재시도 후 None 딕셔너리 반환.
@@ -84,6 +85,11 @@ def _fetch_ticker_safe(ticker: str, period: str = "5d", *, with_source: bool = F
         data = _download_ticker(ticker, period)
 
         closes = _extract_closes(data, ticker)
+        if session_date is not None:
+            requested = date.fromisoformat(session_date)
+            closes = closes[[stamp.date() <= requested for stamp in closes.index]]
+            if closes.empty or closes.index[-1].date() != requested:
+                raise ValueError("requested market session missing")
 
         if closes.empty:
             raise ValueError(f"close rows missing for {ticker}")
@@ -124,7 +130,23 @@ def _fetch_ticker_safe(ticker: str, period: str = "5d", *, with_source: bool = F
         return {"close": None, "prev_close": None, "pct_change": None}
 
 
-def fetch_macro_overrides(*, source_status: dict | None = None) -> dict[str, float | None]:
+def matched_equity_session(source_status: dict) -> str | None:
+    """Use only the actual shared SPY/Nasdaq observation date, never a guessed date."""
+    sessions = []
+    for field in ("spy_change", "nasdaq_change"):
+        meta = source_status.get(field, {})
+        if meta.get("status") != "ok":
+            return None
+        session = meta.get("market_session_date")
+        try:
+            date.fromisoformat(session)
+        except (TypeError, ValueError):
+            return None
+        sessions.append(session)
+    return sessions[0] if sessions[0] == sessions[1] else None
+
+
+def fetch_macro_overrides(*, source_status: dict | None = None, vix_session: str | None = None) -> dict[str, float | None]:
     """당일 이벤트 반영용 실시간 매크로 오버라이드 (FRED 지연 보정).
 
     2026-09-03: FRED VIXCLS/DCOILWTICO는 1~수영업일 지연 발표라 급변일 당일의
@@ -135,7 +157,10 @@ def fetch_macro_overrides(*, source_status: dict | None = None) -> dict[str, flo
     tickers = {"vix": "^VIX", "oil_wti": "CL=F"}
     result: dict[str, float | None] = {}
     for col, ticker in tickers.items():
-        info = _fetch_ticker_safe(ticker, **({"with_source": True} if source_status is not None else {}))
+        options = {"with_source": True} if source_status is not None else {}
+        if col == "vix" and vix_session is not None:
+            options["session_date"] = vix_session
+        info = _fetch_ticker_safe(ticker, **options)
         close = info.get("close")
         result[col] = float(close) if close is not None else None
         if source_status is not None:

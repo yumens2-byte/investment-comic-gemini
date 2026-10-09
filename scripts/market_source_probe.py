@@ -34,7 +34,9 @@ def collect_snapshot(now):
     fred = fred_fetcher.fetch_all(day, source_status=sources)
     market = market_fetcher.fetch_all(day, source_status=sources)
     overrides = {}
-    for field, value in market_fetcher.fetch_macro_overrides(source_status=overrides).items():
+    for field, value in market_fetcher.fetch_macro_overrides(
+        source_status=overrides, vix_session=market_fetcher.matched_equity_session(sources)
+    ).items():
         if value is not None:
             fred[field] = value
             sources[field] = overrides[field]
