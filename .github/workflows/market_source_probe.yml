@@ -1,0 +1,73 @@
+name: Market Source Probe (fresh, no writes)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - scripts/market_source_probe.py
+      - .github/workflows/market_source_probe.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: market-source-probe
+  cancel-in-progress: false
+
+jobs:
+  fresh-source-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: 105dc521059fd7169905103faebb90276dc73cf8
+          path: market-talk-contract
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Fetch actual provider observations
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        run: python -m scripts.market_source_probe
+      - name: Validate collected JSON in isolated reviewed Side contract
+        working-directory: market-talk-contract
+        run: |
+          python - <<'PY'
+          import json
+          import re
+          from datetime import datetime, timezone
+          from pathlib import Path
+          from sidestory.market_talk.policy import validate_source
+
+          path = Path('../output/market-source-probe.json')
+          report = json.loads(path.read_text(encoding='utf-8'))
+          report['policy_ref'] = '105dc521059fd7169905103faebb90276dc73cf8'
+          try:
+              if report['status'] != 'COLLECTED':
+                  raise ValueError('collection incomplete')
+              validate_source(report['snapshot'], datetime.now(timezone.utc))
+              report['status'] = 'PASS'
+              report['unverified'].remove('source_contract')
+          except Exception as exc:
+              report['status'] = 'BLOCKED'
+              code = getattr(exc, 'code', None)
+              report['error_code'] = code if isinstance(code, str) and re.fullmatch(r'[A-Z_]{1,80}', code) else 'SOURCE_CONTRACT_FAILED'
+              report['error_type'] = type(exc).__name__
+          body = json.dumps(report, ensure_ascii=False, sort_keys=True, allow_nan=False)
+          path.write_text(body + '\n', encoding='utf-8')
+          print('MARKET_SOURCE_PROBE_EVIDENCE=' + body)
+          raise SystemExit(0 if report['status'] == 'PASS' else 1)
+          PY
+      - name: Keep read-only provider evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: market-source-probe-${{ github.sha }}
+          path: output/market-source-probe.json
+          if-no-files-found: error
+          retention-days: 14
