@@ -41,14 +41,13 @@ def test_probe_never_loads_previous_snapshot_fallback(monkeypatch):
     forbidden.assert_not_called()
 
 
-def test_success_requires_exact_validator_and_does_not_claim_persistence(monkeypatch):
+def test_collection_does_not_claim_contract_validation_or_persistence(monkeypatch):
     snapshot = {"snapshot_date": "2026-10-09"}
     monkeypatch.setattr(probe, "collect_snapshot", lambda now: snapshot)
-    validator = Mock()
     now = datetime(2026, 10, 9, tzinfo=timezone.utc)
-    report = probe.probe(validator, now=now)
-    validator.assert_called_once_with(snapshot, now)
-    assert report["status"] == "PASS"
+    report = probe.probe(now=now)
+    assert report["status"] == "COLLECTED"
+    assert "source_contract" in report["unverified"]
     assert report["database_writes"] == report["paid_calls"] == report["publishes"] == 0
     assert "persisted_snapshot" in report["unverified"]
 
@@ -57,7 +56,7 @@ def test_provider_exception_text_never_reaches_evidence(monkeypatch):
     monkeypatch.setattr(
         probe, "collect_snapshot", Mock(side_effect=RuntimeError("secret-url-and-token"))
     )
-    report = probe.probe(Mock())
+    report = probe.probe()
     assert report["status"] == "BLOCKED"
     assert "secret-url-and-token" not in str(report)
 

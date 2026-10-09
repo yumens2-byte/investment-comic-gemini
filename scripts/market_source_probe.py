@@ -1,4 +1,4 @@
-"""Fresh provider observation and exact Market Talk gate; no database or paid calls."""
+"""Fresh provider collection; no database, paid calls, or launch approval."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ import json
 import logging
 import os
 import re
-import sys
 from datetime import datetime, timedelta, timezone
 from importlib.metadata import version
 from math import isfinite
@@ -17,7 +16,6 @@ from engine.data import feargreed_fetcher, fred_fetcher, market_fetcher
 from engine.data.critical_fallback_resolver import resolve_critical_fallbacks
 
 KST = timezone(timedelta(hours=9))
-POLICY_REF = "105dc521059fd7169905103faebb90276dc73cf8"
 
 
 def safe_json(value):
@@ -52,24 +50,22 @@ def collect_snapshot(now):
     )
 
 
-def probe(validator, *, now=None):
+def probe(*, now=None):
     started = now or datetime.now(timezone.utc)
     report = {
         "status": "BLOCKED",
         "mode": "fresh_observation_read_only",
         "checked_at": started.isoformat(),
-        "policy_ref": POLICY_REF,
         "source_commit": os.environ.get("GITHUB_SHA", "local"),
         "database_writes": 0,
         "paid_calls": 0,
         "publishes": 0,
-        "unverified": ["persisted_snapshot", "production_db_contract", "facebook_receipt"],
+        "unverified": ["source_contract", "persisted_snapshot", "production_db_contract", "facebook_receipt"],
     }
     try:
         snapshot = collect_snapshot(started)
         report["snapshot"] = snapshot
-        validator(snapshot, now or datetime.now(timezone.utc))
-        report["status"] = "PASS"
+        report["status"] = "COLLECTED"
     except Exception as exc:
         code = getattr(exc, "code", None)
         report["error_code"] = (
@@ -83,15 +79,10 @@ def probe(validator, *, now=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--policy-root", required=True, type=Path)
     parser.add_argument("--output", default="output/market-source-probe.json", type=Path)
     args = parser.parse_args()
-    # Workflow checks out our reviewed, immutable contract commit here.
     logging.disable(logging.CRITICAL)
-    sys.path.insert(0, str(args.policy_root.resolve()))
-    from sidestory.market_talk.policy import validate_source
-
-    report = probe(validate_source)
+    report = probe()
     report["dependencies"] = {
         name: version(name) for name in ("yfinance", "fredapi", "pandas", "requests")
     }
@@ -99,7 +90,7 @@ def main():
     body = json.dumps(report, ensure_ascii=False, sort_keys=True, allow_nan=False)
     args.output.write_text(body + "\n", encoding="utf-8")
     print("MARKET_SOURCE_PROBE_EVIDENCE=" + body)
-    raise SystemExit(0 if report["status"] == "PASS" else 1)
+    raise SystemExit(0 if report["status"] == "COLLECTED" else 1)
 
 
 if __name__ == "__main__":
