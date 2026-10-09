@@ -10,7 +10,8 @@ from pathlib import Path
 from engine.image.generation_guard import GenerationHold
 
 CONTENT_REASONS = frozenset({'PROHIBITED_CONTENT', 'SAFETY', 'IMAGE_SAFETY'})
-REVIEW_REASONS = frozenset({'BLOCKLIST', 'RECITATION', 'SPII', 'IMAGE_PROHIBITED_CONTENT'})
+REVIEW_REASONS = frozenset({'BLOCKLIST', 'RECITATION', 'IMAGE_RECITATION', 'SPII',
+                           'IMAGE_PROHIBITED_CONTENT', 'ESCALATION', 'PUP_LIMITED_DISABLED'})
 
 
 def normalized_reason(reason: object) -> str:

@@ -7,6 +7,21 @@ on:
     branches: [main]
 
 jobs:
+  image-attempt-diagnostics-contract:
+    name: Image Attempt Diagnostics Contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install isolated PostgreSQL test runtime
+        run: npm install --prefix "$RUNNER_TEMP/icg-sql-contract" --no-audit --no-fund @electric-sql/pglite@0.5.8
+      - name: Verify ordinary diagnostics permissions and settlement contracts
+        run: |
+          export PGLITE_MODULE_PATH="$RUNNER_TEMP/icg-sql-contract/node_modules/@electric-sql/pglite/dist/index.js"
+          node tests/integration/image_attempt_diagnostics_sql.mjs
   narrative-database-contract:
     name: Narrative Database Contract
     runs-on: ubuntu-latest

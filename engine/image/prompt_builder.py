@@ -32,6 +32,20 @@ def _get_style_block() -> str:
     # The runtime page still forbids flat cel shading, contradicting the checked-in
     # shading=cel canon. Keep staging rules but remove that legacy negative line.
     style = re.sub(r"(?im)^.*no flat cel[- ]shading.*$", "", style)
+    # Keep visual technique while removing the legacy publisher/artist identity
+    # request that contradicts the same runtime page's original-character rule.
+    style = style.replace(
+        "DC Comics graphic novel style — Frank Miller / Jim Lee quality.",
+        "Original financial superhero graphic novel illustration; bold precise ink and cinematic staging.",
+    )
+    style = re.sub(
+        r"(?s)== PROPORTION MANDATE ==.*?== END PROPORTION MANDATE ==",
+        "== PROPORTION MANDATE ==\n"
+        "For humanoid characters only: tall lean proportions, elongated torso and long limbs.\n"
+        "For non-human characters: preserve the exact REF anatomy; never add human limbs, faces or eyes.\n"
+        "Armour follows the reference-defined silhouette.\n== END PROPORTION MANDATE ==",
+        style,
+    )
     return (style + "\nCANON RENDERING LOCK: 2D cinematic comic illustration, bold precise ink "
             "lines, cel-shaded shadows and high-contrast neon accents on a dark background. "
             "No photorealism, 3D rendering, plastic toy shading or sculpted render surfaces.")
@@ -409,6 +423,9 @@ def build_panel_prompt(
     lines = [
         # ── 최우선 규칙: 텍스트 절대 금지 ──────────────────────────────
         "CRITICAL RULE: PURE VISUAL SCENE ONLY.",
+        "CONTEXT: Original fictional financial-fantasy characters; all human characters are adults. "
+        "Depict non-graphic symbolic market forces, with no injury to people. "
+        "Preserve the approved reference identities and canon props.",
         "ABSOLUTELY NO TEXT, LETTERS, KOREAN, JAPANESE, CHINESE, LATIN, NUMBERS, SPEECH BUBBLES, CAPTION BOXES, or any TYPOGRAPHY in the image.",
         "Market data HUD displays on screens are permitted only as blurred background elements, NOT readable text.",
         "",
