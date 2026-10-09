@@ -140,6 +140,7 @@ def resolve_critical_fallbacks(
         A tuple of (resolved_payload, data_quality_metadata).
     """
     resolved_payload = dict(payload)
+    resolved_sources = {key: dict(value) for key, value in (source_status or {}).items()}
     quality_before = summarize_quality(resolved_payload)
     missing_before = list(quality_before["critical_missing"])
     fallbacks: list[dict[str, Any]] = []
@@ -164,6 +165,11 @@ def resolve_critical_fallbacks(
             if trace is not None and not _is_missing(value):
                 resolved_payload[field] = value
                 fallbacks.append(trace)
+                resolved_sources[field] = {
+                    "status": "previous_snapshot", "provider": "daily_snapshots",
+                    "fallback_snapshot_date": trace["as_of"],
+                    "original_attempt": resolved_sources.get(field, {}),
+                }
             elif block_reason:
                 blocked_fields.append(block_reason)
 
@@ -182,7 +188,7 @@ def resolve_critical_fallbacks(
         "missing_after": missing_after,
         "fallbacks": fallbacks,
         "blocked_fields": blocked_fields,
-        "source_status": source_status or {},
+        "source_status": resolved_sources,
         "critical_fields": list(CRITICAL_FIELDS),
     }
 

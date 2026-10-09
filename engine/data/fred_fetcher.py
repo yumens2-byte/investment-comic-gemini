@@ -21,6 +21,7 @@ import os
 from datetime import date, datetime, timedelta
 
 from engine.common.retry import api_retry
+from engine.data.source_provenance import provenance
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,8 @@ def _fetch_series(
     lookback_days: int = 10,
     *,
     target_date: str | None = None,
+    source_status: dict | None = None,
+    field: str | None = None,
 ) -> float | None:
     """
     FRED 단일 시리즈에서 최근 유효값(NaN 제외) 반환.
@@ -73,10 +76,16 @@ def _fetch_series(
         logger.warning("[FRED] %s: 유효 데이터 없음 (lookback=%d일)", series_id, lookback_days)
         return None
 
-    return float(valid.iloc[-1])
+    value = float(valid.iloc[-1])
+    if source_status is not None and field is not None:
+        source_status[field] = provenance(
+            field=field, provider="FRED", instrument=series_id, value=value,
+            session=valid.index[-1], market_domain="macro",
+        )
+    return value
 
 
-def fetch_all(target_date: str | None = None) -> dict[str, float | None]:
+def fetch_all(target_date: str | None = None, *, source_status: dict | None = None) -> dict[str, float | None]:
     """
     모든 FRED 지표 수집.
 
@@ -101,11 +110,18 @@ def fetch_all(target_date: str | None = None) -> dict[str, float | None]:
 
     for col_name, series_id in _SERIES.items():
         try:
-            value = _fetch_series(fred, series_id, target_date=target_date)
+            value = _fetch_series(
+                fred, series_id, target_date=target_date,
+                **({"source_status": source_status, "field": col_name} if source_status is not None else {}),
+            )
             result[col_name] = value
             logger.info("[FRED] %s(%s) = %s", col_name, series_id, value)
         except Exception as exc:
             logger.warning("[FRED] %s(%s) 수집 실패: %s", col_name, series_id, exc)
             result[col_name] = None
+        if source_status is not None and col_name not in source_status:
+            source_status[col_name] = provenance(
+                field=col_name, provider="FRED", instrument=series_id, value=None,
+            )
 
     return result
