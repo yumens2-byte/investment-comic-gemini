@@ -66,6 +66,36 @@ jobs:
           print('MARKET_TALK_RELEASE_EVIDENCE=' + body)
           raise SystemExit(0 if report['status'] == 'PREPARED' else 1)
           PY
+      - name: Verify Page credential and bounded feed read (GET only)
+        env:
+          FACE_PAGE_TOKEN: ${{ secrets.FACE_PAGE_TOKEN }}
+        run: |
+          python - <<'PYCODE'
+          import json
+          import os
+          from datetime import timedelta
+          from pathlib import Path
+          from sidestory.adapters.facebook.graph import FacebookPagePublisher
+          from sidestory.market_talk.content import utcnow
+          from sidestory.market_talk.diagnostics import failure_report, phase_call
+
+          path = Path('output/market-talk-release-probe.json')
+          report = json.loads(path.read_text(encoding='utf-8'))
+          try:
+              publisher = FacebookPagePublisher(os.environ.get('FACE_PAGE_ID', ''), os.environ.get('FACE_PAGE_TOKEN', ''))
+              phase_call('meta_read', publisher.check)
+              receipts = phase_call('meta_read', publisher.recent_receipts, (utcnow() - timedelta(days=1)).isoformat())
+              report['meta_read_access'] = {'status': 'PASS', 'requested_graph_version': publisher.version, 'observed_receipt_count': len(receipts)}
+          except Exception as exc:
+              report['meta_read_access'] = failure_report(exc, 'meta_read')
+              report['status'] = 'BLOCKED'
+          report['meta_write_permissions_verified'] = False
+          report['unverified'] = ['meta_write_permissions' if field == 'meta_permissions' else field for field in report['unverified']]
+          body = json.dumps(report, ensure_ascii=False, sort_keys=True, allow_nan=False)
+          path.write_text(body + '\n', encoding='utf-8')
+          print('MARKET_TALK_RELEASE_EVIDENCE=' + body)
+          raise SystemExit(0 if report['status'] == 'PREPARED' else 1)
+          PYCODE
       - uses: actions/upload-artifact@v4
         if: always()
         with:
