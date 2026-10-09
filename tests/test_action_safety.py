@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from engine.image.action_safety import check_action, check_script_actions
+from engine.image.action_safety import check_action, check_observation_actions, check_script_actions
 
 REFUSED_P3 = ("Debt Titan materializes from the ledger stacks, slamming a chain of debt bonds "
               "toward Iron Securities Nuna who raises her shield to deflect")
@@ -86,3 +86,33 @@ def test_production_gate_reports_action_violation_with_retry_guidance():
 def test_canary_fixture_is_action_safe():
     fixture = json.loads(Path("config/canary/combat_v1.json").read_text(encoding="utf-8"))
     assert check_script_actions(fixture["script"]) == []
+
+
+@pytest.mark.parametrize("action", [
+    "The analyst observes as the index hits support.",
+    "The analyst marks the strike price.",
+    "The analyst watches the price swing.",
+    "A camera shot frames the analyst.",
+    "The analyst adjusts the console and observes the holographic columns.",
+])
+def test_observation_allows_financial_and_camera_language(action):
+    script = {"_episode_decision": {"scenario_type": "NO_BATTLE", "action_mode": "OBSERVATION"},
+              "panels": [{"idx": 2, "action": action}]}
+    assert check_observation_actions(script) == []
+
+
+@pytest.mark.parametrize("action", [
+    "The hero hits the console.",
+    "The hero strikes a holographic column.",
+    "The hero smashes into her shield.",
+    "The hero punches the ground.",
+    "The hero swings his fists.",
+    "The index hits support; the hero smashes the console.",
+    "The hero raises both fists and drives them into holographic columns.",
+    "The hero fires her rifle at Debt Titan.",
+])
+def test_observation_rejects_physical_attacks(action):
+    script = {"_episode_decision": {"scenario_type": "NO_BATTLE", "action_mode": "OBSERVATION"},
+              "panels": [{"idx": 2, "action": action}]}
+    found = check_observation_actions(script)
+    assert [(v.rule, v.panel_idx) for v in found] == [("OBSERVATION_ACTION_CONFLICT", 2)]

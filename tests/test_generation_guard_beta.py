@@ -17,6 +17,11 @@ def test_operational_drill_all_faults_with_durable_fake_backend(tmp_path, monkey
             scope = args['p_scope']
             matches = [r for r in rows if r['scope'] == scope]
             panels = [r for r in matches if r['panel'] == args['p_panel']]
+            if name == 'image_generation_store_attempt_diagnostic':
+                row = next(r for r in panels if r['token'] == args['p_token'])
+                assert row['fingerprint'] == args['p_fingerprint']
+                assert args['p_kind'] in {'inputs', 'refusal'}
+                return {'stored': True}
             if name.endswith('finish'):
                 row = next(r for r in rows if r['token'] == args['p_token'])
                 assert row['state'] == 'reserved'

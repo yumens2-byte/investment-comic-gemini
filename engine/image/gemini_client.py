@@ -123,6 +123,10 @@ def _obj_value(obj: object, key: str, default: object = None) -> object:
     return getattr(obj, key, default)
 
 
+def _api_value(obj: object, snake: str, camel: str, default: object = None) -> object:
+    return _obj_value(obj, snake, _obj_value(obj, camel, default))
+
+
 def _response_parts(response: object) -> list[object]:
     """Return Gemini response parts without leaking SDK AttributeError shapes."""
     candidates = _obj_value(response, "candidates", [])
@@ -139,10 +143,10 @@ def _response_parts(response: object) -> list[object]:
 def _response_finish_reason(response: object) -> str:
     candidates = _obj_value(response, "candidates", [])
     if not candidates:
-        feedback = _obj_value(response, "prompt_feedback")
-        reason = _obj_value(feedback, "block_reason")
+        feedback = _api_value(response, "prompt_feedback", "promptFeedback")
+        reason = _api_value(feedback, "block_reason", "blockReason")
         return str(reason) if reason else "no_candidates"
-    return str(_obj_value(candidates[0], "finish_reason", "unknown"))
+    return str(_api_value(candidates[0], "finish_reason", "finishReason", "unknown"))
 
 
 def _response_diagnostics(response: object) -> dict:
@@ -159,10 +163,11 @@ def _response_diagnostics(response: object) -> dict:
         return str(value)
     candidates = _obj_value(response, "candidates", []) or []
     first = candidates[0] if candidates else None
-    feedback = _obj_value(response, "prompt_feedback")
-    return {"finish_message": str(_obj_value(first, "finish_message", "") or "")[:2000],
-            "safety_ratings": clean(_obj_value(first, "safety_ratings", [])),
-            "prompt_block_reason": str(_obj_value(feedback, "block_reason", "") or "")}
+    feedback = _api_value(response, "prompt_feedback", "promptFeedback")
+    return {"finish_message": str(_api_value(first, "finish_message", "finishMessage", "") or "")[:2000],
+            "safety_ratings": clean(_api_value(first, "safety_ratings", "safetyRatings", [])),
+            "prompt_safety_ratings": clean(_api_value(feedback, "safety_ratings", "safetyRatings", [])),
+            "prompt_block_reason": str(_api_value(feedback, "block_reason", "blockReason", "") or "")}
 
 
 def _write_jsonl_log(log_path: Path, record: dict) -> None:
@@ -271,6 +276,8 @@ def _record_provider_refusal(panel_idx: int, reason: str, cost: float | None) ->
 
 
 def _terminal_error(exc: Exception) -> bool:
+    if isinstance(exc, NoImageResponse) and normalized_reason(exc.reason) in CONTENT_REASONS | REVIEW_REASONS:
+        return True
     status = getattr(exc, "code", None) or getattr(exc, "status_code", None)
     if str(status) in {"400", "401", "403", "404", "429"}:
         return True
@@ -409,6 +416,19 @@ def generate_panel(
         # Every reservation fingerprints these exact provider inputs. A new prompt
         # needs a new reviewed revision, even after a completed retryable failure.
         prompt = plan.prompts[variant] if plan else prompt_text
+        if not plan:
+            try:
+                guard.store_attempt_diagnostic(token, "inputs", {
+                    "run_id": os.environ.get("GITHUB_RUN_ID", "local"),
+                    "model": _MODEL, "aspect_ratio": aspect_ratio,
+                    "prompt_text": prompt,
+                    "ref_sha256": [hashlib.sha256(ref.read_bytes()).hexdigest()
+                                   for ref in ref_paths],
+                })
+            except Exception as exc:
+                # No request was submitted: release the reservation at known zero cost.
+                settle(token, state="failed", actual_cost=0.0)
+                raise GenerationHold("Private image inputs unavailable; provider not called") from exc
         try:
             image_bytes, input_tokens, output_tokens = _generate_one(
                 client, prompt, ref_paths, aspect_ratio=aspect_ratio
@@ -441,11 +461,24 @@ def generate_panel(
                            refusal, terminal, known_cost)
             if terminal:
                 _record_provider_refusal(panel_idx, exc.reason, known_cost)
+            settlement_error = None
             try:
                 settle(token, state="terminal" if terminal else "failed",
                        actual_cost=known_cost, reason=reason)
             except GenerationHold as hold:
-                raise GenerationHold(f"{hold}; {refusal}") from exc
+                settlement_error = hold
+            if not plan:
+                try:
+                    guard.store_attempt_diagnostic(token, "refusal", {
+                        "run_id": os.environ.get("GITHUB_RUN_ID", "local"),
+                        "finish_reason": reason, "cost_usd": known_cost,
+                        "prompt_tokens": exc.prompt_tokens,
+                        "output_tokens": exc.output_tokens, "details": exc.details,
+                    })
+                except GenerationHold as hold:
+                    settlement_error = settlement_error or hold
+            if settlement_error is not None:
+                raise GenerationHold(f"{settlement_error}; {refusal}") from exc
             if plan:
                 # Settle the paid result first; evidence failure must never trigger a new call.
                 guard.store_diagnostic("refusal", private_record)
@@ -537,10 +570,21 @@ def generate_episode(
         (패널 경로 목록, 총 비용 USD)
         실패 패널은 None으로 포함.
     """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     log_path = output_dir / "gemini_run.log"
     results: list[Path | None] = []
     summary = []
     total_cost = 0.0
+
+    def write_summary(*, complete=False, held_panel=None):
+        pending = [{"panel": p.get("panel_idx", 0), "status": "not_attempted",
+                    "cost_usd": None} for p in panels[len(summary):]]
+        (output_dir / "generation-summary.json").write_text(
+            json.dumps({"panels": summary + pending, "complete": complete,
+                        "cost_usd": total_cost, "held_panel": held_panel,
+                        "cost_complete": held_panel is None and len(summary) == len(panels)}), encoding="utf-8",
+        )
 
     for panel in panels:
         idx = panel.get("panel_idx", 0)
@@ -556,15 +600,15 @@ def generate_episode(
         except PanelGenerationFailed as exc:
             logger.warning("[gemini] panel=%s settled failure: %s", idx, exc)
             path, panel_cost = None, exc.cost
+        except GenerationHold:
+            summary.append({"panel": idx, "status": "held", "cost_usd": None})
+            write_summary(held_panel=idx)
+            raise
         results.append(path)
         total_cost += panel_cost
         summary.append({"panel": idx, "status": "success" if path else "failed",
                         "cost_usd": panel_cost})
-        if retry_enabled():
-            (output_dir / "generation-summary.json").write_text(
-                json.dumps({"panels": summary, "complete": False, "cost_usd": total_cost}),
-                encoding="utf-8",
-            )
+        write_summary()
 
     success_count = sum(1 for p in results if p is not None)
     logger.info(
@@ -573,9 +617,5 @@ def generate_episode(
         len(results),
         total_cost,
     )
-    if retry_enabled():
-        (output_dir / "generation-summary.json").write_text(
-            json.dumps({"panels": summary, "complete": success_count == len(panels),
-                        "cost_usd": total_cost}), encoding="utf-8",
-        )
+    write_summary(complete=success_count == len(panels))
     return results, total_cost

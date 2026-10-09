@@ -106,15 +106,28 @@ def check_observation_actions(script: dict) -> list[ActionViolation]:
     decision = script.get("_episode_decision") or {}
     if decision.get("scenario_type") != "NO_BATTLE" or decision.get("action_mode") != "OBSERVATION":
         return []
+    # Ambiguous words such as hit, strike, swing and shot also describe prices
+    # and camera framing. Require physical targets or weapon/body motion here;
+    # character-directed attacks and firearm discharge use the existing checks.
+    physical_targets = (
+        r"fists?|shields?|walls?|floors?|ground|columns?|pillars?|consoles?|"
+        r"doors?|windows?|glass|boulders?|bodies|faces?|heads?|chests?"
+    )
     motion = re.compile(
-        rf"\b(?:{_ATTACK_VERBS}|attack\w*|destroy\w*|drives?\s+(?:them|his fists|her fists)\s+into)\b",
+        rf"\b(?:{_ATTACK_VERBS}|attack\w*|destroy\w*)\b"
+        rf"(?:\s+\w+){{0,4}}?\s+(?:{physical_targets})\b"
+        r"|\b(?:swing\w*|swung|rais\w*)\s+(?:(?:both|his|her|their|a|the)\s+){0,2}"
+        r"(?:fists?|swords?|hammers?|axes?|chainsaws?|whips?)\b"
+        r"|\bdrives?\s+(?:them|his fists|her fists)\s+into\b",
         re.IGNORECASE,
     )
     found = []
     for i, panel in enumerate(script.get("panels") or []):
-        if panel.get("panel_type") in COMPOSITOR_PANEL_TYPES:
+        if not isinstance(panel, dict) or panel.get("panel_type") in COMPOSITOR_PANEL_TYPES:
             continue
         match = motion.search(str(panel.get("action") or ""))
-        if match:
-            found.append(ActionViolation("OBSERVATION_ACTION_CONFLICT", panel.get("idx", i + 1), match.group(0)))
+        combat = check_action(panel.get("action", ""), panel.get("idx", i + 1))
+        if match or combat:
+            detail = match.group(0) if match else combat[0].detail
+            found.append(ActionViolation("OBSERVATION_ACTION_CONFLICT", panel.get("idx", i + 1), detail))
     return found

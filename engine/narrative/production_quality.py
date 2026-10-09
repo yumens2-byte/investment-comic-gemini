@@ -361,9 +361,9 @@ def validate_production_episode(
             )
         )
 
-    from engine.image.action_safety import check_script_actions
+    from engine.image.action_safety import check_observation_actions, check_script_actions
 
-    for item in check_script_actions(script):
+    for item in check_script_actions(script) + check_observation_actions(script):
         violations.append(
             ProductionViolation(item.rule, f"panel {item.panel_idx}: '{item.detail}'")
         )
@@ -478,6 +478,14 @@ def build_production_retry_feedback(
             "shields, barriers or energy meeting between the characters; canon weapons stay "
             "carried, never fired at or landing on anyone; no wounds or blood. Keep dialogue, "
             "narration, cast, market facts and the outcome unchanged."
+        )
+    if "OBSERVATION_ACTION_CONFLICT" in codes:
+        lines.append(
+            "- OBSERVATION IMAGE FIX: this is a NO_BATTLE / OBSERVATION episode. "
+            "Replace destructive strikes, attacks and smashing with non-combat actions "
+            "such as adjusting a console, marking a chart, opening a folder or handing "
+            "over evidence. Preserve the approved cast, canon props, market facts, "
+            "dialogue and scenario. Do not turn observation into a battle."
         )
     if "STATIC_ACTION_STREAK" in codes:
         lines.append(

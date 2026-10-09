@@ -172,3 +172,11 @@ class ProductionGenerationGuard:
         })
         if receipt.get('stored') is not True:
             raise GenerationHold('Private diagnostic persistence not confirmed')
+
+    def store_attempt_diagnostic(self, token: str, kind: str, payload: dict) -> None:
+        """Preserve exact ordinary inputs/results without requiring a retry plan."""
+        receipt = self._rpc('image_generation_store_attempt_diagnostic', {
+            **self._identity(), 'p_token': token, 'p_kind': kind, 'p_payload': payload,
+        })
+        if receipt.get('stored') is not True:
+            raise GenerationHold('Private attempt diagnostic persistence not confirmed')
