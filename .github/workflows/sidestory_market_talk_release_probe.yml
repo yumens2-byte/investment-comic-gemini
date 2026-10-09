@@ -73,6 +73,7 @@ jobs:
           python - <<'PYCODE'
           import json
           import os
+          import re
           from datetime import timedelta
           from pathlib import Path
           from sidestory.adapters.facebook.graph import FacebookPagePublisher
@@ -81,13 +82,26 @@ jobs:
 
           path = Path('output/market-talk-release-probe.json')
           report = json.loads(path.read_text(encoding='utf-8'))
+          report['meta_credential_configuration'] = {name: bool(os.environ.get(name, '').strip()) for name in ('FACE_PAGE_ID', 'FACE_PAGE_TOKEN')}
+          phase = 'meta_identity'
           try:
+              if not all(report['meta_credential_configuration'].values()):
+                  raise ValueError('Page credential configuration missing')
               publisher = FacebookPagePublisher(os.environ.get('FACE_PAGE_ID', ''), os.environ.get('FACE_PAGE_TOKEN', ''))
-              phase_call('meta_read', publisher.check)
-              receipts = phase_call('meta_read', publisher.recent_receipts, (utcnow() - timedelta(days=1)).isoformat())
+              phase_call(phase, publisher.check)
+              phase = 'meta_feed_read'
+              receipts = phase_call(phase, publisher.recent_receipts, (utcnow() - timedelta(days=1)).isoformat())
               report['meta_read_access'] = {'status': 'PASS', 'requested_graph_version': publisher.version, 'observed_receipt_count': len(receipts)}
           except Exception as exc:
-              report['meta_read_access'] = failure_report(exc, 'meta_read')
+              report['meta_read_access'] = failure_report(exc, phase)
+              original = getattr(exc, 'original', exc)
+              # Match only the adapter's fixed HTTP/code prefix; never emit provider text.
+              match = re.match(r'^HTTP ([1-5][0-9]{2}) code=([0-9]{1,10})(?: |$)', str(original))
+              if match:
+                  report['meta_read_access']['http_status'] = int(match.group(1))
+                  report['meta_read_access']['provider_error_code'] = int(match.group(2))
+              if not all(report['meta_credential_configuration'].values()):
+                  report['meta_read_access']['blockers'] = ['META_CREDENTIAL_CONFIGURATION_REQUIRED']
               report['status'] = 'BLOCKED'
           report['meta_write_permissions_verified'] = False
           report['unverified'] = ['meta_write_permissions' if field == 'meta_permissions' else field for field in report['unverified']]
