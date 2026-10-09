@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import timedelta, timezone
 
 from sidestory.market_talk.content import Draft, digest, normalize
+from sidestory.market_talk.policy import SOURCE_VIEW, PolicyError
 
 
 class TalkStore:
@@ -13,6 +14,69 @@ class TalkStore:
 
     def rpc(self, name, **params):
         return self.db.rpc(name, params).execute().data
+
+    def require_hardening(self):
+        if self.rpc("talk_contract_version") != 3:
+            raise PolicyError("DB_CONTRACT_MISMATCH", "db_contract")
+
+    def source(self, day):
+        rows = self.db.table(SOURCE_VIEW).select("*").eq("snapshot_date", day).execute().data
+        if not isinstance(rows, list) or len(rows) != 1:
+            raise ValueError("exact source snapshot unavailable")
+        return rows[0]
+
+    def record_outcome(self, page, day, run, stage, report):
+        return self.rpc(
+            "talk_record_outcome",
+            p_page=page,
+            p_day=day,
+            p_run=run,
+            p_stage=stage,
+            p_status=report.get("status", "INSPECTED"),
+            p_code=(
+                "PUBLISHED_VERIFIED"
+                if report.get("verified")
+                else (
+                    report.get("blockers")
+                    or report.get("errors")
+                    or [report.get("status", "INSPECTED")]
+                )[0].upper()
+            ),
+            p_revision=report.get("revision"),
+        )
+
+    def model_state(self, page, key, phase, state):
+        return self.rpc("talk_model_state", p_page=page, p_key=key, p_phase=phase, p_state=state)
+
+    def slot_outcomes(self, page, day):
+        rows = (
+            self.db.table("talk_run_events")
+            .select("status,reason_code,stage,revision,at")
+            .eq("page_id", page)
+            .eq("slot_date", day)
+            .order("at", desc=True)
+            .limit(50)
+            .execute()
+            .data
+        )
+        if not isinstance(rows, list):
+            raise ValueError("slot outcomes unavailable")
+        return rows
+
+    def day_deliveries(self, page, start, end):
+        rows = (
+            self.db.table("facebook_deliveries")
+            .select("business_key,state,post_id,published_at")
+            .eq("page_id", page)
+            .eq("track", "talk")
+            .gte("started_at", start.isoformat())
+            .lt("started_at", end.isoformat())
+            .execute()
+            .data
+        )
+        if not isinstance(rows, list):
+            raise ValueError("delivery observations unavailable")
+        return rows
 
     def optional_policy(self, page_id):
         rows = (
@@ -91,9 +155,10 @@ class TalkStore:
             if r.get("payload", {}).get("context", {}).get("provenance_reviewer")
             == "market-talk:auto-v1"
         ]
-        if len(rows) > 1:
+        active = [r for r in rows if r["status"] != "CONTENT_HOLD"]
+        if len(active) > 1:
             raise ValueError("multiple automatic daily drafts")
-        return rows[0] if rows else None
+        return active[0] if active else (rows[0] if rows else None)
 
     def begin(self, page_id, key, track, body, expires_at):
         return self.rpc(

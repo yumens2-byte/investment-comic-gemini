@@ -52,7 +52,56 @@ def publish(revision, store, publisher, *, now, canon_hash, snapshot_hash):
         return {"status": "NOT_DUE"}
     publisher.check()
     post_id = publisher.create_post(draft.body, [])
-    return {"status": "PUBLISHED", "post_id": post_id, "revision": revision}
+    return verify_publication(revision, store, publisher, now=now, post_id=post_id)
+
+
+def verify_publication(revision, store, publisher, *, now, post_id=None):
+    row = store.item(revision)
+    draft = Draft.model_validate(row["payload"])
+    if draft.revision != revision or draft.body != row["body"]:
+        raise ValueError("stored content hash mismatch")
+    delivery = store.delivery(row["page_id"], revision)
+    if delivery["state"] != "PUBLISHED" or row["status"] != "PUBLISHED":
+        return {
+            "status": "BLOCKED",
+            "revision": revision,
+            "blockers": ["PUBLISHED_RECEIPT_REQUIRED"],
+        }
+    if post_id is not None and post_id != delivery.get("post_id"):
+        return {
+            "status": "POSTED_UNVERIFIED",
+            "revision": revision,
+            "blockers": ["RECEIPT_ID_MISMATCH"],
+            "automatic_retry": False,
+        }
+    post_id = delivery["post_id"]
+    try:
+        receipt = publisher.get_post(post_id)
+    except Exception:
+        return {
+            "status": "POSTED_UNVERIFIED",
+            "post_id": post_id,
+            "revision": revision,
+            "blockers": ["RECEIPT_READ_FAILED"],
+            "automatic_retry": False,
+        }
+    try:
+        at = verified_receipt(row["page_id"], post_id, receipt, delivery, now)
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return {
+            "status": "POSTED_UNVERIFIED",
+            "post_id": post_id,
+            "revision": revision,
+            "blockers": ["RECEIPT_MISMATCH"],
+            "automatic_retry": False,
+        }
+    return {
+        "status": "PUBLISHED",
+        "post_id": post_id,
+        "revision": revision,
+        "verified": True,
+        "published_at": at,
+    }
 
 
 def verified_receipt(page_id, post_id, receipt, delivery, now):

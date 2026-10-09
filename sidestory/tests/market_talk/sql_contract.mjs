@@ -16,11 +16,21 @@ async function rejects(label, sql, params=[]) {
 const query = async (sql,params=[]) => (await db.query(sql,params)).rows;
 const rpc = async (fn,values) => (await query(`select icg_side.${fn}(${values.map((_,i)=>'$'+(i+1)).join(',')}) as result`,values))[0].result;
 await db.exec('create role anon; create role authenticated; create role service_role bypassrls; create schema icg_side; grant usage on schema icg_side to service_role;');
+await db.exec(`create schema icg; grant usage on schema icg to service_role;
+create table icg.daily_snapshots(snapshot_date date, us10y float, vix float, oil_wti float, spy_change float,
+nasdaq_change float, dollar_index float, hy_spread float, fear_greed float, created_at timestamptz, data_quality jsonb);
+grant select on icg.daily_snapshots to service_role;
+insert into icg.daily_snapshots(snapshot_date,vix,created_at,data_quality) values(current_date,15,now(),'{}');`);
 const file = fs.readdirSync(path.join(root,'supabase/migrations')).find(p=>p.endsWith('_market_talk.sql'));
 await db.exec(fs.readFileSync(path.join(root,'supabase/migrations',file),'utf8'));
 const automatic = fs.readdirSync(path.join(root,'supabase/migrations')).find(p=>p.endsWith('_market_talk_automatic.sql'));
 await db.exec(fs.readFileSync(path.join(root,'supabase/migrations',automatic),'utf8'));
+const hardening = fs.readdirSync(path.join(root,'supabase/migrations')).find(p=>p.endsWith('_market_talk_hardening.sql'));
+await db.exec(fs.readFileSync(path.join(root,'supabase/migrations',hardening),'utf8'));
 await db.exec('set role service_role');
+check('hardening contract version', (await rpc('talk_contract_version',[]))===3);
+check('quality view carries raw source metadata', (await query('select data_quality,created_at from icg_side.market_talk_source_v1'))[0].created_at != null);
+await rejects('source view remains read only','update icg_side.market_talk_source_v1 set vix=99');
 async function page(id,enabled=true) {
   await query('insert into icg_side.facebook_page_policy(page_id,enabled,exclusive_managed,daily_budget_usd,monthly_budget_usd) values($1,$2,true,1,2)',[id,enabled]);
   await rpc('facebook_observe',[id,[]]);
@@ -96,7 +106,23 @@ check('coexistence still blocks concurrent sender',(await rpc('facebook_begin',[
 await query("update icg_side.facebook_page_policy set daily_budget_usd=5,monthly_budget_usd=1 where page_id='p9'");
 await rpc('talk_cost_reserve',['p9','c1',.8]);
 await rejects('monthly cost ceiling','select icg_side.talk_cost_reserve($1,$2,$3)',['p9','c2',.3]);
+await rpc('talk_model_state',['p9','c1','generation','RESERVED']);
+await rpc('talk_model_state',['p9','c1','generation','UNKNOWN']);
+await rejects('uncertain model cannot be completed or refunded', "select icg_side.talk_model_state('p9','c1','generation','COMPLETE')");
+await rejects('model attempt requires durable cost', "select icg_side.talk_model_state('p9','missing','generation','RESERVED')");
+const today = new Date().toISOString().slice(0,10);
+await rejects('cannot claim success without a posted delivery', 'select icg_side.talk_record_outcome($1,$2,$3,$4,$5,$6,$7)', ['p9',today,'run1','publish','PUBLISHED','PUBLISHED_VERIFIED',hash]);
+await rpc('talk_record_outcome',['p5',today,'run2','publish','PUBLISHED','PUBLISHED_VERIFIED',hash]);
+await rpc('talk_record_outcome',['p5',today,'run3','automate','BLOCKED','SOURCE_SESSION_REQUIRED',null]);
+check('published slot cannot downgrade',(await query("select status from icg_side.talk_slots where page_id='p5'"))[0].status==='PUBLISHED');
+await rejects('run events cannot be edited', "update icg_side.talk_run_events set status='BLOCKED'");
+await rejects('run events cannot be deleted', 'delete from icg_side.talk_run_events');
+check('all attempts retained in run events',(await query("select count(*)::int n from icg_side.talk_run_events where page_id='p5'"))[0].n===2);
+await rejects('outcome rejects exception text', 'select icg_side.talk_record_outcome($1,$2,$3,$4,$5,$6,$7)', ['p5',today,'run4','publish','BLOCKED','secret token https://private',null]);
+check('main source values unchanged',(await query('select vix from icg.daily_snapshots'))[0].vix===15);
 await db.exec('reset role; set role anon;');
+await rejects('anon cannot read run events','select * from icg_side.talk_run_events');
+await rejects('anon cannot read provenance','select * from icg_side.market_talk_source_v1');
 await rejects('anon cannot read drafts','select * from icg_side.talk_items');
 await rejects('anon cannot call send RPC','select icg_side.facebook_begin($1,$2,$3,$4,$5)',['p6','bad','sidestory',hash,expiry]);
 await db.exec('reset role;');

@@ -1,0 +1,48 @@
+name: 🌐 Market Talk slot watcher
+on:
+  workflow_dispatch:
+    inputs:
+      slot_date:
+        description: Optional KST YYYY-MM-DD completed weekday
+        type: string
+        default: ''
+  schedule:
+    - cron: '15 15 * * 1-5' # KST 00:15 Tue-Sat; inspect the previous closed weekday.
+permissions:
+  contents: read
+concurrency:
+  group: market-talk-watch
+  cancel-in-progress: false
+jobs:
+  watch:
+    if: github.event_name == 'workflow_dispatch' || vars.MARKET_TALK_WATCH_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      FACE_PAGE_ID: ${{ secrets.FACE_PAGE_ID }}
+      DRY_RUN: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install --require-hashes -r sidestory/market_talk/requirements.lock
+      - name: Read-only slot completion check
+        env:
+          REQUEST_SLOT_DATE: ${{ inputs.slot_date }}
+        shell: bash
+        run: |
+          args=(--stage watch --output output/market-talk-report.json)
+          if [[ -n "$REQUEST_SLOT_DATE" ]]; then args+=(--slot-date "$REQUEST_SLOT_DATE"); fi
+          python -m sidestory.market_talk "${args[@]}"
+      - name: Safe operational summary
+        if: always()
+        run: python -m sidestory.market_talk.reporting
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: market-talk-watch-${{ github.run_id }}
+          path: output/market-talk-report.json
+          if-no-files-found: error

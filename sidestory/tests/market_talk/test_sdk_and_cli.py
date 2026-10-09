@@ -92,7 +92,13 @@ def test_invalid_boolean_fails_closed(monkeypatch, name):
 def test_no_approved_queue_is_normal_skip(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("FACE_PAGE_ID", "123")
     monkeypatch.setattr(cli, "connection", lambda: object())
-    monkeypatch.setattr(cli, "TalkStore", lambda _: SimpleNamespace(next_due=lambda *a: None))
+    monkeypatch.setattr(
+        cli,
+        "TalkStore",
+        lambda _: SimpleNamespace(
+            next_due=lambda *a: None, require_hardening=lambda: None, record_outcome=lambda *a: None
+        ),
+    )
     output = tmp_path / "skip.json"
     assert cli.main(["--stage", "publish", "--live", "--output", str(output)]) == 0
     report = json.loads(capsys.readouterr().out)
@@ -128,7 +134,8 @@ def test_missing_review_evidence_blocks_before_database(tmp_path, monkeypatch, c
     )
     report = json.loads(output.read_text())
     assert report == json.loads(capsys.readouterr().out)
-    assert report == {"status": "BLOCKED", "blockers": ["REVIEW_NOTE_REQUIRED"]}
+    assert report["status"] == "BLOCKED" and report["blockers"] == ["REVIEW_NOTE_REQUIRED"]
+    assert report["phase"] == "input" and report["run_id"]
 
 
 def test_empty_inspect_reads_policy_without_write_or_provider(tmp_path, monkeypatch, capsys):
@@ -182,6 +189,8 @@ def test_cli_failure_artifact_does_not_leak_exception_secrets(tmp_path, monkeypa
     monkeypatch.setattr(cli, "connection", fail)
     output = tmp_path / "blocked.json"
     assert cli.main(["--output", str(output)]) == 1
-    report = {"status": "BLOCKED", "error_type": "ValueError"}
-    assert json.loads(output.read_text()) == report
+    report = json.loads(output.read_text())
     assert json.loads(capsys.readouterr().out) == report
+    assert report["status"] == "BLOCKED" and report["error_type"] == "ValueError"
+    assert report["phase"] == "connection" and report["blockers"] == ["INVALID_INPUT_OR_STATE"]
+    assert "secret-token" not in output.read_text() and "private.example" not in output.read_text()

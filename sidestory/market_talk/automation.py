@@ -1,14 +1,22 @@
 """Operator-enabled automatic preparation, model review and approval. No human attestation."""
 
-import math
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
 from sidestory.market_talk.content import Context, Draft, Evidence, canon, digest, normalize
+from sidestory.market_talk.diagnostics import phase_call
 from sidestory.market_talk.generation import generate, review
+from sidestory.market_talk.policy import (
+    FIELDS,
+    KST,
+    SOURCE_VIEW,
+    PolicyError,
+    scheduled_slot,
+    slot,
+    validate_source,
+)
 from sidestory.market_talk.service import approve, inspect
 
-KST = timezone(timedelta(hours=9))
 ACTOR = "market-talk:auto-v1"
 
 
@@ -16,7 +24,7 @@ def prepare_context(client, canon_path, allowed, now, source_commit):
     day = now.astimezone(KST).date()
     rows = (
         client.schema("icg_side")
-        .table("main_feed_market_v1")
+        .table(SOURCE_VIEW)
         .select("*")
         .lte("snapshot_date", day.isoformat())
         .order("snapshot_date", desc=True)
@@ -27,20 +35,8 @@ def prepare_context(client, canon_path, allowed, now, source_commit):
     if not isinstance(rows, list) or len(rows) != 1:
         raise ValueError("automatic snapshot unavailable")
     snapshot = rows[0]
+    validate_source(snapshot, now)
     source_day = date.fromisoformat(snapshot["snapshot_date"])
-    if not 0 <= (day - source_day).days <= 3:
-        raise ValueError("automatic snapshot stale")
-    fields = ("vix", "us10y", "oil_wti", "spy_change", "nasdaq_change", "fear_greed")
-    for field in fields:
-        value = snapshot.get(field)
-        if (
-            isinstance(value, bool)
-            or not isinstance(value, (int, float))
-            or not math.isfinite(value)
-        ):
-            raise ValueError("automatic snapshot incomplete")
-    if not (0 <= snapshot["vix"] <= 200 and 0 <= snapshot["fear_greed"] <= 100):
-        raise ValueError("automatic snapshot invalid")
     if len(source_commit) != 40 or any(c not in "0123456789abcdef" for c in source_commit):
         raise ValueError("immutable source commit required")
     characters = sorted(allowed)
@@ -50,19 +46,19 @@ def prepare_context(client, canon_path, allowed, now, source_commit):
     observed = now
     statement = (
         f"저장된 시장 스냅샷({source_day.isoformat()}): "
-        + ", ".join(f"{field}={snapshot[field]}" for field in fields)
+        + ", ".join(f"{field}={snapshot[field]}" for field in FIELDS)
         + "."
     )
     evidence = Evidence(
         id="STORED_SNAPSHOT",
         statement=statement,
-        source_url=f"https://github.com/yumens2-byte/investment-comic-gemini/blob/{source_commit}/sidestory/migrations/0001_icg_side_schema.sql",
+        source_url=f"https://github.com/yumens2-byte/investment-comic-gemini/blob/{source_commit}/sidestory/supabase/migrations/20261009084103_market_talk_hardening.sql",
         observed_at=observed,
-        market_session="DB 조회 시각 · 링크는 읽기 뷰 정의 · 원본 실시간 시세 재검증 아님",
+        market_session="DB 조회 시각 · 출처·시장세션은 내부 payload 계약 · 원본 실시간 시세 재검증 아님",
     )
     expires = datetime.combine(day, time(23, 59), KST)
     context = Context(
-        policy_version="market-talk-2",
+        policy_version="market-talk-3",
         **fields_canon,
         topic="시장 기록을 보며 나누는 캐릭터 잡담",
         claim_key="auto-snapshot-" + source_day.isoformat(),
@@ -72,7 +68,7 @@ def prepare_context(client, canon_path, allowed, now, source_commit):
         evidence=[evidence],
         expires_at=expires,
         provenance_reviewer=ACTOR,
-        provenance_note="저장된 스냅샷과 카논을 자동 선택. 원본 시세의 외부 검증이나 사람 검수로 표시하지 않음.",
+        provenance_note="저장된 스냅샷의 품질·원본 관측시점·단위·세션을 검사. 외부 시세 재검증이나 사람 검수 아님.",
     )
     return context, datetime.combine(day, time(18, 30), KST)
 
@@ -90,8 +86,20 @@ def automatic_draft(
     input_rate,
     output_rate,
     current,
+    scheduled=False,
+    slot_date="",
 ):
-    day = now.astimezone(KST).date()
+    target = scheduled_slot(now, slot_date) if scheduled else slot(now, slot_date)
+    day = target.day
+    if scheduled and target.status(now) != "READY":
+        return {
+            "status": target.status(now),
+            "allowed": False,
+            "slot_date": day.isoformat(),
+            "automatic_retry": False,
+        }
+    if day != now.astimezone(KST).date():
+        raise PolicyError("SLOT_DAY_MISMATCH", "slot")
     if day.weekday() >= 5:
         return {"status": "SKIPPED_WEEKEND", "allowed": False}
     policy = store.policy(page)
@@ -116,7 +124,9 @@ def automatic_draft(
         if draft.revision != row["revision"] or draft.body != row["body"]:
             raise ValueError("automatic stored revision mismatch")
     else:
-        context, due = prepare_context(client, canon_path, allowed, now, source_commit)
+        context, due = phase_call(
+            "source", prepare_context, client, canon_path, allowed, now, source_commit
+        )
         key = digest(
             [
                 normalize(context.topic),
@@ -126,7 +136,9 @@ def automatic_draft(
         )
         if any(r.get("semantic_key") == key for r in store.recent(page)):
             return {"status": "SKIPPED_DUPLICATE_SOURCE", "allowed": False}
-        copy = generate(
+        copy = phase_call(
+            "generation",
+            generate,
             context,
             store,
             page,
@@ -136,19 +148,26 @@ def automatic_draft(
             request_key=digest(["auto-generate-v1", day.isoformat()]),
         )
         draft = Draft(context=context, text=copy, due_at=due)
-        ch, sh = current(client, context)
+        ch, sh = phase_call("source", current, client, context)
         report = inspect(draft, store, page, now=now, canon_hash=ch, snapshot_hash=sh)
         if report["errors"]:
             return {"status": "SKIPPED_QUALITY", "errors": report["errors"], "allowed": False}
-        store.put(page, draft)
+        phase_call("draft_persistence", store.put, page, draft)
         row = {"status": "DRAFT"}
-    ch, sh = current(client, draft.context)
+    ch, sh = phase_call("source", current, client, draft.context)
     report = inspect(draft, store, page, now=now, canon_hash=ch, snapshot_hash=sh)
     if report["errors"]:
         return {"status": "SKIPPED_QUALITY", "errors": report["errors"], "allowed": False}
     if row["status"] == "DRAFT":
-        verdict = review(
-            draft, store, page, model=model, input_rate=input_rate, output_rate=output_rate
+        verdict = phase_call(
+            "review",
+            review,
+            draft,
+            store,
+            page,
+            model=model,
+            input_rate=input_rate,
+            output_rate=output_rate,
         )
         if not verdict.accepted:
             store.rpc(
@@ -158,7 +177,7 @@ def automatic_draft(
                 p_note="자동 모델 검수에서 근거·카논·문장 조건 미충족. 재생성하지 않음.",
             )
             return {"status": "SKIPPED_MODEL_REVIEW", "revision": draft.revision}
-        ch, sh = current(client, draft.context)
+        ch, sh = phase_call("source", current, client, draft.context)
         approve(
             draft.revision,
             store,

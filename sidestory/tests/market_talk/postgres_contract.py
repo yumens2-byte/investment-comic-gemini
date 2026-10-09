@@ -29,9 +29,16 @@ def main():
             "create schema icg; create table icg.main_sentinel(id integer primary key, value text)"
         )
         db.execute("insert into icg.main_sentinel values(1,'unchanged')")
+        db.execute(
+            "create table icg.daily_snapshots(snapshot_date date, us10y float, vix float, oil_wti float, spy_change float, nasdaq_change float, dollar_index float, hy_spread float, fear_greed float, created_at timestamptz, data_quality jsonb)"
+        )
+        db.execute(
+            "grant usage on schema icg to service_role; grant select on icg.daily_snapshots to service_role"
+        )
         db.execute(migration.read_text())
         automatic = next(migration.parent.glob("*_market_talk_automatic.sql"))
         db.execute(automatic.read_text())
+        db.execute(next(migration.parent.glob("*_market_talk_hardening.sql")).read_text())
         db.execute(
             "insert into icg_side.facebook_page_policy(page_id,enabled,exclusive_managed,observed_at,daily_budget_usd,monthly_budget_usd) values('race',true,true,now(),1,2)"
         )
@@ -105,7 +112,95 @@ def main():
             == "unchanged"
         )
     print("PASS main schema unchanged")
-    print("REAL POSTGRES CONTRACT: 5 passed; no Meta/LLM/production DB calls")
+    # Exercise the new contract on actual independent server connections.
+    revision = "f" * 64
+    with psycopg.connect(url, autocommit=True) as db:
+        db.execute("set role service_role")
+        assert db.execute("select icg_side.talk_contract_version()").fetchone()[0] == 3
+        try:
+            db.execute("update icg_side.market_talk_source_v1 set vix=99")
+        except psycopg.Error:
+            pass
+        else:
+            raise AssertionError("source view writable")
+        print("PASS provenance view remains read only")
+        reserved = db.execute("select request_key from icg_side.talk_costs limit 1").fetchone()[0]
+        db.execute(
+            "select icg_side.talk_model_state('race',%s,'generation','RESERVED')", (reserved,)
+        )
+        db.execute(
+            "select icg_side.talk_model_state('race',%s,'generation','UNKNOWN')", (reserved,)
+        )
+        try:
+            db.execute(
+                "select icg_side.talk_model_state('race',%s,'generation','COMPLETE')", (reserved,)
+            )
+        except psycopg.Error:
+            pass
+        else:
+            raise AssertionError("UNKNOWN charge reset")
+        print("PASS model uncertainty and reservation retained")
+        db.execute(
+            "insert into icg_side.facebook_page_policy(page_id,enabled,exclusive_managed,observed_at) values('proof',true,true,now())"
+        )
+        db.execute(
+            "insert into icg_side.talk_items(revision,page_id,semantic_key,body_hash,send_hash,body,creative,payload,due_at,expires_at) values(%s,'proof','proof','body',%s,'body','creative','{}',now(),now()+interval '1 hour')",
+            (revision, revision),
+        )
+        try:
+            db.execute(
+                "select icg_side.talk_record_outcome('proof',(now() at time zone 'Asia/Seoul')::date,'run0','publish','PUBLISHED','PUBLISHED_VERIFIED',%s)",
+                (revision,),
+            )
+        except psycopg.Error:
+            pass
+        else:
+            raise AssertionError("false publication accepted")
+        print("PASS unposted item cannot claim completion")
+        db.execute(
+            "select icg_side.talk_approve(%s,'reviewer','Exact immutable content checked')",
+            (revision,),
+        )
+        claim = db.execute(
+            "select icg_side.facebook_begin('proof',%s,'talk',%s,now()+interval '1 hour')",
+            (revision, revision),
+        ).fetchone()[0]
+        assert claim["status"] == "SENDING"
+        db.execute(
+            "select icg_side.facebook_finish('proof',%s,%s,'PUBLISHED','proof_1','')",
+            (revision, claim["token"]),
+        )
+    barrier = threading.Barrier(2)
+
+    def record(status):
+        with psycopg.connect(url) as db:
+            db.execute("set role service_role")
+            barrier.wait(timeout=15)
+            db.execute(
+                "select icg_side.talk_record_outcome('proof',(now() at time zone 'Asia/Seoul')::date,%s,'publish',%s,%s,%s)",
+                (
+                    "run-" + status,
+                    status,
+                    "PUBLISHED_VERIFIED" if status == "PUBLISHED" else "SOURCE_SESSION_REQUIRED",
+                    revision,
+                ),
+            )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(record, ["PUBLISHED", "BLOCKED"]))
+    with psycopg.connect(url) as db:
+        assert (
+            db.execute("select status from icg_side.talk_slots where page_id='proof'").fetchone()[0]
+            == "PUBLISHED"
+        )
+        assert (
+            db.execute(
+                "select count(*) from icg_side.talk_run_events where page_id='proof'"
+            ).fetchone()[0]
+            == 2
+        )
+    print("PASS independent connections retain success and both run events")
+    print("REAL POSTGRES CONTRACT: 9 passed; no Meta/LLM/production DB calls")
 
 
 if __name__ == "__main__":
