@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 import requests
 
 from engine.common.retry import api_retry
+from engine.data.source_provenance import provenance
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +95,7 @@ def _call_api() -> dict:
     return resp.json()
 
 
-def fetch_all(target_date: str | None = None) -> dict[str, int | str | None]:
+def fetch_all(target_date: str | None = None, *, source_status: dict | None = None) -> dict[str, int | str | None]:
     """
     Fear & Greed 지수 수집 (alternative.me).
 
@@ -117,7 +118,14 @@ def fetch_all(target_date: str | None = None) -> dict[str, int | str | None]:
         실패 시 None 값 반환.
     """
     cached = _get_cache()
-    if cached:
+    cached_meta = cached.get("_source_status") if cached else None
+    metadata_matches = (
+        isinstance(cached_meta, dict) and cached_meta.get("status") == "ok"
+        and cached_meta.get("value") == cached.get("fear_greed")
+    )
+    if cached and (source_status is None or metadata_matches):
+        if source_status is not None:
+            source_status["fear_greed"] = {**cached["_source_status"], "cache_state": "fresh"}
         return {
             "fear_greed": cached.get("fear_greed"),
             "fear_greed_label": cached.get("fear_greed_label"),
@@ -141,7 +149,22 @@ def fetch_all(target_date: str | None = None) -> dict[str, int | str | None]:
         score_int = int(round(float(raw_value)))
         label = _LABEL_MAP.get(raw_label, raw_label)
         result = {"fear_greed": score_int, "fear_greed_label": label}
-        _save_cache(result)
+        metadata = None
+        try:
+            timestamp = datetime.fromtimestamp(int(entry["timestamp"]), timezone.utc)
+            metadata = provenance(
+                field="fear_greed", provider="alternative.me", instrument="crypto_fng",
+                value=score_int, session=timestamp, source_timestamp=timestamp,
+                market_domain="crypto", cache_state="live",
+            )
+        except (KeyError, TypeError, ValueError, OverflowError, OSError):
+            metadata = provenance(
+                field="fear_greed", provider="alternative.me", instrument="crypto_fng",
+                value=score_int, market_domain="crypto", cache_state="live",
+            )
+        if source_status is not None:
+            source_status["fear_greed"] = metadata
+        _save_cache({**result, "_source_status": metadata} if entry.get("timestamp") is not None else result)
 
         logger.info("[F&G] score=%d label=%s", score_int, label)
         return result
@@ -150,8 +173,20 @@ def fetch_all(target_date: str | None = None) -> dict[str, int | str | None]:
         logger.warning("[F&G] 수집 실패 (영향 없음): %s", exc)
         stale = _get_cache(allow_stale=True)
         if stale:
+            if source_status is not None:
+                original = stale.get("_source_status")
+                if not isinstance(original, dict):
+                    original = provenance(
+                        field="fear_greed", provider="alternative.me", instrument="crypto_fng",
+                        value=stale.get("fear_greed"), market_domain="crypto",
+                    )
+                source_status["fear_greed"] = {**original, "status": "stale_cache", "cache_state": "stale"}
             return {
                 "fear_greed": stale.get("fear_greed"),
                 "fear_greed_label": stale.get("fear_greed_label"),
             }
+        if source_status is not None:
+            source_status["fear_greed"] = provenance(
+                field="fear_greed", provider="alternative.me", instrument="crypto_fng", value=None,
+            )
         return {"fear_greed": None, "fear_greed_label": None}

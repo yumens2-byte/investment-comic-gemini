@@ -19,12 +19,14 @@ from __future__ import annotations
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from concurrent.futures import TimeoutError as FuturesTimeoutError
+from math import isfinite
 
 import pandas as pd
 import requests
 
 from engine.common.retry import api_retry
 from engine.data import yfinance_client
+from engine.data.source_provenance import provenance
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +75,7 @@ def _extract_closes(data: pd.DataFrame, ticker: str) -> pd.Series:
     return data["Close"].dropna()
 
 
-def _fetch_ticker_safe(ticker: str, period: str = "5d") -> dict:
+def _fetch_ticker_safe(ticker: str, period: str = "5d", *, with_source: bool = False) -> dict:
     """
     yfinance 단일 티커 수집. timeout + MultiIndex 대응.
     데이터 부족/일시 장애는 3회 재시도 후 None 딕셔너리 반환.
@@ -98,7 +100,11 @@ def _fetch_ticker_safe(ticker: str, period: str = "5d") -> dict:
                 ticker,
             )
 
-        return {"close": curr, "prev_close": prev, "pct_change": pct}
+        result = {"close": curr, "prev_close": prev, "pct_change": pct}
+        if with_source:
+            result["source_session"] = closes.index[-1]
+            result["previous_session"] = closes.index[-2] if len(closes) >= 2 else None
+        return result
 
     except Exception as exc:
         logger.warning("[yfinance] %s 수집 실패(3회 재시도 후): %s", ticker, type(exc).__name__)
@@ -106,7 +112,10 @@ def _fetch_ticker_safe(ticker: str, period: str = "5d") -> dict:
             try:
                 close = _fetch_btc_usd_fallback()
                 logger.info("[Coinbase] BTC-USD fallback=%.1f", close)
-                return {"close": close, "prev_close": None, "pct_change": None}
+                result = {"close": close, "prev_close": None, "pct_change": None}
+                if with_source:
+                    result["source_provider"] = "Coinbase"
+                return result
             except Exception as fallback_exc:
                 logger.warning(
                     "[Coinbase] BTC-USD fallback 실패(3회 재시도 후): %s",
@@ -115,7 +124,7 @@ def _fetch_ticker_safe(ticker: str, period: str = "5d") -> dict:
         return {"close": None, "prev_close": None, "pct_change": None}
 
 
-def fetch_macro_overrides() -> dict[str, float | None]:
+def fetch_macro_overrides(*, source_status: dict | None = None) -> dict[str, float | None]:
     """당일 이벤트 반영용 실시간 매크로 오버라이드 (FRED 지연 보정).
 
     2026-09-03: FRED VIXCLS/DCOILWTICO는 1~수영업일 지연 발표라 급변일 당일의
@@ -126,15 +135,20 @@ def fetch_macro_overrides() -> dict[str, float | None]:
     tickers = {"vix": "^VIX", "oil_wti": "CL=F"}
     result: dict[str, float | None] = {}
     for col, ticker in tickers.items():
-        info = _fetch_ticker_safe(ticker)
+        info = _fetch_ticker_safe(ticker, **({"with_source": True} if source_status is not None else {}))
         close = info.get("close")
         result[col] = float(close) if close is not None else None
+        if source_status is not None:
+            source_status[col] = provenance(
+                field=col, provider="yfinance", instrument=ticker, value=result[col],
+                session=info.get("source_session"), market_domain="macro",
+            )
         if close is not None:
             logger.info("[yfinance] macro override %s(%s)=%.4f", col, ticker, close)
     return result
 
 
-def fetch_all(target_date: str | None = None) -> dict[str, float | None]:
+def fetch_all(target_date: str | None = None, *, source_status: dict | None = None) -> dict[str, float | None]:
     """
     모든 시장 지표 병렬 수집.
 
@@ -158,7 +172,7 @@ def fetch_all(target_date: str | None = None) -> dict[str, float | None]:
     # 병렬 수집 — TimeoutError 발생 시 None fallback 처리
     with ThreadPoolExecutor(max_workers=4) as executor:
         future_map = {
-            executor.submit(_fetch_ticker_safe, ticker, period): (key, ticker, field)
+            executor.submit(_fetch_ticker_safe, ticker, period, **({"with_source": True} if source_status is not None else {})): (key, ticker, field)
             for key, ticker, period, field in tasks
         }
 
@@ -169,6 +183,17 @@ def fetch_all(target_date: str | None = None) -> dict[str, float | None]:
                     data = future.result(timeout=1)
                     value = data.get(field)
                     result[key] = value
+                    if source_status is not None:
+                        previous = data.get("previous_session")
+                        source_status[key] = provenance(
+                            field=key, provider=data.get("source_provider", "yfinance"), instrument=ticker, value=value,
+                            status="invalid_calculation" if field == "pct_change" and value is not None and
+                            (data.get("prev_close") is None or not isfinite(data["prev_close"]) or data["prev_close"] <= 0) else "ok",
+                            session=data.get("source_session"),
+                            market_domain="crypto" if key == "btc_usd" else "market",
+                            calculation="close_to_close_percent" if "change" in key else "close",
+                            previous_session_date=previous.date().isoformat() if hasattr(previous, "date") else None,
+                        )
                     if value is not None:
                         if "change" in key:
                             logger.info("[yfinance] %s change=%.2f%%", ticker, value)
@@ -188,9 +213,13 @@ def fetch_all(target_date: str | None = None) -> dict[str, float | None]:
             )
 
     # 완료되지 않은 태스크 None 처리 (타임아웃 또는 기타 이유)
-    for key, _, _, _ in tasks:
+    for key, ticker, _period, _field in tasks:
         if key not in result:
             logger.warning("[yfinance] %s: None 처리 (미완료)", key)
             result[key] = None
+        if source_status is not None and key not in source_status:
+            source_status[key] = provenance(
+                field=key, provider="yfinance", instrument=ticker, value=result[key],
+            )
 
     return result

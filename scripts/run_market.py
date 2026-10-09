@@ -459,13 +459,15 @@ def step_data(episode_date: str, logger_inst) -> None:
             upsert_payload,
         )
 
-        fred = fred_fetcher.fetch_all(episode_date)
-        market = market_fetcher.fetch_all(episode_date)
+        source_status: dict = {}
+        fred = fred_fetcher.fetch_all(episode_date, source_status=source_status)
+        market = market_fetcher.fetch_all(episode_date, source_status=source_status)
 
         # 실시간 매크로 오버라이드: FRED 발표 지연(1~수영업일) 보정.
         # yfinance 값이 있으면 우선, 실패 시 FRED 값 유지 (fallback 체인 유지).
         try:
-            _macro_overrides = market_fetcher.fetch_macro_overrides()
+            _override_status: dict = {}
+            _macro_overrides = market_fetcher.fetch_macro_overrides(source_status=_override_status)
         except Exception as _ov_exc:
             _macro_overrides = {}
             logger_inst.warning("STEP_2", f"[MacroOverride] 수집 실패 — FRED 값 유지: {_ov_exc}")
@@ -474,13 +476,14 @@ def step_data(episode_date: str, logger_inst) -> None:
                 continue
             _old = fred.get(_col)
             fred[_col] = _val
+            source_status[_col] = _override_status[_col]
             if _old is not None and abs(float(_old) - _val) > 1e-9:
                 logger_inst.info(
                     "STEP_2",
                     f"[MacroOverride] {_col}: FRED {float(_old):.4f} → yfinance {_val:.4f}",
                 )
 
-        fg = feargreed_fetcher.fetch_all(episode_date)
+        fg = feargreed_fetcher.fetch_all(episode_date, source_status=source_status)
         crypto = crypto_fetcher.fetch_all(episode_date)
         sentiment = sentiment_fetcher.fetch_all(episode_date)
 
@@ -518,6 +521,7 @@ def step_data(episode_date: str, logger_inst) -> None:
         resolved_payload, data_quality = resolve_critical_fallbacks(
             snapshot_date=episode_date,
             payload=snapshot_payload,
+            source_status=source_status,
         )
         resolved_payload["data_quality"] = data_quality
 
