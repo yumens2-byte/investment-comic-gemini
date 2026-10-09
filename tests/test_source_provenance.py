@@ -255,3 +255,41 @@ def test_corrupt_stale_cache_cannot_crash_collection(monkeypatch):
     meta = {}
     assert fg.fetch_all(source_status=meta)["fear_greed"] == 44
     assert meta["fear_greed"]["status"] == "stale_cache"
+
+
+def test_vix_uses_exact_shared_equity_session_not_newer_quote(monkeypatch):
+    def download(ticker, period):
+        return pd.DataFrame({'Close': [15.41, 15.19]}, index=pd.to_datetime(['2026-10-08', '2026-10-09']))
+    monkeypatch.setattr(market_fetcher, '_download_ticker', download)
+    meta = {}
+    values = market_fetcher.fetch_macro_overrides(source_status=meta, vix_session='2026-10-08')
+    assert values['vix'] == 15.41
+    assert meta['vix']['value'] == 15.41
+    assert meta['vix']['market_session_date'] == '2026-10-08'
+    assert values['oil_wti'] == 15.19
+    assert meta['oil_wti']['market_session_date'] == '2026-10-09'
+
+
+def test_missing_exact_vix_session_does_not_relabel_another_day(monkeypatch):
+    monkeypatch.setattr(market_fetcher, '_download_ticker', lambda *args: pd.DataFrame({'Close': [15.19]}, index=pd.to_datetime(['2026-10-09'])))
+    meta = {}
+    values = market_fetcher.fetch_macro_overrides(source_status=meta, vix_session='2026-10-08')
+    assert values['vix'] is None
+    assert meta['vix']['status'] != 'ok'
+    assert meta['vix']['market_session_date'] is None
+    assert values['oil_wti'] == 15.19
+
+
+@pytest.mark.parametrize('nasdaq, status, expected', [
+    ('2026-10-08', 'ok', '2026-10-08'),
+    ('2026-10-09', 'ok', None),
+    ('2026-10-08', 'previous_snapshot', None),
+    ('invalid', 'ok', None),
+    (None, 'ok', None),
+])
+def test_equity_session_requires_matching_actual_provider_dates(nasdaq, status, expected):
+    sources = {
+        'spy_change': {'status': 'ok', 'market_session_date': '2026-10-08'},
+        'nasdaq_change': {'status': status, 'market_session_date': nasdaq},
+    }
+    assert market_fetcher.matched_equity_session(sources) == expected
