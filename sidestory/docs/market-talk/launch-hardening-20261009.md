@@ -6,7 +6,7 @@
 
 두 신규 migration을 운영 적용했고, service_role 읽기로 계약 버전 3 및 저장된 source 정책 통과를 재검증했다. 신규 테이블 RLS, security_invoker view/RPC, anon/authenticated 차단, service_role DELETE 차단을 확인했다. 보안 advisor에 신규 경고는 없으며 기존 프로젝트 경고는 이번 변경 범위 밖이다.
 
-메인과 외전을 합친 Python 테스트 2069건(건너뜀 없음), 격리 PostgreSQL SQL 계약 47건 및 이미지 진단 계약 8건이 통과했다. `sidestory_market_talk_release_probe.yml`은 main 반영 시 기존 repository 설정으로 비공개 DB 계약/저장 source/설정을 읽기 전용 확인한다. Meta/모델 키는 주입하지 않는다. PREPARED는 DB 준비 완료이며 정식 오픈 승인이나 Meta 권한 증명이 아니다. 실운영 원고 검수, Meta 권한, 제한 게시 영수증 및 watcher 확인은 잔여 조건이다. 활성화 플래그를 변경하지 않는다.
+메인과 외전을 합친 Python 테스트 2069건(건너뜀 없음), 격리 PostgreSQL SQL 계약 47건 및 이미지 진단 계약 8건이 통과했다. `sidestory_market_talk_release_probe.yml`은 main 반영 시 기존 repository 설정으로 비공개 DB 계약/저장 source/설정을 읽기 전용 확인한다. DB 점검에는 Meta/모델 키를 주입하지 않는다. 별도 GET 전용 단계만 기존 Page 토큰을 사용해 Page 일치 및 최근 1일 feed의 제한된 전체 페이지 읽기를 확인한다. 읽기 성공은 게시 권한 증명이 아니므로 `meta_write_permissions_verified=false`, `launch_ready=false`를 유지한다. 원문 오류, Page 이름/ID, feed 본문, 토큰은 보고서에 기록하지 않는다. 모델 키는 주입하지 않는다. PREPARED는 DB 준비 완료이며 정식 오픈 승인이나 Meta 권한 증명이 아니다. 실운영 원고 검수, Meta 권한, 제한 게시 영수증 및 watcher 확인은 잔여 조건이다. 활성화 플래그를 변경하지 않는다.
 
 2026-10-09. 이 문서는 이전 MVP 운영 문서의 자동화·출처·게시 확인 관련 설명을 대체한다. 개발 기준 main: `b8c995c4a987fcb4e0a5747dd18913cb956daacb`. 개발 브랜치에서 검증하며 운영 적용·실제 모델 호출·Facebook 게시를 수행하지 않는다.
 
