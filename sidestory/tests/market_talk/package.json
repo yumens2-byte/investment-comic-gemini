@@ -2,6 +2,6 @@
   "name": "icg-market-talk-sql-contract",
   "private": true,
   "type": "module",
-  "scripts": {"test": "node sql_contract.mjs"},
+  "scripts": {"test": "node sql_contract.mjs && node side_diagnostics_contract.mjs"},
   "devDependencies": {"@electric-sql/pglite": "0.5.8"}
 }

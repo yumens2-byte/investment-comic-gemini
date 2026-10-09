@@ -60,6 +60,10 @@ python -m sidestory.market_talk --stage verify --revision EXACT_REVISION --outpu
 
 자동 생성/검수/승인은 `MARKET_TALK_AUTO_ENABLED`가 켜져야 하며 사람 검수 완료로 표시하지 않는다. 실제 게시에는 기존 DRY_RUN/LIVE/CONTROL 플래그, Page 정책, 승인·시각·통합 한도·불확실 원장 차단을 모두 통과해야 한다. `automate --scheduled --live`는 유료 생성이 포함되는 운영 명령이므로 테스트용 연결 없이 실행하지 않는다.
 
+## 통합 CI에서 발견한 기존 외전 호환성
+
+공용 이미지 엔진의 일반 생성 경로는 provider 호출 전에 `image_generation_store_attempt_diagnostic`에 비공개 입력을 기록하도록 강화되었으나 외전 DB에는 해당 RPC가 없었다. 실제 외전 PostgREST 통합 CI에서 이미지 단계 HOLD로 확인했다. 이에 `20261009091525_side_image_attempt_diagnostics.sql`을 추가했다. 기존 외전 `0001`/`0003` ledger 이후 적용하며 본편 SQL의 동일한 입력 증거 계약을 icg_side에 제공한다. 신규 테이블은 RLS 및 service_role SELECT/INSERT만 허용하고, token/scope/panel/fingerprint 일치·입력 선기록·불변 payload를 요구한다. 외전 이미지 비용 상한·재시도·불확실 보류를 변경하지 않는다. 이 migration도 운영 미적용이다.
+
 ## 검증 범위 및 오픈 판정
 
 순수 정책/진단/감시 단위테스트, 실제 SDK의 격리 HTTP 통합테스트, 임베디드 PostgreSQL SQL 계약, 기존 외전 회귀를 수행한다. HTTP fixture는 SQL 엔진을 대체하지 않으며 별도 SQL 계약과 함께 해석한다. 실제 PostgreSQL 독립 연결 경쟁은 PR CI에서 실행한다.

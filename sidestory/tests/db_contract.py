@@ -190,6 +190,11 @@ def run_db_checks(url: str) -> None:
         check("D4c 0003 applies idempotently, main icg DDL unchanged",
               main_ddl(url) == ddl_before)
 
+        diagnostics = next((SIDE / "supabase/migrations").glob("*_side_image_attempt_diagnostics.sql"))
+        db.execute(diagnostics.read_text())
+        check("D4d side attempt diagnostics leaves main DDL/data unchanged",
+              main_ddl(url) == ddl_before and main_data_hash(db) == data_before)
+
         eps = db.execute("select episode_date, script_json from icg_side.main_feed_episode_v1"
                          " order by episode_date").fetchall()
         check("D5 episode view = published only", [r[0] for r in eps]
