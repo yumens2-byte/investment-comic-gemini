@@ -92,6 +92,28 @@ def row(env):
     return env.store.get_episode(SID)
 
 
+@pytest.mark.parametrize("failed_phase", ["page_history", "page_gate_contract"])
+def test_controlled_preflight_stops_before_photo_upload(env, failed_phase):
+    from sidestory.market_talk.publishing import ControlledPublisher
+
+    pub = FakePublisher()
+
+    def fail(*args):
+        raise PublishError("private credential detail")
+
+    pub.recent_receipts = fail if failed_phase == "page_history" else lambda _: []
+    gate_store = SimpleNamespace(
+        require_hardening=fail if failed_phase == "page_gate_contract" else lambda: None
+    )
+    controlled = ControlledPublisher(pub, gate_store, "123", SID, "sidestory")
+    result = run_publish(TUE, deps(env, controlled, live=True))
+    assert result.status == "error"
+    assert failed_phase in result.detail["reason"]
+    assert "private credential" not in result.detail["reason"]
+    assert pub.uploads == [] and pub.posts == []
+    assert row(env)["status"] == "assembled"
+
+
 # ── dry run ──────────────────────────────────────────────────────────────────
 def test_dry_run_without_credentials_changes_nothing(env) -> None:
     res = run_publish(TUE, deps(env))
