@@ -71,7 +71,7 @@ jobs:
     timeout-minutes: 45
     env:
       PYTHONPATH: .
-      FACEBOOK_CONTROL_ENABLED: ${{ vars.FACEBOOK_CONTROL_ENABLED || 'false' }}
+      FACEBOOK_CONTROL_ENABLED: ${{ vars.SIDESTORY_FACEBOOK_CONTROL_ENABLED || 'false' }}
       SUPABASE_SCHEMA: icg_side
       ICG_GENERATION_REVISION: "1"
       # F3: second dollar source (ICE DXY close). "off" = main broad index only.
