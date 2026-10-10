@@ -73,18 +73,18 @@ def main(argv: list[str] | None = None) -> int:
                         help="publish: post to Facebook for real (also needs DRY_RUN=false)")
     args = parser.parse_args(argv)
 
-    if args.stage not in P0_STAGES + P1_STAGES + ("refgen", "inspect", "publish", "verify"):
+    if args.stage not in P0_STAGES + P1_STAGES + ("refgen", "inspect", "publish", "verify", "auto"):
         print(json.dumps({"stage": args.stage, "status": "not_implemented"}))
         return 2
-    if args.stage in P1_STAGES and args.no_persist:
+    if args.stage in P1_STAGES + ("auto",) and args.no_persist:
         print(json.dumps({"stage": args.stage, "status": "usage_error",
                           "error": "--no-persist is not supported for P1 stages"}))
         return 2
 
     settings = load_settings()
-    if args.live and (args.stage != "publish" or settings.dry_run):
+    if args.live and (args.stage not in {"publish", "auto"} or settings.dry_run):
         print(json.dumps({"stage": args.stage, "status": "usage_error",
-                          "error": "--live is only for publish and requires DRY_RUN=false"}))
+                          "error": "--live is only for publish/auto and requires DRY_RUN=false"}))
         return 2
     side_day = date.fromisoformat(args.date) if args.date else datetime.now(KST).date()
 
@@ -114,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
             print("\n# characters_side.yaml refs (after master review):\n" + snippet)
         return 0 if res.status == "ok" else 1
 
-    if args.stage in {"publish", "verify"}:
+    if args.stage in {"publish", "verify", "auto"}:
         from sidestory.app.publish import PublishDeps, run_publish, run_verify
 
         publisher = None
@@ -132,6 +132,14 @@ def main(argv: list[str] | None = None) -> int:
                 publisher = ControlledPublisher(publisher, TalkStore(client), settings.face_page_id,
                                                 side_episode_id(side_day), "sidestory")
         pdeps = PublishDeps(feed=feed, store=store, publisher=publisher, live=args.live)
+        if args.stage == "auto":
+            from sidestory.app.automation import run_auto
+
+            results = run_auto(side_day, _p1_deps("p1", settings, feed, store), pdeps,
+                               force=args.force, retry_hold=args.retry_hold)
+            print(json.dumps({"stage": "auto", "results": [r.as_dict() for r in results]},
+                             ensure_ascii=False, indent=2, default=str))
+            return 0 if results and all(r.ok for r in results) else 1
         res = (run_publish(side_day, pdeps, retry_hold=args.retry_hold)
                if args.stage == "publish" else run_verify(side_day, pdeps))
         print(json.dumps({"stage": args.stage, "results": [res.as_dict()]},

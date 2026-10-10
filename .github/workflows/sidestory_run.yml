@@ -5,8 +5,10 @@ name: "🌐 Sidestory Run (Facebook side canon)"
 #  - SUPABASE_SCHEMA is pinned to icg_side; main schema is read only via views.
 #  - SG-8 (v8.9): image / p1 / inspect stages check each panel picture with Claude vision.
 #  - X / Telegram channel secrets are never injected. FACE_* reach only the publish / verify
-#    stages. A real post needs BOTH the "publish only: post to Facebook for real" input AND the
+#    stages. A real post needs BOTH the "publish / auto: post to Facebook for real" input AND the
 #    repository variable SIDESTORY_PUBLISH_LIVE == 'true' (P2 double lock); otherwise dry run.
+# auto: p1 -> publish -> verify; scheduled live additionally needs
+# SIDESTORY_AUTO_PUBLISH_ENABLED=true. HOLD release stays manual.
 # Schedule: Tue/Thu 10:17 KST (= 01:17 UTC Tue/Thu), after main publish_sns (06:06 KST).
 # The schedule is inert until repository variable SIDESTORY_SCHEDULE_ENABLED == 'true' (P4).
 
@@ -16,11 +18,11 @@ on:
   workflow_dispatch:
     inputs:
       stage:
-        description: "gate | echo (P0) · narrative | image | assembly | inspect | p1 (P1, paid) · refgen (Zero Block REF, paid) · publish | verify (P2, Facebook)"
+        description: "gate | echo (P0) · narrative | image | assembly | inspect | p1 (P1, paid) · refgen (Zero Block REF, paid) · publish | verify (P2, Facebook) · auto (end-to-end)"
         required: true
         default: "gate"
         type: choice
-        options: [gate, echo, narrative, image, assembly, inspect, p1, refgen, publish, verify]
+        options: [gate, echo, narrative, image, assembly, inspect, p1, refgen, publish, verify, auto]
       date:
         description: "Side slot date KST (YYYY-MM-DD). Empty = today KST"
         required: false
@@ -45,7 +47,7 @@ on:
         required: false
         default: "1"
       publish_live:
-        description: "publish only: post to Facebook for real (also needs repository variable SIDESTORY_PUBLISH_LIVE=true). Unchecked = dry run"
+        description: "publish / auto: post to Facebook for real (also needs repository variable SIDESTORY_PUBLISH_LIVE=true). Unchecked = dry run"
         required: false
         default: false
         type: boolean
@@ -94,28 +96,28 @@ jobs:
       # so a slow Ubuntu mirror (observed 12m32s for the 61 MB package) is paid at most once.
       - name: Restore Korean font cache
         id: fontcache
-        if: (inputs.stage == 'assembly' || inputs.stage == 'p1')
+        if: (inputs.stage == 'assembly' || inputs.stage == 'p1' || inputs.stage == 'auto' || github.event_name == 'schedule')
         uses: actions/cache/restore@v4
         with:
           path: ~/.cache/sidestory-fonts
           key: noto-cjk-bold-v1-${{ runner.os }}
 
       - name: Install Korean font (slide composer)
-        if: (inputs.stage == 'assembly' || inputs.stage == 'p1') && steps.fontcache.outputs.cache-hit != 'true'
+        if: (inputs.stage == 'assembly' || inputs.stage == 'p1' || inputs.stage == 'auto' || github.event_name == 'schedule') && steps.fontcache.outputs.cache-hit != 'true'
         run: |
           sudo apt-get install -y fonts-noto-cjk --no-install-recommends -q
           mkdir -p ~/.cache/sidestory-fonts
           cp /usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc ~/.cache/sidestory-fonts/
 
       - name: Save Korean font cache
-        if: (inputs.stage == 'assembly' || inputs.stage == 'p1') && steps.fontcache.outputs.cache-hit != 'true'
+        if: (inputs.stage == 'assembly' || inputs.stage == 'p1' || inputs.stage == 'auto' || github.event_name == 'schedule') && steps.fontcache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/sidestory-fonts
           key: noto-cjk-bold-v1-${{ runner.os }}
 
       - name: Place Korean font
-        if: (inputs.stage == 'assembly' || inputs.stage == 'p1')
+        if: (inputs.stage == 'assembly' || inputs.stage == 'p1' || inputs.stage == 'auto' || github.event_name == 'schedule')
         run: |
           sudo mkdir -p /usr/share/fonts/opentype/noto
           sudo cp -n ~/.cache/sidestory-fonts/NotoSansCJK-Bold.ttc /usr/share/fonts/opentype/noto/
@@ -156,16 +158,16 @@ jobs:
 
       - name: Run sidestory stage
         env:
-          STAGE: ${{ inputs.stage || 'echo' }}
+          STAGE: ${{ inputs.stage || 'auto' }}
           SIDE_DATE: ${{ steps.slot.outputs.date }}
           FORCE: ${{ inputs.force && '--force' || '' }}
           NO_PERSIST: ${{ (github.event_name == 'workflow_dispatch' && !inputs.persist && (inputs.stage == 'gate' || inputs.stage == 'echo')) && '--no-persist' || '' }}
           RETRY_HOLD: ${{ inputs.retry_hold && '--retry-hold' || '' }}
           # P2 double lock: input checkbox AND repository variable, publish stage only.
-          LIVE: ${{ (inputs.stage == 'publish' && inputs.publish_live && vars.SIDESTORY_PUBLISH_LIVE == 'true') && '--live' || '' }}
-          DRY_RUN: ${{ (inputs.stage == 'publish' && inputs.publish_live && vars.SIDESTORY_PUBLISH_LIVE == 'true') && 'false' || 'true' }}
-          FACE_PAGE_ID: ${{ (inputs.stage == 'publish' || inputs.stage == 'verify') && secrets.FACE_PAGE_ID || '' }}
-          FACE_PAGE_TOKEN: ${{ (inputs.stage == 'publish' || inputs.stage == 'verify') && secrets.FACE_PAGE_TOKEN || '' }}
+          LIVE: ${{ (((inputs.stage == 'publish' || inputs.stage == 'auto') && inputs.publish_live || (github.event_name == 'schedule' && vars.SIDESTORY_AUTO_PUBLISH_ENABLED == 'true')) && vars.SIDESTORY_PUBLISH_LIVE == 'true') && '--live' || '' }}
+          DRY_RUN: ${{ (((inputs.stage == 'publish' || inputs.stage == 'auto') && inputs.publish_live || (github.event_name == 'schedule' && vars.SIDESTORY_AUTO_PUBLISH_ENABLED == 'true')) && vars.SIDESTORY_PUBLISH_LIVE == 'true') && 'false' || 'true' }}
+          FACE_PAGE_ID: ${{ (inputs.stage == 'publish' || inputs.stage == 'verify' || inputs.stage == 'auto' || github.event_name == 'schedule') && secrets.FACE_PAGE_ID || '' }}
+          FACE_PAGE_TOKEN: ${{ (inputs.stage == 'publish' || inputs.stage == 'verify' || inputs.stage == 'auto' || github.event_name == 'schedule') && secrets.FACE_PAGE_TOKEN || '' }}
           REF_REVISION: ${{ inputs.ref_revision || '1' }}
           # P1 providers (narrative / image / inspect / p1 stages; SG-8 uses ANTHROPIC_API_KEY)
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -176,7 +178,7 @@ jobs:
           ARGS=(--stage "$STAGE" --date "$SIDE_DATE")
           if [ -n "$FORCE" ]; then ARGS+=("$FORCE"); fi
           if [ -n "$NO_PERSIST" ]; then ARGS+=("$NO_PERSIST"); fi
-          if [ -n "$RETRY_HOLD" ] && { [ "$STAGE" = "p1" ] || [ "$STAGE" = "publish" ]; }; then ARGS+=("$RETRY_HOLD"); fi
+          if [ -n "$RETRY_HOLD" ] && { [ "$STAGE" = "p1" ] || [ "$STAGE" = "publish" ] || [ "$STAGE" = "auto" ]; }; then ARGS+=("$RETRY_HOLD"); fi
           if [ -n "$LIVE" ]; then ARGS+=("$LIVE"); fi
           if [ "$STAGE" = "refgen" ]; then
             if ! printf '%s' "$REF_REVISION" | grep -Eq '^[0-9]{1,3}$'; then
@@ -188,7 +190,7 @@ jobs:
           python -m sidestory "${ARGS[@]}"
 
       - name: Upload side artifacts
-        if: always() && (inputs.stage == 'image' || inputs.stage == 'assembly' || inputs.stage == 'p1' || inputs.stage == 'refgen')
+        if: always() && (inputs.stage == 'image' || inputs.stage == 'assembly' || inputs.stage == 'p1' || inputs.stage == 'refgen' || inputs.stage == 'auto' || github.event_name == 'schedule')
         uses: actions/upload-artifact@v4
         with:
           name: sidestory-${{ steps.slot.outputs.date }}-${{ github.run_id }}

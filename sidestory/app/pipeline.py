@@ -17,7 +17,7 @@ from sidestory.ports.store import SideStore
 # History window for inferring the broad index run start (> weekly cadence, see core/dollar.py).
 DOLLAR_HISTORY_DAYS = 21
 
-STAGES = ("gate", "echo", "narrative", "image", "assembly", "inspect", "p1", "refgen", "publish",
+STAGES = ("gate", "echo", "narrative", "image", "assembly", "inspect", "p1", "refgen", "publish", "auto",
           "verify")
 P0_STAGES = ("gate", "echo")
 P1_STAGES = ("narrative", "image", "assembly", "p1")
