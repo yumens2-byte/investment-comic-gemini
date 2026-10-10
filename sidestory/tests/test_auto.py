@@ -8,8 +8,15 @@ from sidestory.app.p1 import P1Deps
 from sidestory.app.publish import PublishDeps
 from sidestory.ports.publisher import PublishError
 from sidestory.tests.fixtures import FakeFeed, FakeStore, main_row
-from sidestory.tests.p1_fixtures import (FakeComposer, FakeImages, FakeInspector,
-                                       FakeLLM, FakePrompts, make_refs, raw_script)
+from sidestory.tests.p1_fixtures import (
+    FakeComposer,
+    FakeImages,
+    FakeInspector,
+    FakeLLM,
+    FakePrompts,
+    make_refs,
+    raw_script,
+)
 from sidestory.tests.test_p2_publish import FakePublisher
 
 DAY = date(2026, 10, 6)
@@ -92,3 +99,48 @@ def test_verification_failure_retry_only_reads(deps):
     pub.publisher.get_post = original
     assert run_auto(DAY, p, pub)[-1].ok
     assert len(pub.publisher.posts) == 1
+
+
+def test_missing_slide_refuses_upload(deps):
+    from pathlib import Path
+
+    p, pub = deps
+    pub.live = False
+    run_auto(DAY, p, pub)
+    Path(p.store.get_episode(SID)['slides_json'][0]['path']).unlink()
+    pub.live = True
+    assert run_auto(DAY, p, pub)[-1].status == 'error'
+    assert pub.publisher.uploads == []
+
+
+def test_publication_store_failure_reconciles(deps):
+    p, pub = deps
+    original = p.store.insert_publication
+    p.store.insert_publication = lambda _: (_ for _ in ()).throw(RuntimeError('DB unavailable'))
+    assert run_auto(DAY, p, pub)[-1].status == 'error'
+    assert p.store.get_episode(SID)['status'] == 'publishing'
+    p.store.insert_publication = original
+    pub.publisher.found = '123_999'
+    assert run_auto(DAY, p, pub)[-1].ok
+    assert len(pub.publisher.posts) == 1
+
+
+def test_mismatched_store_refused(deps):
+    p, pub = deps
+    pub.store = FakeStore()
+    with pytest.raises(ValueError, match='same feed and store'):
+        run_auto(DAY, p, pub)
+    assert p.llm.calls == [] and pub.publisher.posts == []
+
+
+@pytest.mark.parametrize('argv,dry', [
+    (['--stage', 'auto', '--no-persist'], 'true'),
+    (['--stage', 'auto', '--live'], 'true'),
+])
+def test_auto_cli_invalid_flags(monkeypatch, capsys, argv, dry):
+    from sidestory import __main__ as cli
+
+    monkeypatch.setenv('SUPABASE_SCHEMA', 'icg_side')
+    monkeypatch.setenv('DRY_RUN', dry)
+    assert cli.main(argv) == 2
+    assert 'usage_error' in capsys.readouterr().out

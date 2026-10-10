@@ -110,7 +110,9 @@ await rpc('talk_model_state',['p9','c1','generation','RESERVED']);
 await rpc('talk_model_state',['p9','c1','generation','UNKNOWN']);
 await rejects('uncertain model cannot be completed or refunded', "select icg_side.talk_model_state('p9','c1','generation','COMPLETE')");
 await rejects('model attempt requires durable cost', "select icg_side.talk_model_state('p9','missing','generation','RESERVED')");
-const today = new Date().toISOString().slice(0,10);
+// Match the delivery date contract in KST, including the UTC 15:00 boundary.
+const today = (await query("select (started_at at time zone 'Asia/Seoul')::date::text as day from icg_side.facebook_deliveries where page_id='p5' and business_key=$1",[hash]))[0].day;
+await rejects('wrong slot day cannot claim delivery', 'select icg_side.talk_record_outcome($1,$2,$3,$4,$5,$6,$7)', ['p5','2000-01-01','wrong-day','publish','PUBLISHED','PUBLISHED_VERIFIED',hash]);
 await rejects('cannot claim success without a posted delivery', 'select icg_side.talk_record_outcome($1,$2,$3,$4,$5,$6,$7)', ['p9',today,'run1','publish','PUBLISHED','PUBLISHED_VERIFIED',hash]);
 await rpc('talk_record_outcome',['p5',today,'run2','publish','PUBLISHED','PUBLISHED_VERIFIED',hash]);
 await rpc('talk_record_outcome',['p5',today,'run3','automate','BLOCKED','SOURCE_SESSION_REQUIRED',null]);
