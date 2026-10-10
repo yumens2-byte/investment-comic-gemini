@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from sidestory.market_talk.diagnostics import DeliveryError
+from sidestory.market_talk.diagnostics import DeliveryError, failure_report
 from sidestory.ports.publisher import PublishError
 
 
@@ -19,7 +19,27 @@ class ControlledPublisher:
         )
 
     def check(self):
-        return self.publisher.check()
+        page = self.publisher.check()
+        # Read-only preflight runs before Sidestory uploads any photos. It does
+        # not reserve delivery or replace the atomic gate at send time.
+        self._history()
+        self._gate_call("page_gate_contract", self.store.require_hardening)
+        return page
+
+    def _gate_call(self, phase, fn, *args):
+        try:
+            return fn(*args)
+        except Exception as exc:
+            report = failure_report(exc, phase)
+            code = report["blockers"][0]
+            if code == "UNEXPECTED_FAILURE":
+                code = "PAGE_HISTORY_UNAVAILABLE" if phase == "page_history" else "PAGE_GATE_UNAVAILABLE"
+            # Never expose raw provider/DB messages, URLs, or access tokens.
+            raise DeliveryError(f"{phase}:{code}", phase=phase) from None
+
+    def _history(self):
+        since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+        return self._gate_call("page_history", self.publisher.recent_receipts, since)
 
     def upload_photo(self, path):
         return self.publisher.upload_photo(path)
@@ -32,12 +52,12 @@ class ControlledPublisher:
         return self.publisher.get_post(post_id)
 
     def create_post(self, message, photo_ids):
-        try:
-            since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-            self.store.observe(self.page_id, self.publisher.recent_receipts(since))
-            claim = self.store.begin(self.page_id, self.key, self.track, message, self.expires_at)
-        except Exception:
-            raise DeliveryError("PAGE_GATE_UNAVAILABLE", phase="page_gate") from None
+        receipts = self._history()
+        self._gate_call("page_gate_observe", self.store.observe, self.page_id, receipts)
+        claim = self._gate_call(
+            "page_gate_begin", self.store.begin,
+            self.page_id, self.key, self.track, message, self.expires_at,
+        )
         if claim["status"] == "PUBLISHED":
             return claim["post_id"]
         if claim["status"] != "SENDING":
