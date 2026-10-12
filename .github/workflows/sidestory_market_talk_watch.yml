@@ -7,7 +7,7 @@ on:
         type: string
         default: ''
   schedule:
-    - cron: '15 15 * * 1-5' # KST 00:15 Tue-Sat; inspect the previous closed weekday.
+    - cron: '10 9 * * 1-5' # KST 18:10 weekdays; inspect today's closed slot.
 permissions:
   contents: read
 concurrency:

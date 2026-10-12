@@ -24,6 +24,16 @@ class AutoStore(Store):
             monthly_budget_usd=10,
         )
 
+    def ensure_schedule(self, page, day, due):
+        return dict(
+            slot_date=day.isoformat(),
+            due_at=due.isoformat(),
+            window_end=due.replace(hour=18, minute=0).isoformat(),
+        )
+
+    def preflight(self, page, day):
+        return {"status": "READY", "db_now": NOW.isoformat()}
+
     def policy(self, page):
         return self.options
 
@@ -80,6 +90,7 @@ def execute(store, monkeypatch, verdict=None, changed=False):
         model="fixture",
         input_rate=1,
         output_rate=2,
+        page_check=lambda: {"id": "123"},
         current=lambda *a: ("b" * 64, ("c" if changed else "a") * 64),
     )
 
@@ -113,7 +124,7 @@ def test_changed_snapshot_never_approves(monkeypatch):
 @pytest.mark.parametrize(
     "option,value,code",
     [
-        ("enabled", False, "PAGE_POLICY_DISABLED"),
+        ("enabled", False, "TALK_POLICY_DISABLED"),
         ("daily_budget_usd", 0, "GENERATION_BUDGET_REQUIRED"),
         ("monthly_budget_usd", 0, "GENERATION_BUDGET_REQUIRED"),
     ],

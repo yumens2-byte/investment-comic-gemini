@@ -14,7 +14,6 @@ from sidestory.market_talk.monitoring import watch
 from sidestory.market_talk.policy import (
     KST,
     SOURCE_VIEW,
-    scheduled_slot,
     source_hash,
     validate_source,
 )
@@ -25,7 +24,7 @@ from sidestory.market_talk.service import (
     verified_receipt,
     verify_publication,
 )
-from sidestory.market_talk.store import TalkStore
+from sidestory.market_talk.store_v4 import TalkStoreV4 as TalkStore
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -73,7 +72,7 @@ def live_publisher(page):
 
 
 def publish_live(client, store, page, revision, now):
-    from sidestory.market_talk.publishing import ControlledPublisher
+    from sidestory.market_talk.publishing import TalkPublisher
 
     row = phase_call("queue", store.item, revision)
     if row["page_id"] != page:
@@ -88,7 +87,7 @@ def publish_live(client, store, page, revision, now):
         )
     else:
         ch, sh = phase_call("source", current, client, draft.context)
-        pub = ControlledPublisher(
+        pub = TalkPublisher(
             live_publisher(page),
             store,
             page,
@@ -110,13 +109,11 @@ def readiness(store, page):
     blockers = []
     if policy is None:
         blockers.append("PAGE_POLICY_REQUIRED")
-    elif not policy["enabled"] or not (
-        policy["exclusive_managed"] or policy.get("coexistence_allowed", False)
-    ):
+    elif not policy["enabled"]:
         blockers.append("PAGE_POLICY_DISABLED_OR_UNMANAGED")
     if not os.environ.get("MARKET_TALK_CHARACTER_IDS", "").strip():
         blockers.append("CHARACTER_ALLOWLIST_REQUIRED")
-    for name in ("FACEBOOK_CONTROL_ENABLED", "MARKET_TALK_LIVE"):
+    for name in ("MARKET_TALK_LIVE",):
         if not flag(name):
             blockers.append(name + "_DISABLED")
     return {
@@ -229,7 +226,17 @@ def main(argv=None):
             1
             if report.get("errors")
             or report.get("status")
-            in {"BLOCKED", "POSTED_UNVERIFIED", "PUBLISHED_REPORT_PENDING", "WATCH_ALERT"}
+            in {
+                "BLOCKED",
+                "POSTED_UNVERIFIED",
+                "PUBLISHED_REPORT_PENDING",
+                "WATCH_ALERT",
+                "UNKNOWN",
+                "CHANNEL_HOLD",
+                "POLICY_NOT_EFFECTIVE",
+                "LEGACY_SLOT",
+                "SLOT_REQUIRED",
+            }
             else 0
         )
 
@@ -259,11 +266,7 @@ def main(argv=None):
 
             if not flag("MARKET_TALK_AUTO_ENABLED"):
                 return finish({"status": "BLOCKED", "blockers": ["AUTOMATION_DISABLED"]})
-            if args.live and (
-                flag("DRY_RUN", "true")
-                or not flag("MARKET_TALK_LIVE")
-                or not flag("FACEBOOK_CONTROL_ENABLED")
-            ):
+            if args.live and (flag("DRY_RUN", "true") or not flag("MARKET_TALK_LIVE")):
                 return finish({"status": "BLOCKED", "blockers": ["LIVE_GATES_DISABLED"]})
             phase = "automation"
             report = automatic_draft(
@@ -282,9 +285,13 @@ def main(argv=None):
                 current=current,
                 scheduled=args.scheduled,
                 slot_date=args.slot_date,
+                page_check=lambda: live_publisher(page).check(),
             )
             if report["status"] == "AUTO_APPROVED" and args.live:
-                report = publish_live(client, store, page, report["revision"], now)
+                report = {
+                    **report,
+                    **publish_live(client, store, page, report["revision"], utcnow()),
+                }
         elif args.stage == "watch":
             phase = "watch"
             report = watch(store, page, now, args.slot_date)
@@ -400,7 +407,9 @@ def main(argv=None):
             report = Draft(context=context, text=copy, due_at=now).model_dump(mode="json")
         else:
             if args.stage == "publish" and args.scheduled:
-                target = scheduled_slot(now, args.slot_date)
+                from sidestory.market_talk.scheduling import ensure_slot
+
+                target = ensure_slot(store, page, now, args.slot_date)
                 if target.status(now) != "READY":
                     return finish(
                         {
@@ -416,11 +425,7 @@ def main(argv=None):
                 if not revision:
                     return finish({"status": "SKIPPED_NO_APPROVED_CONTENT", "allowed": False})
             if args.stage == "publish" and args.live:
-                if (
-                    flag("DRY_RUN", "true")
-                    or not flag("MARKET_TALK_LIVE")
-                    or not flag("FACEBOOK_CONTROL_ENABLED")
-                ):
+                if flag("DRY_RUN", "true") or not flag("MARKET_TALK_LIVE"):
                     raise ValueError("live gates disabled")
                 return finish(publish_live(client, store, page, revision, now))
             if args.input:

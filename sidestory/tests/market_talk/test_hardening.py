@@ -8,7 +8,6 @@ import pytest
 from postgrest.exceptions import APIError
 
 from sidestory.market_talk import __main__ as cli
-from sidestory.market_talk.automation import automatic_draft
 from sidestory.market_talk.content import digest
 from sidestory.market_talk.diagnostics import PhaseFailure, failure_report, phase_call
 from sidestory.market_talk.monitoring import completed_day, watch
@@ -44,23 +43,6 @@ def test_scheduled_slot_boundaries(clock, day, status):
     now = datetime.fromisoformat(clock)
     target = scheduled_slot(now)
     assert target.day.isoformat() == day and target.status(now) == status
-    store = SimpleNamespace()  # Any policy/model/DB call would fail.
-    if status != "READY":
-        report = automatic_draft(
-            None,
-            store,
-            "123",
-            canon_path=None,
-            allowed=set(),
-            now=now,
-            source_commit="",
-            model="",
-            input_rate=0,
-            output_rate=0,
-            current=None,
-            scheduled=True,
-        )
-        assert report["status"] == status and report["slot_date"] == day
 
 
 def test_explicit_old_slot_and_naive_clock_rejected():
@@ -176,7 +158,7 @@ def test_posted_read_failure_then_read_only_verification_never_reposts():
 )
 def test_watcher_is_read_only(deliveries, outcomes, expected):
     store = SimpleNamespace(day_deliveries=lambda *a: deliveries, slot_outcomes=lambda *a: outcomes)
-    report = watch(store, "123", NOW + timedelta(days=1))
+    report = watch(store, "123", NOW + timedelta(days=1), NOW.date().isoformat())
     assert report["status"] == ("WATCH_ALERT" if expected else "WATCH_OK")
     assert report["blockers"] == ([expected] if expected else []) and not report["allowed"]
     assert completed_day(datetime(2026, 10, 12, 0, 15, tzinfo=KST)).isoformat() == "2026-10-09"
@@ -199,10 +181,15 @@ def test_scheduled_publish_stops_before_queue_or_provider(monkeypatch, capsys):
     monkeypatch.setenv("FACE_PAGE_ID", "123")
     monkeypatch.setattr(cli, "connection", lambda: None)
     store = Store()
+    store.ensure_schedule = lambda page, day, due: dict(
+        slot_date=day.isoformat(),
+        due_at="2026-10-09T14:00:00+09:00",
+        window_end="2026-10-09T18:00:00+09:00",
+    )
     monkeypatch.setattr(cli, "TalkStore", lambda _: store)
     monkeypatch.setattr(cli, "utcnow", lambda: datetime(2026, 10, 9, 1, 41, tzinfo=KST))
     assert cli.main(["--stage", "publish", "--scheduled", "--live"]) == 0
-    assert store.outcomes[0][1] == "2026-10-08" and store.writes == []
+    assert store.outcomes[0][1] == "2026-10-09" and store.writes == []
     assert "SKIPPED_OUTSIDE_WINDOW" in capsys.readouterr().out
 
 

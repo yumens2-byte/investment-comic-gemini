@@ -11,8 +11,6 @@ from sidestory.market_talk.policy import (
     KST,
     SOURCE_VIEW,
     PolicyError,
-    scheduled_slot,
-    slot,
     validate_source,
 )
 from sidestory.market_talk.service import approve, inspect
@@ -20,7 +18,7 @@ from sidestory.market_talk.service import approve, inspect
 ACTOR = "market-talk:auto-v1"
 
 
-def prepare_context(client, canon_path, allowed, now, source_commit):
+def prepare_context(client, canon_path, allowed, now, source_commit, target=None):
     day = now.astimezone(KST).date()
     rows = (
         client.schema("icg_side")
@@ -56,9 +54,9 @@ def prepare_context(client, canon_path, allowed, now, source_commit):
         observed_at=observed,
         market_session="DB 조회 시각 · 출처·시장세션은 내부 payload 계약 · 원본 실시간 시세 재검증 아님",
     )
-    expires = datetime.combine(day, time(23, 59), KST)
+    expires = target.end if target else datetime.combine(day, time(23, 59), KST)
     context = Context(
-        policy_version="market-talk-3",
+        policy_version="market-talk-4" if target else "market-talk-3",
         **fields_canon,
         topic="시장 기록을 보며 나누는 캐릭터 잡담",
         claim_key="auto-snapshot-" + source_day.isoformat(),
@@ -70,7 +68,7 @@ def prepare_context(client, canon_path, allowed, now, source_commit):
         provenance_reviewer=ACTOR,
         provenance_note="저장된 스냅샷의 품질·원본 관측시점·단위·세션을 검사. 외부 시세 재검증이나 사람 검수 아님.",
     )
-    return context, datetime.combine(day, time(18, 30), KST)
+    return context, target.due if target else datetime.combine(day, time(18, 30), KST)
 
 
 def automatic_draft(
@@ -88,25 +86,24 @@ def automatic_draft(
     current,
     scheduled=False,
     slot_date="",
+    page_check=None,
 ):
-    target = scheduled_slot(now, slot_date) if scheduled else slot(now, slot_date)
+    from sidestory.market_talk.scheduling import ensure_slot
+
+    if now.astimezone(KST).weekday() >= 5:
+        return {"status": "SKIPPED_WEEKEND", "allowed": False, "paid_call_count": 0}
+    identity_checked = False
+    paid_call_count = 0
+    target = ensure_slot(store, page, now, slot_date)
     day = target.day
-    if scheduled and target.status(now) != "READY":
-        return {
-            "status": target.status(now),
-            "allowed": False,
-            "slot_date": day.isoformat(),
-            "automatic_retry": False,
-        }
-    if day != now.astimezone(KST).date():
-        raise PolicyError("SLOT_DAY_MISMATCH", "slot")
-    if day.weekday() >= 5:
-        return {"status": "SKIPPED_WEEKEND", "allowed": False}
+    gate = phase_call("talk_preflight", store.preflight, page, day)
+    if gate["status"] != "READY":
+        return {**gate, "slot_date": day.isoformat(), "allowed": False, "paid_call_count": 0}
+    # All temporal decisions use the DB clock captured by the readiness RPC.
+    now = datetime.fromisoformat(gate["db_now"].replace("Z", "+00:00"))
     policy = store.policy(page)
-    if not policy["enabled"] or not (
-        policy["exclusive_managed"] or policy.get("coexistence_allowed", False)
-    ):
-        return {"status": "BLOCKED", "blockers": ["PAGE_POLICY_DISABLED"]}
+    if not policy["enabled"]:
+        return {"status": "BLOCKED", "blockers": ["TALK_POLICY_DISABLED"]}
     if not model or any(
         Decimal(str(r)) <= 0 or not Decimal(str(r)).is_finite() for r in (input_rate, output_rate)
     ):
@@ -125,7 +122,7 @@ def automatic_draft(
             raise ValueError("automatic stored revision mismatch")
     else:
         context, due = phase_call(
-            "source", prepare_context, client, canon_path, allowed, now, source_commit
+            "source", prepare_context, client, canon_path, allowed, now, source_commit, target
         )
         key = digest(
             [
@@ -136,6 +133,13 @@ def automatic_draft(
         )
         if any(r.get("semantic_key") == key for r in store.recent(page)):
             return {"status": "SKIPPED_DUPLICATE_SOURCE", "allowed": False}
+        if page_check is None:
+            raise PolicyError("PAGE_IDENTITY_CHECK_REQUIRED", "page_identity")
+        phase_call("page_identity", page_check)
+        identity_checked = True
+        gate = phase_call("talk_preflight", store.preflight, page, day)
+        if gate["status"] != "READY":
+            return {**gate, "slot_date": day.isoformat(), "allowed": False}
         copy = phase_call(
             "generation",
             generate,
@@ -147,6 +151,7 @@ def automatic_draft(
             output_rate=output_rate,
             request_key=digest(["auto-generate-v1", day.isoformat()]),
         )
+        paid_call_count += 1
         draft = Draft(context=context, text=copy, due_at=due)
         ch, sh = phase_call("source", current, client, context)
         report = inspect(draft, store, page, now=now, canon_hash=ch, snapshot_hash=sh)
@@ -159,6 +164,14 @@ def automatic_draft(
     if report["errors"]:
         return {"status": "SKIPPED_QUALITY", "errors": report["errors"], "allowed": False}
     if row["status"] == "DRAFT":
+        # Existing drafts can still incur review cost; check identity before that call too.
+        if page_check is None:
+            raise PolicyError("PAGE_IDENTITY_CHECK_REQUIRED", "page_identity")
+        if not identity_checked:
+            phase_call("page_identity", page_check)
+        gate = phase_call("talk_preflight", store.preflight, page, day)
+        if gate["status"] != "READY":
+            return {**gate, "slot_date": day.isoformat(), "allowed": False}
         verdict = phase_call(
             "review",
             review,
@@ -169,6 +182,7 @@ def automatic_draft(
             input_rate=input_rate,
             output_rate=output_rate,
         )
+        paid_call_count += 1
         if not verdict.accepted:
             store.rpc(
                 "talk_hold",
@@ -188,4 +202,14 @@ def automatic_draft(
             canon_hash=ch,
             snapshot_hash=sh,
         )
-    return {"status": "AUTO_APPROVED", "revision": draft.revision, "reviewer": ACTOR}
+    return {
+        "status": "AUTO_APPROVED",
+        "revision": draft.revision,
+        "reviewer": ACTOR,
+        "slot_date": day.isoformat(),
+        "due_at": target.due.isoformat(),
+        "actual_started_at": now.isoformat(),
+        "lateness_seconds": max(0, int((now - target.due).total_seconds())),
+        "source_date": draft.context.snapshot_date,
+        "paid_call_count": paid_call_count,
+    }

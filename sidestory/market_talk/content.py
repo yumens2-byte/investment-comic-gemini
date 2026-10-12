@@ -63,7 +63,9 @@ class Context(Strict):
     expires_at: AwareDatetime
     provenance_reviewer: str = Field(min_length=1)
     provenance_note: str = Field(min_length=1)
-    policy_version: Literal["market-talk-1", "market-talk-2", "market-talk-3"] = POLICY_VERSION
+    policy_version: Literal["market-talk-1", "market-talk-2", "market-talk-3", "market-talk-4"] = (
+        POLICY_VERSION
+    )
 
     @model_validator(mode="after")
     def times(self):
@@ -102,7 +104,7 @@ class Draft(Strict):
 
     @property
     def body(self):
-        if self.context.policy_version in {"market-talk-2", "market-talk-3"}:
+        if self.context.policy_version in {"market-talk-2", "market-talk-3", "market-talk-4"}:
             return (
                 f"{self.text.commentary}\n\n{self.context.character_name} : “{self.text.dialogue}”"
             )

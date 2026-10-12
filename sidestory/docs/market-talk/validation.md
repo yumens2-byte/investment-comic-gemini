@@ -1,5 +1,10 @@
 # Market Talk 개발·검증 결과
 
+## 2026-10-13 개발 변경 안내
+
+Market Talk 전용 DB 제어·오후 무작위 스케줄 v4를 개발했다. 아래 내용은 이전 v2/v3 운영·검증 기록이다. 새 개발 계약은 [상세설계](db-only-random-schedule-20261012.md)와 [v4 운영·이행 가이드](db-only-v4-operations.md)를 따른다. 개발 브랜치 변경이며 main 병합·운영 DB 적용·실발행은 별도 완료 조건이다.
+
+
 작성일: 2026-10-07 KST. 대상: investment-comic-gemini. 운영 배포/DB 적용/실제 Facebook 게시 없음.
 
 ## 검증한 기준

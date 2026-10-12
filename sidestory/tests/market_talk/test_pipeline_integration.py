@@ -5,6 +5,7 @@ against PostgreSQL; no external credentials, provider charge or real publication
 """
 
 import json
+from datetime import timedelta
 from types import SimpleNamespace
 
 import anthropic
@@ -17,7 +18,9 @@ from supabase import ClientOptions, create_client
 from sidestory.adapters.facebook.graph import FacebookPagePublisher
 from sidestory.market_talk import __main__ as cli
 from sidestory.tests.market_talk.test_automation import snapshot
-from sidestory.tests.market_talk.test_content_and_delivery import NOW
+from sidestory.tests.market_talk.test_content_and_delivery import NOW as OLD_NOW
+
+NOW = OLD_NOW - timedelta(hours=2)
 
 
 @pytest.mark.parametrize(
@@ -36,6 +39,9 @@ def test_automatic_pipeline_and_replay(monkeypatch, tmp_path, scenario, expected
     state = dict(rows=[], costs=[], models=[], events=[], posts=[], delivery=None)
     db_requests, model_requests = [], []
     row = snapshot()
+    row["created_at"] = NOW.isoformat()
+    for meta in row["data_quality"]["source_status"].values():
+        meta["observed_at"] = NOW.isoformat()
     if scenario == "missing_source":
         row["data_quality"]["source_status"] = {}
 
@@ -46,8 +52,26 @@ def test_automatic_pipeline_and_replay(monkeypatch, tmp_path, scenario, expected
         ) == "icg_side"
         endpoint = request.url.path.rsplit("/", 1)[-1]
         data = json.loads(request.content) if request.content else {}
-        if endpoint == "talk_contract_version":
-            return httpx.Response(200, json=3)
+        if endpoint == "talk_contract_version_v4":
+            return httpx.Response(200, json=4)
+        if endpoint == "talk_schedule_ensure":
+            return httpx.Response(
+                200,
+                json=dict(
+                    slot_date="2026-10-06",
+                    due_at=NOW.isoformat(),
+                    window_end=(NOW + timedelta(hours=1)).isoformat(),
+                ),
+            )
+        if endpoint == "talk_preflight_v4":
+            status = "READY"
+            if state["delivery"]:
+                status = (
+                    "ALREADY_PUBLISHED" if state["delivery"]["state"] == "PUBLISHED" else "UNKNOWN"
+                )
+            return httpx.Response(200, json=dict(status=status, db_now=NOW.isoformat()))
+        if endpoint == "talk_policy":
+            return httpx.Response(200, json=[dict(enabled=True, day_limit=1, week_limit=5)])
         if endpoint == "market_talk_source_v1":
             return httpx.Response(200, json=[row])
         if endpoint == "facebook_page_policy":
@@ -69,7 +93,7 @@ def test_automatic_pipeline_and_replay(monkeypatch, tmp_path, scenario, expected
             if request.url.params.get("select") == "revision,semantic_key,body_hash,creative":
                 rows = [dict(r) for r in rows]
             return httpx.Response(200, json=rows)
-        if endpoint == "talk_cost_reserve":
+        if endpoint == "talk_cost_reserve_v4":
             assert data["p_key"] not in state["costs"]
             state["costs"].append(data["p_key"])
         elif endpoint == "talk_model_state":
@@ -77,18 +101,18 @@ def test_automatic_pipeline_and_replay(monkeypatch, tmp_path, scenario, expected
         elif endpoint == "talk_approve":
             state["rows"][0]["status"] = "APPROVED"
             return httpx.Response(200, json=dict(status="APPROVED"))
-        elif endpoint == "talk_hold":
+        elif endpoint == "talk_hold_v4":
             state["rows"][0]["status"] = "CONTENT_HOLD"
         elif endpoint == "facebook_observe":
             assert data["p_posts"] == []
-        elif endpoint == "facebook_begin":
+        elif endpoint == "talk_begin_v4":
             if state["delivery"] is not None:
                 return httpx.Response(200, json=dict(status="UNKNOWN"))
             state["delivery"] = dict(
                 state="SENDING", body_hash=data["p_body_hash"], started_at=NOW.isoformat()
             )
             return httpx.Response(200, json=dict(status="SENDING", token="claim"))
-        elif endpoint == "facebook_finish":
+        elif endpoint == "talk_finish_v4":
             if scenario == "finish_failure":
                 return httpx.Response(
                     403, json=dict(code="42501", message="secret-token", details="", hint="")
@@ -98,7 +122,7 @@ def test_automatic_pipeline_and_replay(monkeypatch, tmp_path, scenario, expected
                 state["rows"][0]["status"] = "PUBLISHED"
         elif endpoint == "facebook_deliveries":
             return httpx.Response(200, json=[state["delivery"]])
-        elif endpoint == "talk_record_outcome":
+        elif endpoint == "talk_record_outcome_v4":
             if scenario == "outcome_failure":
                 return httpx.Response(
                     403, json=dict(code="42501", message="secret-token", details="", hint="")
@@ -157,7 +181,7 @@ def test_automatic_pipeline_and_replay(monkeypatch, tmp_path, scenario, expected
     class GraphSession:
         def get(self, url, **kw):
             if url.endswith("/123/feed"):
-                data = dict(data=[])
+                pytest.fail("page feed list must never be read")
             elif url.endswith("/123"):
                 data = dict(id="123")
             else:
