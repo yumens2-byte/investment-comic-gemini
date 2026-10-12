@@ -2,7 +2,7 @@
 작성: 2026-10-13 KST
 기준 main: 33f22a51c35a10ed53a6872270e20c99a35a8b53
 개발 브랜치: feat/market-talk-db-random-20261012
-상태: 개발·로컬 검증 완료, 원격 CI 확인 및 운영 적용은 별도.
+상태: 개발·로컬 검증·원격 CI 완료, 운영 적용 전.
 
 ## 구현 결과
 - 발행 전 Facebook 전체 게시 목록 조회·관측 호출을 Market Talk 정상 경로에서 제거.
@@ -37,7 +37,7 @@ feed 조회가 항상 실패하는 fake에서도 talk POST/개별검증 성공; 
 watcher는18시 이후 당일 슬롯의 NO_RUN/미발행/미검증/미확정을 검사.
 
 ## 운영 전 남은 작업
-원격 CI의 실제 PostgreSQL 동시성 검증, main 병합, 운영 additive migration, talk_policy 활성화·적용일 확인,
+main 병합, 운영 additive migration, talk_policy 활성화·적용일 확인,
 기존 모델/단가/예산/허용 캐릭터 및 스케줄/live/watch 변수 확인, 실 계정1건 베타와 DB/게시물 대조.
 현재 운영DB/변수/실제Facebook 게시는 변경하지 않았다. 기존 당일18:30슬롯/원고를 강제로 변경하거나 감사 원장을 삭제하지 않는다.
 운영 절차는 db-only-v4-operations.md, 상세설계는 db-only-random-schedule-20261012.md 참고.
@@ -46,3 +46,12 @@ watcher는18시 이후 당일 슬롯의 NO_RUN/미발행/미검증/미확정을 
 ## 최종 통합 재검증
 
 로컬 SOCKS 의존성 보완 후 tests/ 및 sidestory/tests/ 통합 실행: **2130 passed, 90 warnings, 0 failed, 0 skipped** (Python3.12). 경고는 기존 PostgREST SDK timeout/verify deprecation이며 운영 오류가 아니다. GitHub Python3.11 CI는 별도 확인한다.
+
+## 원격 CI 최종 결과
+
+검증 소스 커밋: 2bd5c082d3c13c5350fdc3c6aba4555f7e4ba5e0 (PR #119).
+- [Market Talk offline contracts](https://github.com/yumens2-byte/investment-comic-gemini/actions/runs/38311091707): success.
+- [본편 CI](https://github.com/yumens2-byte/investment-comic-gemini/actions/runs/38311091712): success.
+- [Sidestory CI](https://github.com/yumens2-byte/investment-comic-gemini/actions/runs/38311091658): success.
+실제 PostgreSQL16 독립 연결3건 통과: 일정 경쟁 시1개 목표확정, 서로 다른 revision 경쟁 시1개 SENDING, Talk 실패 시 Sidestory 정책·원장 보존.
+이는 운영 DB 및 Facebook 실발행 테스트가 아닌 격리 CI 검증이다. 아래 또는 위의 로컬 실행 제한 기록은 당시 로컬 환경에만 해당하며, 실제 다중 연결 검증은 위 CI에서 완료했다.
