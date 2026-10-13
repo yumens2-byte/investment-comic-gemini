@@ -31,7 +31,8 @@ on:
         type: boolean
         default: false
   schedule:
-    - cron: '30 9 * * 1-5' # KST 18:30 weekdays. No catch-up publishing.
+    - cron: '*/10 4-8 * * 1-5' # KST 13:00-17:50; persisted random due time.
+    - cron: '0 9 * * 1-5' # KST 18:00 cutoff check; no new publishing.
 permissions:
   contents: read
 concurrency:
@@ -46,7 +47,6 @@ jobs:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
       FACE_PAGE_ID: ${{ secrets.FACE_PAGE_ID }}
-      FACEBOOK_CONTROL_ENABLED: ${{ vars.FACEBOOK_CONTROL_ENABLED || 'false' }}
       MARKET_TALK_LIVE: ${{ vars.MARKET_TALK_LIVE || 'false' }}
       MARKET_TALK_CHARACTER_IDS: ${{ vars.MARKET_TALK_CHARACTER_IDS }}
       MARKET_TALK_AUTO_ENABLED: ${{ vars.MARKET_TALK_AUTO_ENABLED || 'false' }}

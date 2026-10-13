@@ -33,7 +33,11 @@ class ControlledPublisher:
             report = failure_report(exc, phase)
             code = report["blockers"][0]
             if code == "UNEXPECTED_FAILURE":
-                code = "PAGE_HISTORY_UNAVAILABLE" if phase == "page_history" else "PAGE_GATE_UNAVAILABLE"
+                code = (
+                    "PAGE_HISTORY_UNAVAILABLE"
+                    if phase == "page_history"
+                    else "PAGE_GATE_UNAVAILABLE"
+                )
             # Never expose raw provider/DB messages, URLs, or access tokens.
             raise DeliveryError(f"{phase}:{code}", phase=phase) from None
 
@@ -55,8 +59,13 @@ class ControlledPublisher:
         receipts = self._history()
         self._gate_call("page_gate_observe", self.store.observe, self.page_id, receipts)
         claim = self._gate_call(
-            "page_gate_begin", self.store.begin,
-            self.page_id, self.key, self.track, message, self.expires_at,
+            "page_gate_begin",
+            self.store.begin,
+            self.page_id,
+            self.key,
+            self.track,
+            message,
+            self.expires_at,
         )
         if claim["status"] == "PUBLISHED":
             return claim["post_id"]
@@ -83,6 +92,79 @@ class ControlledPublisher:
         except PublishError as exc:
             state = "UNKNOWN" if exc.ambiguous else "REJECTED"
             # If this fails, the durable SENDING reservation still blocks the entire Page.
+            try:
+                self.store.finish(self.page_id, self.key, token, state, reason=state)
+            except Exception:
+                raise DeliveryError("DELIVERY_PERSISTENCE_FAILED", ambiguous=True) from None
+            raise DeliveryError(
+                "META_RESULT_UNKNOWN" if exc.ambiguous else "META_REQUEST_REJECTED",
+                ambiguous=exc.ambiguous,
+            ) from None
+        except Exception:
+            try:
+                self.store.finish(
+                    self.page_id, self.key, token, "UNKNOWN", reason="unexpected_provider_error"
+                )
+            finally:
+                raise DeliveryError("META_RESULT_UNKNOWN", ambiguous=True) from None
+        if not post_id:
+            self.store.finish(self.page_id, self.key, token, "UNKNOWN", reason="missing_post_id")
+            raise DeliveryError("META_RECEIPT_MISSING", ambiguous=True)
+        try:
+            self.store.finish(self.page_id, self.key, token, "PUBLISHED", post_id=str(post_id))
+        except Exception:
+            raise DeliveryError("DELIVERY_PERSISTENCE_FAILED", ambiguous=True) from None
+        return str(post_id)
+
+
+class TalkPublisher(ControlledPublisher):
+    """Talk-only DB reservation; never reads page-wide Facebook history."""
+
+    def check(self):
+        self._gate_call("db_contract", self.store.require_hardening)
+        return self.publisher.check()
+
+    def create_post(self, message, photo_ids):
+        claim = self._gate_call(
+            "page_gate_begin",
+            self.store.begin,
+            self.page_id,
+            self.key,
+            self.track,
+            message,
+            self.expires_at,
+        )
+        if claim["status"] == "PUBLISHED":
+            return claim["post_id"]
+        if claim["status"] != "SENDING":
+            code = (
+                claim["status"]
+                if claim["status"]
+                in {
+                    "UNKNOWN",
+                    "WAITING_SLOT",
+                    "MISSED_WINDOW",
+                    "ALREADY_PUBLISHED",
+                    "POLICY_NOT_EFFECTIVE",
+                    "SLOT_REQUIRED",
+                    "LEGACY_SLOT",
+                    "CHANNEL_HOLD",
+                    "OBSERVATION_REQUIRED",
+                    "EXPIRED",
+                    "PAGE_LIMIT",
+                    "TALK_LIMIT",
+                    "REJECTED",
+                    "APPROVAL_OR_TIME_REQUIRED",
+                }
+                else "UNEXPECTED_GATE_RESULT"
+            )
+            raise DeliveryError(code, ambiguous=claim["status"] == "UNKNOWN", phase="page_gate")
+        token = claim["token"]
+        try:
+            post_id = self.publisher.create_post(message, photo_ids)
+        except PublishError as exc:
+            state = "UNKNOWN" if exc.ambiguous else "REJECTED"
+            # If this fails, the durable SENDING reservation still blocks the Talk track.
             try:
                 self.store.finish(self.page_id, self.key, token, state, reason=state)
             except Exception:

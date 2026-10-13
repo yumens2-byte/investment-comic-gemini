@@ -3,11 +3,12 @@
 from datetime import date, datetime, time, timedelta
 
 from sidestory.market_talk.policy import KST, slot
+from sidestory.market_talk.scheduling import saved_slot
 
 
 def completed_day(now):
     day = now.astimezone(KST).date()
-    if now < datetime.combine(day, time(23, 59), KST):
+    if now < datetime.combine(day, time(18), KST):
         day -= timedelta(days=1)
     while day.weekday() >= 5:
         day -= timedelta(days=1)
@@ -16,9 +17,22 @@ def completed_day(now):
 
 def watch(store, page, now, requested_day=""):
     day = date.fromisoformat(requested_day) if requested_day else completed_day(now)
-    target = slot(now, day.isoformat())
     if day.weekday() >= 5:
         return {"status": "SKIPPED_WEEKEND", "slot_date": day.isoformat(), "allowed": False}
+    target = slot(now, day.isoformat())
+    # Legacy readers keep their historical deadline; v4 readers use saved schedules.
+    if hasattr(store, "get_slot"):
+        row = store.get_slot(page, day.isoformat())
+        if row is None:
+            pending = now < datetime.combine(day, time(18), KST)
+            return {
+                "status": "WATCH_PENDING" if pending else "WATCH_ALERT",
+                "slot_date": day.isoformat(),
+                "allowed": False,
+                "automatic_retry": False,
+                "blockers": [] if pending else ["NO_RUN"],
+            }
+        target = saved_slot(row)
     if now < target.end:
         return {"status": "WATCH_PENDING", "slot_date": day.isoformat(), "allowed": False}
     start = datetime.combine(day, time.min, KST)

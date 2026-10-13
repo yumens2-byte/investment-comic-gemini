@@ -163,7 +163,7 @@ def test_empty_inspect_reads_policy_without_write_or_provider(tmp_path, monkeypa
     assert "PAGE_POLICY_REQUIRED" in report["blockers"]
     assert "CHARACTER_ALLOWLIST_REQUIRED" in report["blockers"]
     assert len(requests) == 1 and requests[0].method == "GET"
-    assert requests[0].url.path == "/rest/v1/facebook_page_policy"
+    assert requests[0].url.path == "/rest/v1/talk_policy"
     assert requests[0].url.params["page_id"] == "eq.123"
     assert requests[0].headers["Accept-Profile"] == "icg_side"
     http.close()

@@ -20,7 +20,6 @@ jobs:
       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
       FACE_PAGE_ID: ${{ secrets.FACE_PAGE_ID }}
       MARKET_TALK_CHARACTER_IDS: ${{ vars.MARKET_TALK_CHARACTER_IDS }}
-      FACEBOOK_CONTROL_ENABLED: ${{ vars.FACEBOOK_CONTROL_ENABLED || 'false' }}
       MARKET_TALK_LIVE: ${{ vars.MARKET_TALK_LIVE || 'false' }}
       DRY_RUN: 'true'
     steps:
@@ -39,14 +38,14 @@ jobs:
           from sidestory.market_talk.content import utcnow
           from sidestory.market_talk.diagnostics import failure_report, phase_call
           from sidestory.market_talk.policy import SOURCE_VIEW, validate_source
-          from sidestory.market_talk.store import TalkStore
+          from sidestory.market_talk.store_v4 import TalkStoreV4
 
           report = {'status': 'BLOCKED', 'mode': 'read_only', 'launch_ready': False,
                     'database_writes': 0, 'paid_calls': 0, 'publishes': 0,
                     'unverified': ['meta_permissions', 'reviewed_live_content', 'facebook_receipt', 'watcher']}
           try:
               client = phase_call('connection', connection)
-              store = TalkStore(client)
+              store = TalkStoreV4(client)
               phase_call('db_contract', store.require_hardening)
               rows = phase_call('source', lambda: client.schema('icg_side').table(SOURCE_VIEW).select('*').order('snapshot_date', desc=True).limit(1).execute().data)
               if len(rows) != 1:
@@ -54,9 +53,9 @@ jobs:
               phase_call('source', validate_source, rows[0], utcnow())
               report['source_date'] = rows[0]['snapshot_date']
               report['source_status'] = 'PASS'
-              report['contract_version'] = 3
+              report['contract_version'] = 4
               report['configuration'] = phase_call('configuration', readiness, store, os.environ.get('FACE_PAGE_ID', ''))
-              report['status'] = 'PREPARED'
+              report['status'] = 'PREPARED' if not report['configuration']['blockers'] else 'BLOCKED'
           except Exception as exc:
               report.update(failure_report(exc, 'release_probe'))
           body = json.dumps(report, ensure_ascii=False, sort_keys=True, allow_nan=False)
@@ -66,7 +65,7 @@ jobs:
           print('MARKET_TALK_RELEASE_EVIDENCE=' + body)
           raise SystemExit(0 if report['status'] == 'PREPARED' else 1)
           PY
-      - name: Verify Page credential and bounded feed read (GET only)
+      - name: Verify configured Page identity (GET only; no feed listing)
         env:
           FACE_PAGE_TOKEN: ${{ secrets.FACE_PAGE_TOKEN }}
         run: |
@@ -74,7 +73,6 @@ jobs:
           import json
           import os
           import re
-          from datetime import timedelta
           from pathlib import Path
           from sidestory.adapters.facebook.graph import FacebookPagePublisher
           from sidestory.market_talk.content import utcnow
@@ -89,19 +87,18 @@ jobs:
                   raise ValueError('Page credential configuration missing')
               publisher = FacebookPagePublisher(os.environ.get('FACE_PAGE_ID', ''), os.environ.get('FACE_PAGE_TOKEN', ''))
               phase_call(phase, publisher.check)
-              phase = 'meta_feed_read'
-              receipts = phase_call(phase, publisher.recent_receipts, (utcnow() - timedelta(days=1)).isoformat())
-              report['meta_read_access'] = {'status': 'PASS', 'requested_graph_version': publisher.version, 'observed_receipt_count': len(receipts)}
+              report['meta_identity_access'] = {'status': 'PASS', 'requested_graph_version': publisher.version}
+              report['feed_list_calls'] = 0
           except Exception as exc:
-              report['meta_read_access'] = failure_report(exc, phase)
+              report['meta_identity_access'] = failure_report(exc, phase)
               original = getattr(exc, 'original', exc)
               # Match only the adapter's fixed HTTP/code prefix; never emit provider text.
               match = re.match(r'^HTTP ([1-5][0-9]{2}) code=([0-9]{1,10})(?: |$)', str(original))
               if match:
-                  report['meta_read_access']['http_status'] = int(match.group(1))
-                  report['meta_read_access']['provider_error_code'] = int(match.group(2))
+                  report['meta_identity_access']['http_status'] = int(match.group(1))
+                  report['meta_identity_access']['provider_error_code'] = int(match.group(2))
               if not all(report['meta_credential_configuration'].values()):
-                  report['meta_read_access']['blockers'] = ['META_CREDENTIAL_CONFIGURATION_REQUIRED']
+                  report['meta_identity_access']['blockers'] = ['META_CREDENTIAL_CONFIGURATION_REQUIRED']
               report['status'] = 'BLOCKED'
           report['meta_write_permissions_verified'] = False
           report['unverified'] = ['meta_write_permissions' if field == 'meta_permissions' else field for field in report['unverified']]
