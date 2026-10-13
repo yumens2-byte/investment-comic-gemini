@@ -134,7 +134,21 @@ def validate_source(snapshot, now):
             session = date.fromisoformat(meta["market_session_date"])
         except (ValueError, KeyError, TypeError):
             raise PolicyError("SOURCE_SESSION_REQUIRED") from None
-        if not 0 <= (day - session).days <= 3 or session > observed.astimezone(KST).date():
+        age = (day - session).days
+        session_valid = 0 <= age <= 3
+        if (
+            field == "us10y"
+            and meta.get("provider") == "FRED"
+            and meta.get("instrument") == "DGS10"
+        ):
+            # FRED publication can span weekends. Holidays are still counted as
+            # weekdays: this is a bounded allowance, not a US holiday calendar.
+            weekdays = sum(
+                (session + timedelta(days=i)).weekday() < 5
+                for i in range(1, min(max(age, 0), 5) + 1)
+            )
+            session_valid = 0 <= age <= 5 and weekdays <= 3
+        if not session_valid or session > observed.astimezone(KST).date():
             raise PolicyError("SOURCE_SESSION_INVALID")
         if field in {"vix", "spy_change", "nasdaq_change"}:
             equity_sessions.add(session)
