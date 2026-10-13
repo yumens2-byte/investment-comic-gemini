@@ -44,7 +44,10 @@ def prepare_context(client, canon_path, allowed, now, source_commit, target=None
     observed = now
     statement = (
         f"저장된 시장 스냅샷({source_day.isoformat()}): "
-        + ", ".join(f"{field}={snapshot[field]}" for field in FIELDS)
+        + ", ".join(
+            f"{field}={snapshot[field]} (관측 기준일={snapshot['data_quality']['source_status'][field]['market_session_date']})"
+            for field in FIELDS
+        )
         + "."
     )
     evidence = Evidence(
