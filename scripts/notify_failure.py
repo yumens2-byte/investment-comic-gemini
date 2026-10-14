@@ -65,6 +65,28 @@ def _provider_refusals() -> list[dict]:
     return found
 
 
+def image_hold_details(root: Path = Path("output/episodes")) -> str:
+    """Public progress only; exclude old artifacts, prompt text and private diagnostics."""
+    details = []
+    for path in sorted(root.glob("*/panels/generation-summary.json")):
+        try:
+            item = json.loads(path.read_text(encoding="utf-8"))
+            if (item.get("run_id") != os.environ.get("GITHUB_RUN_ID", "local")
+                    or item.get("run_attempt") != os.environ.get("GITHUB_RUN_ATTEMPT", "1")
+                    or item.get("complete") is not False):
+                continue
+            expected, success = item.get("expected_images"), item.get("successful_images")
+            if type(expected) is not int or type(success) is not int or not 0 <= success <= expected:
+                continue
+            details.append(f"이미지 {success}/{expected}개 완료 · 미시도 {item.get('not_attempted_images', 0)}개")
+        except (OSError, ValueError, AttributeError):
+            continue
+    if not details:
+        return ""
+    return ("\n\n<b>이미지 생성 진행률</b>\n" + "\n".join(html.escape(d) for d in details[:3])
+            + "\n완료된 PNG는 보존했습니다. 동일 입력 반복 실행 대신 거절 상세와 검토된 복구 계획을 확인하세요.")
+
+
 def main() -> None:
     """파이프라인 실패 알림 메인 로직."""
     parser = argparse.ArgumentParser()
@@ -115,6 +137,9 @@ def main() -> None:
         message += "\n\n<b>Gemini 이미지 거절</b>\n" + "\n".join(
             html.escape(f"P{r.get('panel')}: {r.get('finish_reason')}") for r in refusals[:5]
         )
+
+    if not args.qc_warnings:
+        message += image_hold_details()
 
     if args.qc_warnings:
         details = "\n".join(html.escape(value[:100]) for value in list(dict.fromkeys(findings))[:5])

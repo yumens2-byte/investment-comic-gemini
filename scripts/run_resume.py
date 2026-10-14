@@ -10,10 +10,13 @@ Dialog 주입 후 PIL 조립 재개 (STEP 7).
 from __future__ import annotations
 
 import argparse
+import json
 import logging
+import os
 import re
 import shutil
 import sys
+from datetime import date
 from pathlib import Path
 
 
@@ -73,17 +76,69 @@ def _latest_episode_id(
                 .limit(1)
                 .execute()
             )
+            if (not isinstance(rows.data, list) or len(rows.data) > 1
+                    or any(not isinstance(row, dict) for row in rows.data)):
+                raise ValueError("Invalid Resume target query response")
             if rows.data:
                 row = rows.data[0]
                 ep_date = str(row["episode_date"])
-                ep_no = row.get("episode_no") or 1
+                if date.fromisoformat(ep_date).isoformat() != ep_date:
+                    raise ValueError("Invalid Resume date")
+                ep_no = row.get("episode_no")
+                if type(ep_no) is not int or not 1 <= ep_no <= 999:
+                    raise ValueError("Invalid Resume episode number")
                 logger.info(
                     "[run_resume] 자동 선택: %s (status=%s)", f"ICG-{ep_date}-{ep_no:03d}", status
                 )
                 return f"ICG-{ep_date}-{ep_no:03d}"
     except Exception as exc:
-        logger.warning("[run_resume] 최신 에피소드 조회 실패: %s", exc)
+        raise RuntimeError("Resume target lookup failed") from exc
     return None
+
+
+def prepare_resume_target(episode_id=None, *, force=False, allow_narrative_only=False,
+                          scheduled=False) -> dict:
+    """Resolve once for both artifact download and assembly; never hide DB failures."""
+    from engine.common.supabase_client import icg_table
+
+    episode_id = (episode_id or "").strip()
+    episode_id = episode_id or _latest_episode_id(allow_narrative_only=allow_narrative_only)
+    if not episode_id:
+        if scheduled:
+            return {"status": "idle", "ready": False, "reason": "no_image_generated_episode"}
+        raise RuntimeError("No eligible Resume episode")
+    if not re.fullmatch(r"ICG-\d{4}-\d{2}-\d{2}-[0-9]{3}", episode_id):
+        raise ValueError("Invalid Resume episode identity")
+    date.fromisoformat(_parse_date(episode_id))
+    if int(episode_id.rsplit("-", 1)[1]) <= 0:
+        raise ValueError("Invalid Resume episode number")
+    rows = (icg_table("episode_assets").select("status,artifact_run_id")
+            .eq("episode_date", _parse_date(episode_id))
+            .eq("episode_no", int(episode_id.rsplit("-", 1)[1])).limit(1).execute()).data
+    if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict):
+        raise RuntimeError("Exact Resume episode unavailable")
+    row = rows[0]
+    guard_resume_status(row.get("status", ""), force=force,
+                        allow_narrative_only=allow_narrative_only)
+    artifact = row.get("artifact_run_id")
+    if not isinstance(artifact, (str, int)) or isinstance(artifact, bool):
+        raise RuntimeError("Resume source artifact run ID required")
+    artifact = str(artifact)
+    if not artifact.isascii() or not artifact.isdigit() or int(artifact) <= 0:
+        raise RuntimeError("Invalid Resume source artifact run ID")
+    return {"status": "ready", "ready": True, "episode_id": episode_id,
+            "run_id": artifact}
+
+
+def emit_resume_target(target: dict) -> None:
+    """Only validated identities enter Actions outputs; no scripts or credentials."""
+    path = os.environ.get("GITHUB_OUTPUT")
+    if path:
+        with open(path, "a", encoding="utf-8") as stream:
+            stream.write(f"ready={'true' if target['ready'] else 'false'}\n")
+            stream.write(f"episode_id={target.get('episode_id', '')}\n")
+            stream.write(f"run_id={target.get('run_id', '')}\n")
+    print(json.dumps(target, ensure_ascii=False))
 
 
 COMPOSITOR_PANEL_TYPES = frozenset({"TEXT_CARD", "DISCLAIMER"})
@@ -170,12 +225,21 @@ def main() -> None:
         help="에피소드 ID (ICG-YYYY-MM-DD-001). 미입력 시 최신 image_generated 에피소드 자동 선택.",
     )
     parser.add_argument("--force", action="store_true", help="assembled 상태 재조립 허용")
+    parser.add_argument("--prepare-only", action="store_true",
+                        help="다운로드·조립에 사용할 동일 대상을 읽기 전용으로 확정")
+    parser.add_argument("--scheduled", action="store_true", help="예약 실행: 대상 없음은 정상 건너뛰기")
     parser.add_argument(
         "--allow-narrative-only",
         action="store_true",
         help="narrative_done 조회 허용 (모든 필수 원본 이미지 검증은 유지)",
     )
     args = parser.parse_args()
+
+    if args.prepare_only:
+        emit_resume_target(prepare_resume_target(
+            args.episode, force=args.force, allow_narrative_only=args.allow_narrative_only,
+            scheduled=args.scheduled))
+        return
 
     # 빈 문자열("") 입력 시 None으로 처리 (yml에서 미입력 시 "" 전달되는 경우)
     episode_id = (args.episode or None) and args.episode.strip() or None
@@ -185,6 +249,9 @@ def main() -> None:
         allow_narrative_only=args.allow_narrative_only,
     )
     if not episode_id:
+        if args.scheduled and not explicit_episode:
+            logger.info("Resume IDLE: image_generated 대상 없음 — 조립 건너뛰기")
+            return
         logger.error("❌ 실행 가능한 에피소드 없음 (image_generated 상태 없음)")
         sys.exit(1)
     logger.info("[run_resume] 대상 에피소드: %s", episode_id)
