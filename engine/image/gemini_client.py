@@ -409,6 +409,8 @@ def generate_panel(
         started = time.monotonic()
         record = {
             "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "run_id": os.environ.get("GITHUB_RUN_ID", "local"),
+            "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT", "1"),
             "panel": panel_idx, "model": _MODEL, "attempt": attempt,
             "ref_images": [str(p) for p in ref_paths],
             "cost_usd": None, "cost_estimated": False,
@@ -573,18 +575,55 @@ def generate_episode(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     log_path = output_dir / "gemini_run.log"
+    enabled = retry_enabled()
+    limit = max_retries() if enabled else 2
+    # Validate every provided plan before P1 can spend money. Missing plans retain
+    # the ordinary fail-closed contract; a retry flag is never an approval.
+    for panel in panels:
+        if enabled and panel.get("retry_plan"):
+            ReviewedRetryPlan.from_bundle(panel["retry_plan"], panel.get("prompt_text", ""),
+                                           [Path(p) for p in panel.get("ref_image_paths", [])])
+    reviewed_count = sum(bool(p.get("retry_plan")) for p in panels) if enabled else 0
+    logger.info("[gemini] image tasks=%d; reviewed content retry plans=%d; extra retry limit=%d. "
+                "Content refusal without a reviewed plan stops for review.",
+                len(panels), reviewed_count, limit)
     results: list[Path | None] = []
     summary = []
     total_cost = 0.0
 
-    def write_summary(*, complete=False, held_panel=None):
+    def write_summary(*, complete=False, held_panel=None, provider_reason=None):
         pending = [{"panel": p.get("panel_idx", 0), "status": "not_attempted",
                     "cost_usd": None} for p in panels[len(summary):]]
+        observed_cost = 0.0
+        try:
+            for line in log_path.read_text(encoding="utf-8").splitlines():
+                try:
+                    item = json.loads(line)
+                    if (item.get("run_id") == os.environ.get("GITHUB_RUN_ID", "local")
+                            and item.get("run_attempt") == os.environ.get("GITHUB_RUN_ATTEMPT", "1")
+                            and isinstance(item.get("cost_usd"), (int, float))):
+                        observed_cost += item["cost_usd"]
+                except (ValueError, AttributeError, TypeError):
+                    continue
+        except OSError:
+            pass
+        records = summary + pending
         (output_dir / "generation-summary.json").write_text(
-            json.dumps({"panels": summary + pending, "complete": complete,
+            json.dumps({"panels": records, "complete": complete,
+                        "run_id": os.environ.get("GITHUB_RUN_ID", "local"),
+                        "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT", "1"),
+                        "expected_images": len(panels),
+                        "successful_images": sum(p["status"] == "success" for p in records),
+                        "not_attempted_images": len(pending),
+                        "reviewed_retry_panels": reviewed_count,
+                        "content_retry_policy": "reviewed_plan_required",
+                        "provider_reason": provider_reason,
+                        "observed_provider_cost_usd": observed_cost,
                         "cost_usd": total_cost, "held_panel": held_panel,
                         "cost_complete": held_panel is None and len(summary) == len(panels)}), encoding="utf-8",
         )
+
+    write_summary()
 
     for panel in panels:
         idx = panel.get("panel_idx", 0)
@@ -600,9 +639,15 @@ def generate_episode(
         except PanelGenerationFailed as exc:
             logger.warning("[gemini] panel=%s settled failure: %s", idx, exc)
             path, panel_cost = None, exc.cost
-        except GenerationHold:
+        except GenerationHold as exc:
             summary.append({"panel": idx, "status": "held", "cost_usd": None})
-            write_summary(held_panel=idx)
+            cause = exc.__cause__
+            provider_reason = normalized_reason(cause.reason) if isinstance(cause, NoImageResponse) else None
+            write_summary(held_panel=idx, provider_reason=provider_reason)
+            logger.error("[gemini] IMAGE_HOLD: %d/%d images ready; P%d held; %d not attempted. "
+                         "Preserve successful PNGs; inspect original inputs before recovery.",
+                         sum(p["status"] == "success" for p in summary), len(panels), idx,
+                         len(panels) - len(summary))
             raise
         results.append(path)
         total_cost += panel_cost

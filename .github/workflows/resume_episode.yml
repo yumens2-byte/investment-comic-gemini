@@ -72,79 +72,52 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Fetch artifact_run_id from Supabase
+      - name: Resolve exact Resume target (read only)
         id: fetch_run_id
         env:
           EPISODE_ID: ${{ inputs.episode_id }}
+          REQUEST_FORCE: ${{ inputs.force }}
+          REQUEST_NARRATIVE_ONLY: ${{ inputs.allow_narrative_only }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
-          python - << 'PYEOF'
-          import os, sys
-          sys.path.insert(0, ".")
-          episode_id = os.environ.get("EPISODE_ID", "").strip()
-          run_id = None
-          try:
-              from engine.common.supabase_client import icg_table
-              if episode_id:
-                  import re
-                  m = re.match(r"ICG-(\d{4}-\d{2}-\d{2})-(\d{3})", episode_id)
-                  if m:
-                      ep_date, ep_no = m.group(1), int(m.group(2))
-                      rows = icg_table("episode_assets").select("artifact_run_id").eq("episode_date", ep_date).eq("episode_no", ep_no).limit(1).execute()
-                      if rows.data:
-                          run_id = rows.data[0].get("artifact_run_id")
-              else:
-                  for status in ("image_generated", "assembled", "narrative_done"):
-                      rows = icg_table("episode_assets").select("artifact_run_id").eq("status", status).order("episode_date", desc=True).order("episode_no", desc=True).limit(1).execute()
-                      if rows.data:
-                          run_id = rows.data[0].get("artifact_run_id")
-                          if run_id:
-                              break
-          except Exception as e:
-              print(f"[fetch_run_id] 조회 실패 (무시): {e}", flush=True)
-          gha_output = os.environ.get("GITHUB_OUTPUT", "")
-          if gha_output and run_id:
-              with open(gha_output, "a") as f:
-                  f.write(f"run_id={run_id}\n")
-              print(f"[fetch_run_id] artifact_run_id={run_id}")
-          else:
-              with open(gha_output or "/dev/null", "a") as f:
-                  f.write("run_id=\n")
-              print("[fetch_run_id] artifact_run_id 없음 — 아티팩트 없이 진행")
-          PYEOF
+          args=(--prepare-only)
+          if [[ -n "$EPISODE_ID" ]]; then args+=(--episode "$EPISODE_ID"); fi
+          if [[ "$REQUEST_FORCE" == "true" ]]; then args+=(--force); fi
+          if [[ "$REQUEST_NARRATIVE_ONLY" == "true" ]]; then args+=(--allow-narrative-only); fi
+          if [[ "$EVENT_NAME" == "schedule" ]]; then args+=(--scheduled); fi
+          python -m scripts.run_resume "${args[@]}"
 
       - name: Download Episode Artifact (from Run Market)
-        if: steps.fetch_run_id.outputs.run_id != ''
+        if: steps.fetch_run_id.outputs.ready == 'true'
         uses: actions/download-artifact@v4
         with:
-          pattern: episode-*
+          name: episode-${{ steps.fetch_run_id.outputs.run_id }}
           path: output/episodes/
-          merge-multiple: true
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ steps.fetch_run_id.outputs.run_id }}
 
       - name: STEP 7 — Assembly
+        if: steps.fetch_run_id.outputs.ready == 'true'
+        env:
+          EPISODE_ID: ${{ steps.fetch_run_id.outputs.episode_id }}
+          REQUEST_FORCE: ${{ inputs.force }}
+          REQUEST_NARRATIVE_ONLY: ${{ inputs.allow_narrative_only }}
         run: |
-          if [ -n "${{ inputs.episode_id }}" ]; then
-            python -m scripts.run_resume \
-              --episode "${{ inputs.episode_id }}" \
-              ${{ inputs.force == 'true' && '--force' || '' }} \
-              ${{ inputs.allow_narrative_only == 'true' && '--allow-narrative-only' || '' }}
-          else
-            python -m scripts.run_resume \
-              ${{ inputs.force == 'true' && '--force' || '' }} \
-              ${{ inputs.allow_narrative_only == 'true' && '--allow-narrative-only' || '' }}
-          fi
+          args=(--episode "$EPISODE_ID")
+          if [[ "$REQUEST_FORCE" == "true" ]]; then args+=(--force); fi
+          if [[ "$REQUEST_NARRATIVE_ONLY" == "true" ]]; then args+=(--allow-narrative-only); fi
+          python -m scripts.run_resume "${args[@]}"
 
       - name: Upload Assembled Slides
         uses: actions/upload-artifact@v4
-        if: always()
+        if: ${{ always() && steps.fetch_run_id.outputs.ready == 'true' }}
         with:
           name: slides-${{ inputs.episode_id || 'latest' }}
           path: output/episodes/
           retention-days: 14
 
       - name: Notify Content QC Warnings
-        if: ${{ always() && env.DRY_RUN != 'true' }}
+        if: ${{ always() && steps.fetch_run_id.outputs.ready == 'true' && env.DRY_RUN != 'true' }}
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_FREE_CHANNEL_ID: ${{ secrets.TELEGRAM_FREE_CHANNEL_ID }}

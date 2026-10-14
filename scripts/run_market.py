@@ -1684,7 +1684,7 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
         logger_inst.step_done(
             "STEP_4",
             ts,
-            f"패널 {len(script_dict.get('panels', []))}개 생성 | JSON 저장: {ep_json_path}",
+            f"대본 패널 {len(script_dict.get('panels', []))}개 준비 (이미지 생성 전) | JSON 저장: {ep_json_path}",
         )
         return script_dict
     except Exception as exc:
@@ -1850,6 +1850,10 @@ def step_image(
             not in {"TEXT_CARD", "DISCLAIMER"}
         ]
 
+        logger_inst.info("STEP_6", f"대본 {len(panel_prompts)}개 / 생성 대상 이미지 {len(panels_input)}개 / "
+                         f"조립 전용 카드 {len(panel_prompts) - len(panels_input)}개. "
+                         "콘텐츠 거절 재시도는 검토된 패널별 계획이 있을 때만 허용.")
+
         panel_paths, total_cost = (gemini_generate(panels_input, output_dir)
                                    if panels_input else ([], 0.0))
         if (
@@ -1914,11 +1918,36 @@ def step_image(
         logger_inst.step_done(
             "STEP_6",
             ts,
-            f"{len(success_paths)}개 이미지 생성 / {fallback_count}개 fallback"
+            f"이미지 {len(success_paths)}/{len(panels_input)}개 완료 / 누락 {fallback_count}개"
             f" (cost=${total_cost:.4f}) | 로그: {img_log_path}",
         )
         return [path_by_idx.get(pp.panel_idx) for pp in panel_prompts]
     except Exception as exc:
+        # A failed paid image run still owns recoverable PNGs. Preserve its exact
+        # artifact pointer without marking an incomplete episode image_generated.
+        from engine.image.generation_guard import GenerationHold
+
+        if isinstance(exc, GenerationHold):
+            artifact_run_id = os.environ.get("GITHUB_RUN_ID")
+            try:
+                import json
+
+                summary = json.loads((Path("output") / "episodes" / episode_date / "panels" /
+                                      "generation-summary.json").read_text(encoding="utf-8"))
+                recoverable = (summary.get("run_id") == artifact_run_id
+                               and summary.get("run_attempt") == os.environ.get("GITHUB_RUN_ATTEMPT", "1")
+                               and type(summary.get("successful_images")) is int
+                               and summary["successful_images"] > 0)
+            except (OSError, ValueError, AttributeError):
+                recoverable = False
+            if recoverable and artifact_run_id and artifact_run_id.isascii() and artifact_run_id.isdigit():
+                try:
+                    from engine.persist.asset_writer import patch_by_episode
+
+                    patch_by_episode(episode_date, int(episode_id.rsplit("-", 1)[1]),
+                                     {"artifact_run_id": artifact_run_id})
+                except Exception:
+                    logger_inst.info("STEP_6", "복구 아티팩트 run ID 저장 실패 — 원래 이미지 오류 유지")
         logger_inst.step_fail("STEP_6", ts, exc)
         raise
 
