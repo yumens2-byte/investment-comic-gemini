@@ -32,6 +32,7 @@ def main():
         "WATCH_ALERT",
         "REPORT_MISSING",
         "SKIPPED_OUTSIDE_WINDOW",
+        "MISSED_WINDOW",
     }:
         print("::warning::Market Talk needs operator review; see the safe report artifact.")
 
