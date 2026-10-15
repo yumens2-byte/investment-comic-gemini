@@ -178,7 +178,8 @@ def _image(sid: str, side_day: date, row: dict[str, Any], deps: P1Deps,
     # The DB checkpoint is written only after image hash + SG-8 verification.
     # Unknown/reserved/terminal ledger records must be reconciled before any paid call.
     scope = (day_dir / "panels").as_posix()
-    blockers = deps.store.image_ledger_blockers(scope)
+    blockers = [*deps.store.image_ledger_blockers(scope),
+                *deps.store.image_ledger_blockers((day_dir / RETAKE_DIR / "panels").as_posix())]
     if blockers:
         states = sorted({str(b.get("state")) for b in blockers})
         raise StageFailure(
@@ -210,7 +211,7 @@ def _image(sid: str, side_day: date, row: dict[str, Any], deps: P1Deps,
         if panel.idx in by_idx:
             # An already inspected and persisted panel must not be purchased again.
             cached = by_idx[panel.idx]
-            if not cached.get("sg8") or not cached["sg8"][-1].get("passed"):
+            if not cached.get("sg8") or cached["sg8"][-1].get("critical") != []:
                 raise StageFailure("checkpoint lacks successful SG-8 evidence", [sg2],
                                    {"panel": panel.idx}, keep_status=True)
             sg8.append(GateResult(gate=SG8, passed=True,
@@ -425,7 +426,9 @@ def run_p1(side_day: date, deps: P1Deps, *, force: bool = False,
         # to retry does not mean provider billing/outcome has been reconciled.
         if (row.get("error_message") or "").startswith("image:"):
             scope = (deps.output_root / side_day.isoformat() / "panels").as_posix()
-            blockers = deps.store.image_ledger_blockers(scope)
+            blockers = [*deps.store.image_ledger_blockers(scope),
+                        *deps.store.image_ledger_blockers(
+                            (deps.output_root / side_day.isoformat() / RETAKE_DIR / "panels").as_posix())]
             if blockers:
                 results.append(StageResult("p1", sid, "hold", detail={
                     "reason": "image ledger requires reconciliation before HOLD release",
