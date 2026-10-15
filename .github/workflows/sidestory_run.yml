@@ -189,6 +189,21 @@ jobs:
           echo "STAGE=$STAGE SIDE_DATE=$SIDE_DATE FORCE=$FORCE NO_PERSIST=$NO_PERSIST RETRY_HOLD=$RETRY_HOLD LIVE=$LIVE DRY_RUN=$DRY_RUN SIDESTORY_DXY_SOURCE=$SIDESTORY_DXY_SOURCE"
           python -m sidestory "${ARGS[@]}"
 
+      # Diagnostic report intentionally excludes raw prompts, API errors and secrets.
+      - name: Sidestory failure diagnostics
+        if: failure()
+        env:
+          SLOT_DATE: ${{ steps.slot.outputs.date }}
+        run: |
+          {
+            echo '### Sidestory requires inspection'
+            echo "- Slot: \`$SLOT_DATE\`"
+            echo "- Run ID: \`$GITHUB_RUN_ID\`"
+            echo '- Check the Run sidestory stage JSON and icg_side side_run_logs.'
+            echo '- If the image ledger is unknown/reserved/terminal, do NOT rerun with retry_hold before reconciliation.'
+            echo '- Restore a previous run artifact when resuming paid panels.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload side artifacts
         if: always() && (inputs.stage == 'image' || inputs.stage == 'assembly' || inputs.stage == 'p1' || inputs.stage == 'refgen' || inputs.stage == 'auto' || github.event_name == 'schedule')
         uses: actions/upload-artifact@v4
