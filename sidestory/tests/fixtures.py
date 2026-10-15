@@ -79,6 +79,7 @@ class FakeStore:
         self.anchored = set(anchored or [])
         self.episodes = {}
         self.logs = []
+        self.ledger_blockers = []
 
     def anchored_main_ids(self):
         return set(self.anchored)
@@ -98,6 +99,9 @@ class FakeStore:
 
     def log(self, stage, status, detail):
         self.logs.append((stage, status, detail))
+
+    def image_ledger_blockers(self, scope):
+        return [dict(row) for row in self.ledger_blockers if row.get("scope") == scope]
 
     def live_publication(self, sid, channel):
         return next((p for p in getattr(self, "publications", [])
