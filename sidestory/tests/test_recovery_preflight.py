@@ -41,7 +41,7 @@ def test_503_unknown_is_blocked_instead_of_paid_retry(tmp_path: Path) -> None:
     assert result["has_script"] is True
     assert store.get_episode(SID) == original
     assert store.logs == []
-    assert store.publications if hasattr(store, "publications") else True
+    assert not hasattr(store, "publications")
 
 
 def test_both_original_and_retake_scopes_are_checked(tmp_path: Path) -> None:
