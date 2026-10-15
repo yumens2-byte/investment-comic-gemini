@@ -175,15 +175,47 @@ def _image(sid: str, side_day: date, row: dict[str, Any], deps: P1Deps,
     if deps.inspector is None:
         raise StageFailure("panel inspector (SG-8) not configured", [sg2])
     day_dir = deps.output_root / side_day.isoformat()
-    panels: list[dict[str, Any]] = []
+    # The DB checkpoint is written only after image hash + SG-8 verification.
+    # Unknown/reserved/terminal ledger records must be reconciled before any paid call.
+    scope = (day_dir / "panels").as_posix()
+    blockers = deps.store.image_ledger_blockers(scope)
+    if blockers:
+        states = sorted({str(b.get("state")) for b in blockers})
+        raise StageFailure(
+            "image ledger reconciliation required before retry: " + ", ".join(states),
+            [sg2], {"blocked_panels": sorted({b.get("panel") for b in blockers}),
+                    "scope": scope},
+        )
+    checkpoint = (row.get("panels_json") or {})
+    panels: list[dict[str, Any]] = list(checkpoint.get("panels") or [])
+    by_idx = {p["idx"]: p for p in panels}
+    if len(by_idx) != len(panels) or any(idx not in IMAGE_PANELS for idx in by_idx):
+        raise StageFailure("invalid partial image checkpoint", [sg2], keep_status=True)
+    for entry in panels:
+        path = Path(entry["path"])
+        if sha256_file(path) != entry.get("sha256"):
+            raise StageFailure(
+                "stored panel checkpoint file missing or changed; restore artifact before retry",
+                [sg2], {"panel": entry["idx"], "run_id": checkpoint.get("run_id")},
+                keep_status=True,
+            )
     sg8: list[GateResult] = []
-    total = 0.0
+    total = float(checkpoint.get("cost_usd") or 0)
 
     def fail(reason: str) -> StageFailure:
         return StageFailure(reason, [sg2, *sg8],
                             {"panels_done": panels, "cost_usd": round(total, 4)})
 
     for panel in story:
+        if panel.idx in by_idx:
+            # An already inspected and persisted panel must not be purchased again.
+            cached = by_idx[panel.idx]
+            if not cached.get("sg8") or not cached["sg8"][-1].get("passed"):
+                raise StageFailure("checkpoint lacks successful SG-8 evidence", [sg2],
+                                   {"panel": panel.idx}, keep_status=True)
+            sg8.append(GateResult(gate=SG8, passed=True,
+                                  reason=f"P{panel.idx} restored verified checkpoint"))
+            continue
         spec = build_panel_spec(panel, deps.characters)
         refs = [deps.ref_root / spec.ref_path] if spec.ref_path else []
         exp = Expectation.of(panel)
@@ -226,8 +258,19 @@ def _image(sid: str, side_day: date, row: dict[str, Any], deps: P1Deps,
         panels.append({"idx": panel.idx, "path": _rel(path), "sha256": digest,
                        "pose": spec.pose, "ref": spec.ref_path,
                        "cost_usd": round(panel_cost, 4), "sg8": checks})
+        # Partial success is durable: status remains narrative_done until ALL panels pass.
+        checkpoint_run = deps.run_id or checkpoint.get("run_id")
+        saved = deps.store.update_episode(
+            sid,
+            {"panels_json": {"panels": list(panels), "cost_usd": round(total, 4),
+                             "run_id": checkpoint_run}},
+            expect_status="narrative_done",
+        )
+        if not saved:
+            raise StageFailure("partial image checkpoint CAS failed", [sg2, *sg8],
+                               {"panel": panel.idx}, keep_status=True)
     return ({"panels_json": {"panels": panels, "cost_usd": round(total, 4),
-                             "run_id": deps.run_id}},
+                             "run_id": deps.run_id or checkpoint.get("run_id")}},
             {"gates": [sg2, *sg8], "cost_usd": round(total, 4)})
 
 
@@ -378,6 +421,19 @@ def run_p1(side_day: date, deps: P1Deps, *, force: bool = False,
             results.append(StageResult("p1", sid, "hold", detail={
                 "reason": f"episode on hold: {row.get('error_message')} (use --retry-hold)"}))
             return results
+        # Check the persistent image ledger BEFORE clearing the hold. Authorization
+        # to retry does not mean provider billing/outcome has been reconciled.
+        if (row.get("error_message") or "").startswith("image:"):
+            scope = (deps.output_root / side_day.isoformat() / "panels").as_posix()
+            blockers = deps.store.image_ledger_blockers(scope)
+            if blockers:
+                results.append(StageResult("p1", sid, "hold", detail={
+                    "reason": "image ledger requires reconciliation before HOLD release",
+                    "scope": scope,
+                    "blocked_panels": sorted({b.get("panel") for b in blockers}),
+                    "ledger_states": sorted({str(b.get("state")) for b in blockers}),
+                }))
+                return results
         status = lifecycle.resume_status(row)
         if not deps.store.update_episode(sid, {"status": status, "error_message": None},
                                          expect_status="hold"):
