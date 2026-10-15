@@ -34,7 +34,7 @@ Known provider rejections remain conservative holds. There is no speculative HTT
 GitHub can delay or omit scheduled events; two GitHub workflows are not independent infrastructure.
 The morning audit reports the previous completed business day without publishing it.
 An exact post ID can be verified after expiry; missing/ambiguous post IDs require operator reconciliation.
-Manual publish by revision is intentionally rejected by the v5 executor; daily stored drafts are recovered through the shared worker.
+Manual publish accepts only the exact sole approved daily revision and never invokes generation. Manual exact-ID verification does not require auto-recovery activation or a live posting flag.
 Image Sidestory unknown-cost holds are not automatically released by this watchdog.
 
 ## Validation

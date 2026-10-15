@@ -1,15 +1,21 @@
 """Safety properties for Actions planning and resumable execution (no external providers)."""
+import json
 from copy import deepcopy
 from datetime import date
 from types import SimpleNamespace
 
+import httpx
 import pytest
 import yaml
+from supabase import ClientOptions, create_client
 
+from sidestory.market_talk import __main__ as cli
+from sidestory.market_talk import executor, recovery, store_v5
 from sidestory.market_talk.executor import execute
 from sidestory.market_talk.policy import timestamp
 from sidestory.market_talk.recovery import audit_day, plan, retryable
 from sidestory.market_talk.scheduling import saved_slot
+from sidestory.market_talk.store_v5 import TalkStoreV5
 from sidestory.tests.conftest import REPO_ROOT
 
 DAY = date(2026, 10, 16)
@@ -217,3 +223,63 @@ def test_v5_context_keeps_short_public_copy_and_full_provenance():
     first = {"vix": 10, "data_quality": {"provider": "a"}}
     second = {"vix": 10, "data_quality": {"provider": "b"}}
     assert source_hash(first, "market-talk-5") != source_hash(second, "market-talk-5")
+
+
+def test_real_sdk_send_and_paid_reservations_carry_the_lease(monkeypatch):
+
+
+
+    requests = []
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, json={"status": "READY"})
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr("postgrest._sync.client.Client", lambda **kwargs: http)
+    client = create_client("https://example.supabase.co", "test-key",
+                           options=ClientOptions(httpx_client=http))
+    owner = "00000000-0000-0000-0000-000000000001"
+    store = TalkStoreV5(client, owner=owner, mode="recovery")
+    store.preflight("page", DAY)
+    store.cost_reserve("page", "key", "0.01")
+    store.begin("page", REV, "talk", "본문", "2026-10-16T23:30:00+09:00")
+    assert [r.url.path.rsplit("/", 1)[-1] for r in requests] == [
+        "talk_preflight_v5", "talk_cost_reserve_v5", "talk_begin_v5",
+    ]
+    for request in requests:
+        payload = json.loads(request.content)
+        assert payload["p_owner"] == owner and payload["p_mode"] == "recovery"
+        assert request.headers["Content-Profile"] == "icg_side"
+    http.close()
+
+
+def test_executor_default_is_a_read_only_plan(tmp_path, monkeypatch):
+
+
+    value = snapshot()
+    store = SimpleNamespace(require_hardening=lambda: None, snapshot=lambda *a: value)
+    monkeypatch.setattr(cli, "connection", lambda: None)
+    monkeypatch.setattr(store_v5, "TalkStoreV5", lambda *a, **kw: store)
+    monkeypatch.setenv("FACE_PAGE_ID", "123")
+    monkeypatch.setenv("MARKET_TALK_LIVE", "true")
+    monkeypatch.setenv("DRY_RUN", "false")
+    output = tmp_path / "plan.json"
+    executor.main(["--mode", "recovery", "--output", str(output)])
+    report = json.loads(output.read_text())
+    assert report["mode"] == "read_only" and report["allowed"] is False
+    assert report["action"] == "recovery"
+
+
+def test_watchdog_disabled_still_observes_without_any_write(tmp_path, monkeypatch):
+
+
+    store = SimpleNamespace(require_hardening=lambda: None, snapshot=lambda *a: snapshot())
+    monkeypatch.setattr(cli, "connection", lambda: None)
+    monkeypatch.setattr(store_v5, "TalkStoreV5", lambda *a, **kw: store)
+    monkeypatch.setenv("FACE_PAGE_ID", "123")
+    monkeypatch.delenv("MARKET_TALK_WATCHDOG_AUTO_RECOVERY_ENABLED", raising=False)
+    output, github = tmp_path / "plan.json", tmp_path / "outputs"
+    assert recovery.main(["--output", str(output), "--github-output", str(github)]) == 0
+    report = json.loads(output.read_text())
+    assert report["action"] == "none" and report["planned_action"] == "recovery"
+    assert "action=none" in github.read_text()

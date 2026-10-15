@@ -95,19 +95,25 @@ def main(argv=None):
             if args.slot_date and day != exact_day:
                 raise ValueError("slot mismatch")
             day = exact_day
+            if args.mode != "verify" and row["status"] not in {"APPROVED", "PUBLISHED"}:
+                raise ValueError("exact publication revision must be approved")
             if args.mode != "verify":
-                raise ValueError("exact revision is supported by verify only")
+                rows = store.snapshot(page, day).get("drafts") or []
+                if len(rows) != 1 or rows[0]["revision"] != args.revision:
+                    raise ValueError("exact daily revision required")
         if not args.live:
             report = {**plan(store.snapshot(page, day)), "mode": "read_only"}
-        elif args.mode != "normal" and not recovery_enabled():
+        elif args.mode == "recovery" and not recovery_enabled():
             report = {"status": "BLOCKED", "blockers": ["RECOVERY_DISABLED"]}
-        elif not all(flag(name) for name in ("MARKET_TALK_LIVE", "MARKET_TALK_AUTO_ENABLED",
+        elif args.mode != "verify" and not all(flag(name) for name in ("MARKET_TALK_LIVE", "MARKET_TALK_AUTO_ENABLED",
                                             "MARKET_TALK_SCHEDULE_ENABLED")):
             report = {"status": "BLOCKED", "blockers": ["LIVE_GATES_DISABLED"]}
-        elif flag("DRY_RUN", "true"):
+        elif args.mode != "verify" and flag("DRY_RUN", "true"):
             report = {"status": "BLOCKED", "blockers": ["LIVE_GATES_DISABLED"]}
         else:
             def automatic(at):
+                if args.revision:
+                    return {"status": "AUTO_APPROVED", "revision": args.revision}
                 return automatic_draft(
                     client, store, page, canon_path=ROOT / "config/characters.yaml",
                     allowed=set(filter(None, os.environ.get("MARKET_TALK_CHARACTER_IDS", "").split(","))),

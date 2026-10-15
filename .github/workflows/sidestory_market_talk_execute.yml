@@ -86,7 +86,7 @@ jobs:
               if [[ "$STAGE" == verify ]]; then args=(--mode verify --output output/market-talk-report.json); fi
               if [[ -n "$SLOT_DATE" ]]; then args+=(--slot-date "$SLOT_DATE"); fi
               if [[ -n "$REVISION" ]]; then args+=(--revision "$REVISION"); fi
-              if [[ "$LIVE_REQUEST" == true ]]; then export DRY_RUN=false; args+=(--live); fi
+              if [[ "$LIVE_REQUEST" == true || ( "$STAGE" == verify && "$GITHUB_REF" == refs/heads/main ) ]]; then export DRY_RUN=false; args+=(--live); fi
               python -m sidestory.market_talk.executor "${args[@]}"
               ;;
             inspect|approve|watch|pause|resume|reconcile|hold)
