@@ -102,3 +102,19 @@ def test_failure_alert_lists_refusals_for_this_run_only(monkeypatch, tmp_path):
         notify_failure.main()
     assert "P3: FinishReason.PROHIBITED_CONTENT" in sent["text"]
     assert "P9" not in sent["text"]
+
+
+def test_provider_error_type_survives_unknown_settlement_hold(setup):
+    run, guard, gen, root = setup
+    gen.side_effect = TimeoutError("sensitive upstream response")
+    guard.finish.side_effect = GenerationHold(
+        "provider outcome or cost requires reconciliation"
+    )
+    with pytest.raises(GenerationHold) as raised:
+        run()
+    message = str(raised.value)
+    assert "provider_error_type=TimeoutError" in message
+    assert "settlement_error_type=GenerationHold" in message
+    assert "sensitive upstream response" not in message
+    assert gen.call_count == 1
+    assert guard.finish.call_args.kwargs["state"] == "unknown"
