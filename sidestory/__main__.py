@@ -1,5 +1,5 @@
 """CLI: python -m sidestory --stage gate|echo|narrative|image|assembly|inspect|p1|refgen|
-   publish|verify [--date YYYY-MM-DD] [--force] [--no-persist] [--retry-hold]
+   publish|verify|recovery_check [--date YYYY-MM-DD] [--force] [--no-persist] [--retry-hold]
    [--ref-revision N] [--live]."""
 from __future__ import annotations
 
@@ -73,8 +73,12 @@ def main(argv: list[str] | None = None) -> int:
                         help="publish: post to Facebook for real (also needs DRY_RUN=false)")
     args = parser.parse_args(argv)
 
-    if args.stage not in P0_STAGES + P1_STAGES + ("refgen", "inspect", "publish", "verify", "auto"):
+    if args.stage not in P0_STAGES + P1_STAGES + ("refgen", "inspect", "publish", "verify", "auto", "recovery_check"):
         print(json.dumps({"stage": args.stage, "status": "not_implemented"}))
+        return 2
+    if args.stage == "recovery_check" and (args.live or args.retry_hold or args.force):
+        print(json.dumps({"stage": args.stage, "status": "usage_error",
+                          "error": "recovery_check is read-only; --live, --force and --retry-hold are forbidden"}))
         return 2
     if args.stage in P1_STAGES + ("auto",) and args.no_persist:
         print(json.dumps({"stage": args.stage, "status": "usage_error",
@@ -100,6 +104,14 @@ def main(argv: list[str] | None = None) -> int:
                          ensure_ascii=False))
         return 3
     feed, store = SupabaseMainFeedReader(client), SupabaseSideStore(client)
+
+    if args.stage == "recovery_check":
+        from sidestory.app.recovery_preflight import check_recovery
+
+        result = check_recovery(side_day, store)
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        # A diagnosed BLOCK is an expected, successful read-only check, NOT a go-ahead.
+        return 0
 
     if args.stage == "refgen":
         from sidestory.adapters.icg.image_adapter import GeminiPanelGenerator

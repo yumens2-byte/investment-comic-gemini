@@ -18,7 +18,7 @@ from sidestory.ports.store import SideStore
 DOLLAR_HISTORY_DAYS = 21
 
 STAGES = ("gate", "echo", "narrative", "image", "assembly", "inspect", "p1", "refgen", "publish", "auto",
-          "verify")
+          "verify", "recovery_check")
 P0_STAGES = ("gate", "echo")
 P1_STAGES = ("narrative", "image", "assembly", "p1")
 

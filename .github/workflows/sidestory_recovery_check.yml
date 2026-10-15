@@ -1,0 +1,72 @@
+name: "🛡️ Sidestory Recovery Check (read-only)"
+
+# Diagnostics ONLY. Does not inject Gemini/Claude/Facebook/Notion credentials.
+# Does not request paid images, release HOLD, modify DB, or publish.
+on:
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Existing Sidestory episode date (KST, YYYY-MM-DD)"
+        required: true
+        default: "2026-10-15"
+        type: string
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/sidestory_recovery_check.yml"
+      - "sidestory/app/recovery_preflight.py"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sidestory-recovery-check-${{ inputs.date || '2026-10-15' }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      PYTHONPATH: .
+      SUPABASE_SCHEMA: icg_side
+      DRY_RUN: "true"
+      TARGET_DATE: ${{ inputs.date || '2026-10-15' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Dependencies
+        run: pip install -r requirements.txt
+
+      - name: Inspect without mutating
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          test -n "$SUPABASE_URL"
+          test -n "$SUPABASE_KEY"
+          python -m sidestory --stage recovery_check --date "$TARGET_DATE" > recovery-check.json
+          cat recovery-check.json
+          {
+            echo "### Sidestory read-only recovery safety check"
+            echo "This is a diagnostic result, NOT authorization to retry or publish."
+            echo '~~~~json'
+            cat recovery-check.json
+            echo '~~~~'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Preserve diagnostic JSON
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sidestory-recovery-check-${{ github.run_id }}
+          path: recovery-check.json
+          if-no-files-found: ignore
+          retention-days: 30
