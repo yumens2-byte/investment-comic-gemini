@@ -25,3 +25,41 @@
 - Offline unit regressions pass, workflow YAML checks pass, current main/side publication paths remain isolated.
 - No automatic paid retry on `unknown`; no post without both Facebook live authorization locks.
 - No production rollout before green CI and review; the historical incident is a separate reconciliation task.
+
+
+## Read-only recovery verification (introduced 2026-10-16)
+The dedicated workflow is **Sidestory Recovery Check (read-only)** in GitHub Actions.
+Choose **Run workflow**, branch `main`, date `2026-10-15`.
+Alternatively, on a configured environment:
+```bash
+SUPABASE_SCHEMA=icg_side DRY_RUN=true python -m sidestory \
+  --stage recovery_check --date 2026-10-15
+```
+
+The workflow uses ONLY `SUPABASE_URL` and `SUPABASE_KEY`. It does not expose
+Gemini, Claude, Facebook or Notion secrets, and cannot call those services.
+A green GitHub Action means the **read-only assessment ran**; it does NOT mean
+billing was reconciled, images were created, HOLD was released or publication happened.
+
+Expected current result for the historical incident:
+```json
+{
+  "stage": "recovery_check",
+  "side_episode_id": "SIDE-2026-10-15-01",
+  "status": "BLOCKED_LEDGER_RECONCILIATION",
+  "read_only": true,
+  "may_retry_paid": false,
+  "may_publish": false
+}
+```
+Only a provider usage/billing receipt tied to this incident can establish
+the charged amount. The $0.10 in `image_generation_calls.cost` is a reserved
+budget accounting value, not actual verified usage. Preserve the original
+Ledger row and all artifacts; never relabel UNKNOWN merely to unblock the scope.
+
+There is **no automatic authorized settlement** in this tool. Once external
+evidence exists, approve and separately execute the audited reconciliation,
+then run `recovery_check` again. A cleared scope still returns
+`OPERATOR_REVIEW_REQUIRED` while the episode is on HOLD; this is intentional.
+After reviewed release, run P1 with original slot, verify SG-8/hash checkpoint,
+then separately authorize exactly-one Facebook publish.
