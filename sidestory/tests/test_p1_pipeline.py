@@ -152,8 +152,6 @@ def test_image_hold_records_progress_and_stops(env) -> None:
 
 
 def test_unknown_image_ledger_blocks_hold_release_without_paid_call(env) -> None:
-    from sidestory.ports.image import ImageHold
-
     env.images = FakeImages(hold_on=1)
     initial = run_p1(TUE, env)
     assert initial[-1].status == "hold"
