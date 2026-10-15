@@ -157,7 +157,7 @@ def test_unknown_image_ledger_blocks_hold_release_without_paid_call(env) -> None
     assert initial[-1].status == "hold"
     assert env.store.get_episode(SID)["status"] == "hold"
     env.store.ledger_blockers.append({
-        "scope": "output/sidestory/2026-10-06/panels",
+        "scope": (env.output_root / "2026-10-06" / "panels").as_posix(),
         "panel": 1, "state": "unknown",
     })
     env.images = FakeImages()
