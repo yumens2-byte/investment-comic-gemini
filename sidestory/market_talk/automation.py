@@ -18,7 +18,7 @@ from sidestory.market_talk.service import approve, inspect
 ACTOR = "market-talk:auto-v1"
 
 
-def prepare_context(client, canon_path, allowed, now, source_commit, target=None):
+def prepare_context(client, canon_path, allowed, now, source_commit, target=None, policy_version="market-talk-4"):
     day = now.astimezone(KST).date()
     rows = (
         client.schema("icg_side")
@@ -59,7 +59,7 @@ def prepare_context(client, canon_path, allowed, now, source_commit, target=None
     )
     expires = target.end if target else datetime.combine(day, time(23, 59), KST)
     context = Context(
-        policy_version="market-talk-4" if target else "market-talk-3",
+        policy_version=policy_version if target else "market-talk-3",
         **fields_canon,
         topic="시장 기록을 보며 나누는 캐릭터 잡담",
         claim_key="auto-snapshot-" + source_day.isoformat(),
@@ -125,7 +125,8 @@ def automatic_draft(
             raise ValueError("automatic stored revision mismatch")
     else:
         context, due = phase_call(
-            "source", prepare_context, client, canon_path, allowed, now, source_commit, target
+            "source", prepare_context, client, canon_path, allowed, now, source_commit, target,
+            getattr(store, "context_version", "market-talk-4"),
         )
         key = digest(
             [

@@ -15,33 +15,20 @@ def workflow():
     return yaml.safe_load(WF.read_text(encoding="utf-8"))
 
 
-def test_scheduler_input_is_gated_by_schedule_variable():
+def test_actions_owns_scheduling_and_reuses_worker():
     wf = workflow()
-    assert wf[True]["workflow_dispatch"]["inputs"]["scheduler"]["default"] is False
-    condition = wf["jobs"]["market-talk"]["if"]
-    assert "!inputs.scheduler" in condition and "MARKET_TALK_SCHEDULE_ENABLED == 'true'" in condition
+    assert "scheduler" not in wf[True]["workflow_dispatch"]["inputs"]
+    assert wf["jobs"]["market-talk"]["uses"].endswith("sidestory_market_talk_execute.yml")
+    assert wf[True]["schedule"][0]["cron"] == "7,27,47 4-8 * * 1-5"
 
 
-def test_scheduler_tick_uses_scheduled_stage_and_live_path():
-    step = next(
-        s for s in workflow()["jobs"]["market-talk"]["steps"] if s.get("name", "").startswith("Inspect")
-    )
-    env, script = step["env"], step["run"]
-    assert "!inputs.scheduler" in env["REQUEST_STAGE"]
-    assert "github.event_name == 'schedule'" in env["SCHEDULER_TICK"]
-    assert "inputs.scheduler" in env["SCHEDULER_TICK"]
-    assert '"$SCHEDULER_TICK" == "true" ]]; then args+=(--scheduled)' in script
-    assert '"$SCHEDULER_TICK" == "true" || "$REQUEST_CONFIRM" == "YES"' in script
-    assert '"$EVENT_NAME" == "schedule"' not in script
-
-
-def test_migration_dispatches_only_this_workflow_with_scheduler_input():
-    sql = MIGRATION.read_text(encoding="utf-8")
-    assert "/repos/yumens2-byte/investment-comic-gemini/actions/workflows/sidestory_market_talk.yml/dispatches" in sql
-    assert "jsonb_build_object('scheduler', 'true')" in sql
-    assert "'github_icg_dispatch_pat'" in sql
-    assert "'*/10 4-8 * * 1-5'" in sql and "'0 9 * * 1-5'" in sql
-    assert "from public, anon, authenticated" in sql
+def test_retirement_preserves_audit_and_other_cron():
+    sql = next((SIDE_ROOT / "supabase/migrations").glob("*_remove_market_talk_db_scheduler.sql")).read_text()
+    for name in ["icg_talk_dispatch", "icg_talk_dispatch_cutoff", "icg_talk_dispatch_reconcile"]:
+        assert name in sql
+    assert "cron.unschedule" in sql
+    assert "drop table" not in sql.lower()
+    assert "drop extension" not in sql.lower()
 
 
 def test_missed_window_is_surfaced_as_warning(tmp_path, monkeypatch, capsys):

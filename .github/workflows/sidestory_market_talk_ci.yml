@@ -76,3 +76,40 @@ jobs:
       - run: python sidestory/tests/market_talk/postgres_v4_contract.py
         env:
           MARKET_TALK_TEST_DATABASE_URL: 'postgresql://postgres@127.0.0.1:5432/postgres'
+
+  talk-v5-concurrency:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install 'psycopg[binary]==3.3.6'
+      - run: python sidestory/tests/market_talk/postgres_v5_contract.py
+        env:
+          MARKET_TALK_TEST_DATABASE_URL: 'postgresql://postgres@127.0.0.1:5432/postgres'
+  workflow-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Actions and reusable-worker expressions
+        run: >-
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          -shellcheck="" .github/workflows/sidestory_market_talk.yml
+          .github/workflows/sidestory_market_talk_execute.yml
+          .github/workflows/sidestory_market_talk_watchdog.yml
+          .github/workflows/sidestory_market_talk_watch.yml

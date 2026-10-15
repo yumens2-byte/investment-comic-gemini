@@ -1,0 +1,79 @@
+name: Market Talk publication watchdog
+on:
+  workflow_run:
+    workflows: ['🌐 Market Talk (reviewed Facebook text)']
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: '15,45 4-13 * * 1-5'
+    - cron: '15 14 * * 1-5'
+    - cron: '40 14 * * 1-5'
+    - cron: '17 0 * * 1-5'
+permissions:
+  contents: read
+concurrency:
+  group: market-talk-page
+  cancel-in-progress: false
+jobs:
+  plan:
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.head_repository.full_name == github.repository &&
+       github.event.workflow_run.head_branch == 'main' &&
+       (github.event.workflow_run.event == 'schedule' || github.event.workflow_run.event == 'workflow_dispatch'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      action: ${{ steps.plan.outputs.action }}
+      slot_date: ${{ steps.plan.outputs.slot_date }}
+      revision: ${{ steps.plan.outputs.revision }}
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      FACE_PAGE_ID: ${{ secrets.FACE_PAGE_ID }}
+      MARKET_TALK_WATCHDOG_AUTO_RECOVERY_ENABLED: ${{ vars.MARKET_TALK_WATCHDOG_AUTO_RECOVERY_ENABLED || 'false' }}
+      MARKET_TALK_SCHEDULE_ENABLED: ${{ vars.MARKET_TALK_SCHEDULE_ENABLED || 'false' }}
+      MARKET_TALK_AUTO_ENABLED: ${{ vars.MARKET_TALK_AUTO_ENABLED || 'false' }}
+      MARKET_TALK_LIVE: ${{ vars.MARKET_TALK_LIVE || 'false' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install --require-hashes -r sidestory/market_talk/requirements.lock
+      - id: plan
+        name: Read-only DB classification
+        env:
+          SCHEDULE: ${{ github.event.schedule }}
+        shell: bash
+        run: |
+          args=(--output output/market-talk-report.json --github-output "$GITHUB_OUTPUT")
+          if [[ "$SCHEDULE" == '17 0 * * 1-5' ]]; then args+=(--audit); fi
+          if [[ "$SCHEDULE" == '40 14 * * 1-5' ]]; then args+=(--final); fi
+          python -m sidestory.market_talk.recovery "${args[@]}"
+      - name: Safe operational summary
+        if: always()
+        run: python -m sidestory.market_talk.reporting
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: market-talk-watchdog-${{ github.run_id }}-${{ github.run_attempt }}
+          path: output/market-talk-report.json
+          if-no-files-found: error
+  recover:
+    needs: plan
+    if: needs.plan.outputs.action == 'recovery' || needs.plan.outputs.action == 'verify'
+    uses: ./.github/workflows/sidestory_market_talk_execute.yml
+    with:
+      stage: automate
+      mode: ${{ needs.plan.outputs.action }}
+      live: true
+      slot_date: ${{ needs.plan.outputs.slot_date }}
+      revision: ${{ needs.plan.outputs.action == 'verify' && needs.plan.outputs.revision || '' }}
+    secrets:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      FACE_PAGE_ID: ${{ secrets.FACE_PAGE_ID }}
+      FACE_PAGE_TOKEN: ${{ secrets.FACE_PAGE_TOKEN }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

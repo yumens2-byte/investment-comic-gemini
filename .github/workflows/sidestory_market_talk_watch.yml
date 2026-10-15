@@ -6,16 +6,10 @@ on:
         description: Optional KST YYYY-MM-DD completed weekday
         type: string
         default: ''
-  schedule:
-    - cron: '10 9 * * 1-5' # KST 18:10 weekdays; inspect today's closed slot.
 permissions:
   contents: read
-concurrency:
-  group: market-talk-watch
-  cancel-in-progress: false
 jobs:
   watch:
-    if: github.event_name == 'workflow_dispatch' || vars.MARKET_TALK_WATCH_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
@@ -32,14 +26,10 @@ jobs:
       - name: Read-only slot completion check
         env:
           REQUEST_SLOT_DATE: ${{ inputs.slot_date }}
-        shell: bash
         run: |
           args=(--stage watch --output output/market-talk-report.json)
           if [[ -n "$REQUEST_SLOT_DATE" ]]; then args+=(--slot-date "$REQUEST_SLOT_DATE"); fi
           python -m sidestory.market_talk "${args[@]}"
-      - name: Safe operational summary
-        if: always()
-        run: python -m sidestory.market_talk.reporting
       - uses: actions/upload-artifact@v4
         if: always()
         with:

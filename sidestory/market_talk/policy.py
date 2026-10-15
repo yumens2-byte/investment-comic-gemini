@@ -81,7 +81,7 @@ def scheduled_slot(now, requested_day=""):
 
 
 def source_hash(snapshot, policy_version):
-    if policy_version not in {"market-talk-3", "market-talk-4"}:
+    if policy_version not in {"market-talk-3", "market-talk-4", "market-talk-5"}:
         # v1/v2 revisions were hashed from the old projection; do not mutate them.
         snapshot = {k: snapshot[k] for k in LEGACY_FIELDS if k in snapshot}
     return digest(snapshot)
