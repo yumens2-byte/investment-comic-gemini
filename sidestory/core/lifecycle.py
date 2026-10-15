@@ -39,7 +39,10 @@ def resume_status(row: dict[str, Any]) -> str:
     """Status to restore a held episode to, based on which artifacts exist."""
     if row.get("slides_json") and row.get("manifest_json"):
         return "assembled"
-    if row.get("panels_json"):
+    # Partial image checkpoints are not a completed image stage. Returning
+    # image_done here would silently skip ungenerated panels after HOLD release.
+    entries = (row.get("panels_json") or {}).get("panels") or []
+    if {p.get("idx") for p in entries} == set(range(1, 7)) and len(entries) == 6:
         return "image_done"
     if row.get("script_json"):
         return "narrative_done"
