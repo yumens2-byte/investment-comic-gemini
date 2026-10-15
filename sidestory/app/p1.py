@@ -196,9 +196,8 @@ def _image(sid: str, side_day: date, row: dict[str, Any], deps: P1Deps,
         path = Path(entry["path"])
         if sha256_file(path) != entry.get("sha256"):
             raise StageFailure(
-                "stored panel checkpoint file missing or changed; restore artifact before retry",
+                "stored panel checkpoint file missing or changed; Restore artifact before retry",
                 [sg2], {"panel": entry["idx"], "run_id": checkpoint.get("run_id")},
-                keep_status=True,
             )
     sg8: list[GateResult] = []
     total = float(checkpoint.get("cost_usd") or 0)
@@ -437,6 +436,17 @@ def run_p1(side_day: date, deps: P1Deps, *, force: bool = False,
                     "ledger_states": sorted({str(b.get("state")) for b in blockers}),
                 }))
                 return results
+            # A paid, SG-8-verified checkpoint is immutable. Keep HOLD until the
+            # original artifact has actually been restored in the current runner.
+            partial = (row.get("panels_json") or {}).get("panels") or []
+            for entry in partial:
+                if sha256_file(Path(entry["path"])) != entry.get("sha256"):
+                    results.append(StageResult("p1", sid, "hold", detail={
+                        "reason": "Restore original checkpoint artifact before HOLD release",
+                        "panel": entry.get("idx"),
+                        "artifact_run_id": (row.get("panels_json") or {}).get("run_id"),
+                    }))
+                    return results
         status = lifecycle.resume_status(row)
         if not deps.store.update_episode(sid, {"status": status, "error_message": None},
                                          expect_status="hold"):
