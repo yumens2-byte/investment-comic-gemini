@@ -18,7 +18,10 @@ def test_transitions() -> None:
 def test_resume_and_remaining() -> None:
     assert lifecycle.resume_status({}) == "draft"
     assert lifecycle.resume_status({"script_json": {"a": 1}}) == "narrative_done"
-    assert lifecycle.resume_status({"script_json": {}, "panels_json": {"p": 1}}) == "image_done"
+    assert lifecycle.resume_status({"script_json": {"a": 1},
+                                    "panels_json": {"panels": [{"idx": i} for i in range(1, 4)]}}) == "narrative_done"
+    assert lifecycle.resume_status({"script_json": {"a": 1},
+                                    "panels_json": {"panels": [{"idx": i} for i in range(1, 7)]}}) == "image_done"
     assert lifecycle.resume_status({"slides_json": [1], "manifest_json": {"a": 1},
                                     "panels_json": {"p": 1}}) == "assembled"
     assert lifecycle.remaining_stages("draft") == ["narrative", "image", "assembly"]
