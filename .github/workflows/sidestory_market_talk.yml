@@ -7,107 +7,48 @@ on:
         options: [inspect, approve, publish, automate, verify, watch, pause, resume, reconcile, hold]
         default: inspect
       revision:
-        description: SHA-256 revision (empty inspect checks setup; empty publish selects approved due item)
         type: string
         default: ''
       confirm:
-        description: Type YES to approve or publish
+        description: Type YES for live work or an operator mutation
         type: string
         default: ''
       review_note:
-        description: Evidence, session and canon review result or operation reason (approve ≥10 characters; operations ≥20)
         type: string
         default: ''
       slot_date:
-        description: Optional KST YYYY-MM-DD slot for watch or scheduled testing
         type: string
         default: ''
       post_id:
-        description: Exact Facebook post ID for reconciliation
         type: string
         default: ''
       not_posted:
-        description: Reconcile as not posted only after operator investigation
         type: boolean
         default: false
-      scheduler:
-        description: Internal on-time tick from the Supabase pg_cron dispatcher; runs exactly like a schedule event
-        type: boolean
-        default: false
-  # GitHub cron is best-effort and has fired 5-9 hours late for this repo, after the
-  # KST 13:00-18:00 window. The primary clock is the Supabase pg_cron dispatcher
-  # (private.icg_talk_dispatch, scheduler=true); these remain only as a fallback.
   schedule:
-    - cron: '*/10 4-8 * * 1-5' # KST 13:00-17:50; persisted random due time.
-    - cron: '0 9 * * 1-5' # KST 18:00 cutoff check; no new publishing.
+    - cron: '7,27,47 4-8 * * 1-5'
 permissions:
   contents: read
 concurrency:
-  group: facebook-market-talk
+  group: market-talk-page
   cancel-in-progress: false
 jobs:
   market-talk:
-    if: (github.event_name == 'workflow_dispatch' && !inputs.scheduler) || vars.MARKET_TALK_SCHEDULE_ENABLED == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    env:
+    if: github.event_name == 'workflow_dispatch' || vars.MARKET_TALK_SCHEDULE_ENABLED == 'true'
+    uses: ./.github/workflows/sidestory_market_talk_execute.yml
+    with:
+      stage: ${{ github.event_name == 'schedule' && 'automate' || inputs.stage }}
+      mode: normal
+      live: ${{ github.event_name == 'schedule' || inputs.confirm == 'YES' }}
+      revision: ${{ inputs.revision || '' }}
+      confirm: ${{ inputs.confirm || '' }}
+      review_note: ${{ inputs.review_note || '' }}
+      slot_date: ${{ inputs.slot_date || '' }}
+      post_id: ${{ inputs.post_id || '' }}
+      not_posted: ${{ inputs.not_posted || false }}
+    secrets:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
       FACE_PAGE_ID: ${{ secrets.FACE_PAGE_ID }}
-      MARKET_TALK_LIVE: ${{ vars.MARKET_TALK_LIVE || 'false' }}
-      MARKET_TALK_CHARACTER_IDS: ${{ vars.MARKET_TALK_CHARACTER_IDS }}
-      MARKET_TALK_AUTO_ENABLED: ${{ vars.MARKET_TALK_AUTO_ENABLED || 'false' }}
-      MARKET_TALK_MODEL: ${{ vars.MARKET_TALK_MODEL }}
-      MARKET_TALK_INPUT_USD_PER_MTOK: ${{ vars.MARKET_TALK_INPUT_USD_PER_MTOK || '0' }}
-      MARKET_TALK_OUTPUT_USD_PER_MTOK: ${{ vars.MARKET_TALK_OUTPUT_USD_PER_MTOK || '0' }}
-      DRY_RUN: 'true'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - run: pip install --require-hashes -r sidestory/market_talk/requirements.lock
-      - name: Inspect, review or publish exact immutable revision
-        env:
-          REQUEST_STAGE: ${{ (github.event_name == 'workflow_dispatch' && !inputs.scheduler) && inputs.stage || (vars.MARKET_TALK_AUTO_ENABLED == 'true' && 'automate' || 'publish') }}
-          SCHEDULER_TICK: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.scheduler) }}
-          REQUEST_REVISION: ${{ inputs.revision }}
-          REQUEST_CONFIRM: ${{ inputs.confirm }}
-          REQUEST_NOTE: ${{ inputs.review_note }}
-          REQUEST_SLOT_DATE: ${{ inputs.slot_date }}
-          REQUEST_POST_ID: ${{ inputs.post_id }}
-          REQUEST_NOT_POSTED: ${{ inputs.not_posted }}
-          REQUEST_ACTOR: ${{ github.actor }}
-          EVENT_NAME: ${{ github.event_name }}
-          MARKET_TALK_SCHEDULE_ENABLED: ${{ vars.MARKET_TALK_SCHEDULE_ENABLED || 'false' }}
-          FACE_PAGE_TOKEN: ${{ secrets.FACE_PAGE_TOKEN }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        shell: bash
-        run: |
-          args=(--stage "$REQUEST_STAGE" --output output/market-talk-report.json)
-          if [[ -n "$REQUEST_REVISION" ]]; then args+=(--revision "$REQUEST_REVISION"); fi
-          if [[ -n "$REQUEST_SLOT_DATE" ]]; then args+=(--slot-date "$REQUEST_SLOT_DATE"); fi
-          if [[ "$SCHEDULER_TICK" == "true" ]]; then args+=(--scheduled); fi
-          if [[ "$REQUEST_STAGE" == "reconcile" ]]; then
-            if [[ -n "$REQUEST_POST_ID" ]]; then args+=(--post-id "$REQUEST_POST_ID"); fi
-            if [[ "$REQUEST_NOT_POSTED" == "true" ]]; then args+=(--not-posted); fi
-          fi
-          if [[ "$REQUEST_STAGE" =~ ^(approve|pause|resume|reconcile|hold)$ ]]; then
-            args+=(--confirm "$REQUEST_CONFIRM" --actor "$REQUEST_ACTOR" --note "$REQUEST_NOTE")
-          fi
-          if [[ "$REQUEST_STAGE" == "publish" || "$REQUEST_STAGE" == "automate" ]]; then
-            if [[ "$SCHEDULER_TICK" == "true" || "$REQUEST_CONFIRM" == "YES" ]]; then
-              export DRY_RUN=false
-              args+=(--live)
-            fi
-          fi
-          python -m sidestory.market_talk "${args[@]}"
-      - name: Safe operational summary
-        if: always()
-        run: python -m sidestory.market_talk.reporting
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: market-talk-report-${{ github.run_id }}
-          path: output/market-talk-report.json
-          if-no-files-found: error
+      FACE_PAGE_TOKEN: ${{ secrets.FACE_PAGE_TOKEN }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

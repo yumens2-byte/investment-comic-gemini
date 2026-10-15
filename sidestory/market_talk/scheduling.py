@@ -28,7 +28,7 @@ def saved_slot(row):
     try:
         day = date.fromisoformat(row["slot_date"])
         due, end = timestamp(row["due_at"]), timestamp(row["window_end"])
-        if row.get("policy_version") in (4, "market-talk-4"):
+        if row.get("policy_version") in (4, "market-talk-4", 5, "market-talk-5"):
             if (
                 day.weekday() >= 5
                 or not datetime.combine(day, time(13), KST)
@@ -36,9 +36,16 @@ def saved_slot(row):
                 <= datetime.combine(day, time(17, 30), KST)
                 or due.second
                 or due.microsecond
-                or end != datetime.combine(day, time(18), KST)
+                or end != datetime.combine(
+                    day, time(23, 30) if row.get("policy_version") in (5, "market-talk-5")
+                    else time(18), KST
+                )
             ):
                 raise ValueError()
+        if row.get("policy_version") in (5, "market-talk-5") and timestamp(
+            row.get("normal_end")
+        ) != datetime.combine(day, time(18), KST):
+            raise ValueError()
         if due.astimezone(KST).date() != day or end.astimezone(KST).date() != day or due >= end:
             raise ValueError()
     except (KeyError, TypeError, ValueError):
