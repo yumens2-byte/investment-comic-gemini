@@ -186,8 +186,9 @@ def test_missing_checkpoint_file_does_not_trigger_new_image_call(env) -> None:
     Path(row["panels_json"]["panels"][0]["path"]).unlink()
     env.images = FakeImages()
     resumed = run_p1(TUE, env, retry_hold=True)
-    assert resumed[-1].status == "error"
-    assert "checkpoint file missing" in resumed[-1].detail["reason"]
+    assert resumed[-1].status == "hold"
+    assert "Restore original checkpoint artifact" in resumed[-1].detail["reason"]
+    assert env.store.get_episode(SID)["status"] == "hold"
     assert env.images.calls == []
 
 
