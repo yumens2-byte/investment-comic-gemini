@@ -8,7 +8,7 @@ from pathlib import Path
 
 def summary(report):
     lines = ["### Market Talk result", ""]
-    for key in ("status", "phase", "slot_date", "revision", "run_id"):
+    for key in ("status", "phase", "slot_date", "revision", "run_id", "mode", "action"):
         value = str(report.get(key, ""))
         if value and re.fullmatch(r"[A-Za-z0-9:_-]{1,120}", value):
             lines.append(f"- {key}: `{value}`")
@@ -33,6 +33,16 @@ def main():
         "REPORT_MISSING",
         "SKIPPED_OUTSIDE_WINDOW",
         "MISSED_WINDOW",
+        "MISSED_FINAL",
+        "DB_UNAVAILABLE",
+        "RECONCILE_REQUIRED",
+        "RESULT_PERSISTENCE_HOLD",
+        "MODEL_HOLD",
+        "HOLD",
+        "VERIFY_EXHAUSTED",
+        "RETRY_EXHAUSTED",
+        "MULTIPLE_DRAFTS",
+        "MULTIPLE_TALK_DELIVERIES",
     }:
         print("::warning::Market Talk needs operator review; see the safe report artifact.")
 

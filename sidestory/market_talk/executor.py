@@ -69,7 +69,12 @@ def main(argv=None):
     report = {"status": "BLOCKED", "blockers": ["WORKER_UNAVAILABLE"]}
     try:
         from sidestory.market_talk.__main__ import (
-            ROOT, connection, current, flag, live_publisher, publish_live,
+            ROOT,
+            connection,
+            current,
+            flag,
+            live_publisher,
+            publish_live,
         )
         from sidestory.market_talk.automation import automatic_draft
         from sidestory.market_talk.service import verify_publication

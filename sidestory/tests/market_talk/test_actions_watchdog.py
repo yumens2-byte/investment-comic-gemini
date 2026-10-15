@@ -7,8 +7,8 @@ import pytest
 import yaml
 
 from sidestory.market_talk.executor import execute
-from sidestory.market_talk.recovery import audit_day, plan, retryable
 from sidestory.market_talk.policy import timestamp
+from sidestory.market_talk.recovery import audit_day, plan, retryable
 from sidestory.market_talk.scheduling import saved_slot
 from sidestory.tests.conftest import REPO_ROOT
 
@@ -150,7 +150,8 @@ def test_unknown_execution_makes_zero_callbacks():
     value = snapshot()
     value["unresolved"] = 1
     calls = []
-    forbidden = lambda *a: pytest.fail("external operation forbidden")
+    def forbidden(*a):
+        pytest.fail("external operation forbidden")
     report = execute(None, fake_store(value, calls), "123", day=DAY, mode="recovery",
                      run="1", automatic=forbidden, publish_one=forbidden, verify_one=forbidden)
     assert report["status"] == "RECONCILE_REQUIRED" and calls == []
@@ -173,7 +174,8 @@ def test_published_unverified_uses_only_exact_id_verification():
     value, calls = snapshot(), []
     value["deliveries"] = [{"state": "PUBLISHED", "revision": REV,
                             "post_id": "123_1", "verified": False}]
-    forbidden = lambda *a: pytest.fail("generation/POST forbidden")
+    def forbidden(*a):
+        pytest.fail("generation/POST forbidden")
     report = execute(None, fake_store(value, calls), "123", day=DAY, mode="verify",
                      run="1", automatic=forbidden, publish_one=forbidden,
                      verify_one=lambda r: {"status": "PUBLISHED", "verified": True, "revision": r})
@@ -200,3 +202,18 @@ def test_workflows_have_no_external_dispatch_or_watch_skip_gate():
                  "sidestory_market_talk_watchdog.yml"]:
         text = (root / name).read_text()
         assert "/dispatches" not in text and "github_icg_dispatch_pat" not in text
+
+
+def test_v5_context_keeps_short_public_copy_and_full_provenance():
+    from sidestory.market_talk.policy import source_hash
+    from sidestory.tests.market_talk.test_content_and_delivery import sample
+
+    draft = sample()
+    context = draft.context.model_copy(update={"policy_version": "market-talk-5"})
+    updated = draft.model_copy(update={"context": context})
+    assert updated.context.__class__.model_validate(context.model_dump()).policy_version == "market-talk-5"
+    assert "(창작 대사)" not in updated.body
+    assert " : “" in updated.body
+    first = {"vix": 10, "data_quality": {"provider": "a"}}
+    second = {"vix": 10, "data_quality": {"provider": "b"}}
+    assert source_hash(first, "market-talk-5") != source_hash(second, "market-talk-5")

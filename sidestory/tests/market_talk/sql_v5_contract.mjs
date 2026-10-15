@@ -52,7 +52,7 @@ await rpc('talk_finish_v4',['p',hash,sent.token,'PUBLISHED','p_1','']);
 ok('exact publication stored',(await rpc('talk_snapshot_v5',['p',day])).deliveries[0].post_id==='p_1');
 await rpc('talk_execution_finish_v5',['p',day,owner,'POSTED_UNVERIFIED','RECEIPT_READ_FAILED',true]);
 ok('verification cooldown',(await claim('p',other,'verify')).status==='RETRY_WAIT');
-await q("update icg_side.test_clock set t='2026-10-16T11:10:01Z'");
+await q("update icg_side.test_clock set t='2026-10-16T11:01:01Z'");
 ok('verification can resume',(await claim('p',other,'verify')).status==='CLAIMED');
 await rpc('talk_record_outcome_v4',['p',day,'run2','verify','PUBLISHED','PUBLISHED_VERIFIED',hash]);
 await rpc('talk_execution_finish_v5',['p',day,other,'PUBLISHED','PUBLISHED',false]);

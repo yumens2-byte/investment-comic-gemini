@@ -139,7 +139,8 @@ begin
  if p_status is null or p_status !~ '^[A-Z_]{2,60}$' or p_reason is null or p_reason !~ '^[A-Z0-9_]{2,100}$'
  or p_retryable is null then raise exception 'invalid safe outcome'; end if;
  delay_seconds:=case when r.mode='verify' then
-   case r.verification_retry_count when 1 then 60 when 2 then 300 else 900 end
+   case r.verification_retry_count when 1 then 300 else 900 end
+   when p_status='POSTED_UNVERIFIED' then 60
    when r.execution_count=1 then 600 else 1800 end;
  update icg_side.talk_recovery set last_status=case when p_retryable or p_status='PUBLISHED' then p_status else 'HOLD' end,
  last_reason=p_reason,lease_owner=null,lease_expires_at=null,
