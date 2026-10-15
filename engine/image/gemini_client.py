@@ -508,25 +508,8 @@ def generate_panel(
             record.update(status="terminal" if terminal else "unknown", error=str(exc),
                           latency_sec=round(time.monotonic() - started, 2))
             _write_jsonl_log(log_path, record)
-            # Never let a ledger-settlement exception erase the provider failure.
-            # Keep full exception text out of public GitHub logs (may contain request data).
-            provider_type = type(exc).__name__
-            settlement_type = None
-            try:
-                settle(token, state="terminal" if terminal else "unknown", actual_cost=None)
-            except Exception as settlement_exc:
-                settlement_type = type(settlement_exc).__name__
-            logger.error(
-                "[gemini] PROVIDER_OUTCOME_UNCERTAIN panel=%s provider_error_type=%s "
-                "settlement_error_type=%s ledger_state=%s",
-                panel_idx, provider_type, settlement_type or "none",
-                "terminal" if terminal else "unknown",
-            )
-            raise GenerationHold(
-                f"Provider outcome requires reconciliation; panel={panel_idx}; "
-                f"provider_error_type={provider_type}; "
-                f"settlement_error_type={settlement_type or 'none'}"
-            ) from exc
+            settle(token, state="terminal" if terminal else "unknown", actual_cost=None)
+            raise GenerationHold("Provider outcome requires reconciliation: " + str(exc)) from exc
 
         measured = bool(input_tokens or output_tokens)
         actual_cost = _calc_cost(input_tokens, output_tokens) if measured else None
