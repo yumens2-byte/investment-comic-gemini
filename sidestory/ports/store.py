@@ -16,6 +16,10 @@ class SideStore(Protocol):
 
     def get_episode(self, side_episode_id: str) -> dict[str, Any] | None: ...
 
+    def image_ledger_blockers(self, scope: str) -> list[dict[str, Any]]:
+        """Unreconciled image calls block HOLD release; never cause paid retries."""
+        ...
+
     def log(self, stage: str, status: str, detail: dict[str, Any]) -> None: ...
 
     def live_publication(self, side_episode_id: str, channel: str) -> dict[str, Any] | None:

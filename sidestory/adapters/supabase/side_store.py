@@ -43,6 +43,19 @@ class SupabaseSideStore:
         data = getattr(resp, "data", None) or []
         return data[0] if data else None
 
+    def image_ledger_blockers(self, scope: str) -> list[dict[str, Any]]:
+        """Read-only: unknown, reserved, and terminal outcomes need reconciliation."""
+        resp = (
+            side_table(self._client, "image_generation_calls")
+            .select("panel,state,created_at")
+            .eq("scope", scope)
+            .in_("state", ["reserved", "unknown", "terminal"])
+            .order("created_at", desc=True)
+            .limit(30)
+            .execute()
+        )
+        return list(getattr(resp, "data", None) or [])
+
     def live_publication(self, side_episode_id: str, channel: str) -> dict[str, Any] | None:
         resp = (
             side_table(self._client, "side_publications")

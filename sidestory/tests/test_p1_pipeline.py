@@ -143,11 +143,53 @@ def test_image_hold_records_progress_and_stops(env) -> None:
     assert [p["idx"] for p in last.detail["panels_done"]] == [1, 2, 3]
     assert [g.gate for g in last.gates] == ["SG-1", "SG-2", "SG-8", "SG-8", "SG-8"]
     row = env.store.get_episode(SID)
-    assert row["status"] == "hold" and row.get("panels_json") is None
+    assert row["status"] == "hold"
+    assert [p["idx"] for p in row["panels_json"]["panels"]] == [1, 2, 3]
     # resume from hold goes back to image (script kept), not narrative
     env.images = FakeImages()
     resumed = run_p1(TUE, env, retry_hold=True)
     assert _statuses(resumed) == [("image", "image_done"), ("assembly", "assembled")]
+
+
+def test_unknown_image_ledger_blocks_hold_release_without_paid_call(env) -> None:
+    env.images = FakeImages(hold_on=1)
+    initial = run_p1(TUE, env)
+    assert initial[-1].status == "hold"
+    assert env.store.get_episode(SID)["status"] == "hold"
+    env.store.ledger_blockers.append({
+        "scope": (env.output_root / "2026-10-06" / "panels").as_posix(),
+        "panel": 1, "state": "unknown",
+    })
+    env.images = FakeImages()
+    resumed = run_p1(TUE, env, retry_hold=True)
+    assert resumed[-1].status == "hold"
+    assert "ledger requires reconciliation" in resumed[-1].detail["reason"]
+    assert env.images.calls == []
+    assert env.store.get_episode(SID)["status"] == "hold"
+
+
+def test_partial_image_checkpoint_skips_paid_completed_panels(env) -> None:
+    env.images = FakeImages(hold_on=4)
+    first = run_p1(TUE, env)
+    assert first[-1].status == "hold"
+    assert [p["idx"] for p in env.store.get_episode(SID)["panels_json"]["panels"]] == [1, 2, 3]
+    env.images = FakeImages()
+    resumed = run_p1(TUE, env, retry_hold=True)
+    assert resumed[-1].status == "assembled"
+    assert [call[0] for call in env.images.calls] == [4, 5, 6]
+
+
+def test_missing_checkpoint_file_does_not_trigger_new_image_call(env) -> None:
+    env.images = FakeImages(hold_on=4)
+    run_p1(TUE, env)
+    row = env.store.get_episode(SID)
+    Path(row["panels_json"]["panels"][0]["path"]).unlink()
+    env.images = FakeImages()
+    resumed = run_p1(TUE, env, retry_hold=True)
+    assert resumed[-1].status == "hold"
+    assert "Restore original checkpoint artifact" in resumed[-1].detail["reason"]
+    assert env.store.get_episode(SID)["status"] == "hold"
+    assert env.images.calls == []
 
 
 def test_assembly_requires_panel_artifacts(env, tmp_path) -> None:
