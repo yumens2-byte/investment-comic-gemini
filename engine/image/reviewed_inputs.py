@@ -11,6 +11,8 @@ from engine.publish.manifest import script_hash
 
 
 def reviewed_panel_prompts(script: dict, *, performance_specs=None) -> list[PanelPrompt] | None:
+    from engine.image.scene_contract import validate_scene_contracts, validate_scene_text
+    contracts = validate_scene_contracts(script)
     if '_reviewed_image_inputs' not in script:
         return None
     bundle = script['_reviewed_image_inputs']
@@ -52,6 +54,10 @@ def reviewed_panel_prompts(script: dict, *, performance_specs=None) -> list[Pane
         if (not isinstance(prompt, str) or not prompt.strip() or not isinstance(names, list)
                 or not isinstance(hashes, list) or len(names) != len(hashes)):
             raise GenerationHold('Malformed reviewed prompt or references')
+        if str(idx) in contracts:
+            if panel.get('action', '') not in prompt or panel.get('setting', '') not in prompt:
+                raise GenerationHold('Reviewed prompt differs from scene contract')
+            validate_scene_text(prompt, idx)
         for name in names:
             if (not isinstance(name, str) or '\\' in name or
                     PurePosixPath(name).is_absolute() or '..' in PurePosixPath(name).parts

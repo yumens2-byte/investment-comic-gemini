@@ -22,6 +22,8 @@ jobs:
         run: |
           export PGLITE_MODULE_PATH="$RUNNER_TEMP/icg-sql-contract/node_modules/@electric-sql/pglite/dist/index.js"
           node tests/integration/image_attempt_diagnostics_sql.mjs
+          node tests/integration/image_retry_sql.mjs
+          node tests/integration/image_outcome_v3_sql.mjs
   narrative-database-contract:
     name: Narrative Database Contract
     runs-on: ubuntu-latest

@@ -360,6 +360,12 @@ def build_panel_prompt(
     outcome = battle_outcome or panel.get("battle_outcome")
     no_battle = panel.get("scenario_type") == "NO_BATTLE" or outcome == "NO_BATTLE"
     background_only = panel_type in {"TEXT_CARD", "DISCLAIMER"}
+    scene_contract = panel.get("_scene_contract")
+    if scene_contract is not None:
+        from engine.image.scene_contract import validate_panel_contract
+        validate_panel_contract(panel, scene_contract)
+        if performance_spec is not None:
+            raise PipelineAborted("prompt", "Reviewed non-contact scene cannot inherit performance motion")
     setting = panel.get("setting", "Financial district")
     action = panel.get("action", "")
     if panel_type == "TEXT_CARD":
@@ -392,7 +398,14 @@ def build_panel_prompt(
 
     # 패널 타입별 시각적 스펙 (조명/구도/분위기) — Notion에서 로드
     visual_spec_block = _get_panel_visual_spec(panel_type)
-    if background_only:
+    if scene_contract is not None:
+        tone_hint = "Quiet symbolic tension; separate stationary figures observing their environment"
+        visual_spec_block = (
+            "COMPOSITION: Follow the reviewed observation action; retain the exact cast and props. "
+            "Keep figures separated. Light patterns remain inside independent displays. "
+            "No physical contact, attacks, weapon discharge or injury."
+        )
+    elif background_only:
         tone_hint = "Clean abstract background without characters or typography"
         visual_spec_block = "COMPOSITION: Abstract environment only; no characters, silhouettes, bodies, weapons or faces."
     elif no_battle and panel.get("_action_mode") == "TACTICAL_ACTION":
@@ -504,7 +517,7 @@ def build_panel_prompt(
 
     # CHART DIRECTION RULE — outcome 기반 배경 차트 색상 (BATTLE/CLIMAX에만 의미 있음)
     chart_dir = _get_chart_direction(outcome)
-    if chart_dir and panel_type in ("BATTLE", "CLIMAX", "AFTERMATH"):
+    if chart_dir and not scene_contract and panel_type in ("BATTLE", "CLIMAX", "AFTERMATH"):
         lines += [chart_dir, ""]
 
     # Identity Lock (캐릭터 있는 패널만)
@@ -541,7 +554,11 @@ def build_panel_prompt(
     if ref_paths:
         lines.append(f"\nREF IMAGES: {len(ref_paths)} character reference(s) provided.")
 
-    return "\n".join(lines)
+    prompt = "\n".join(lines)
+    if scene_contract is not None:
+        from engine.image.scene_contract import validate_scene_text
+        validate_scene_text(prompt, panel["idx"])
+    return prompt
 
 
 def build_for_episode(
@@ -562,6 +579,8 @@ def build_for_episode(
     from engine.image.ref_loader import get_refs_for_panel
 
     panels = episode_script.get("panels", [])
+    from engine.image.scene_contract import validate_scene_contracts
+    scene_contracts = validate_scene_contracts(episode_script)
     panel_prompts: list[PanelPrompt] = []
 
     specs_by_idx = {
@@ -594,6 +613,8 @@ def build_for_episode(
         if len(ref_paths) != len(expected_refs) or any(not path.is_file() for path in ref_paths):
             raise PipelineAborted("prompt", f"Incomplete character references for panel {idx}")
         effective_panel = dict(panel)
+        if str(idx) in scene_contracts:
+            effective_panel["_scene_contract"] = scene_contracts[str(idx)]
         decision = episode_script.get("_episode_decision") or {}
         if decision and panel.get("scenario_type") not in {None, decision["scenario_type"]}:
             raise PipelineAborted("prompt", f"Panel {idx} contradicts final episode decision")

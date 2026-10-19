@@ -1830,6 +1830,9 @@ def step_image(
             )
 
         from engine.image.reviewed_inputs import reviewed_panel_prompts
+        from engine.image.scene_contract import validate_scene_contracts
+
+        validate_scene_contracts(script_dict)
 
         panel_prompts = reviewed_panel_prompts(script_dict, performance_specs=performance_specs)
         if panel_prompts is None:

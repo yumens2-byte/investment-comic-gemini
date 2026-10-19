@@ -70,6 +70,11 @@ class ProductionGenerationGuard:
                 'p_fingerprint': self.fingerprint}
 
     def reuse(self, output_path: Path) -> bool:
+        from engine.image.provider_outcome import outcome_v3_enabled
+        if outcome_v3_enabled():
+            capability = self._rpc('image_generation_outcome_v3_capability', {})
+            if capability.get('version') != 'image-outcome-3':
+                raise GenerationHold('Outcome v3 database contract unavailable; provider not called')
         name = ('image_generation_inspect_retry' if self.retry_plan_id else
                 'image_generation_inspect' if self.revision == 1 else 'image_generation_inspect_v2')
         params = self._identity()
@@ -119,6 +124,10 @@ class ProductionGenerationGuard:
         if actual_cost is not None and (isinstance(actual_cost, bool)
                                        or not math.isfinite(actual_cost) or actual_cost < 0):
             raise GenerationHold('Invalid generation cost; reservation remains held')
+        from engine.image.provider_outcome import outcome_v3_enabled
+        if outcome_v3_enabled():
+            return self.finish_outcome(token, state=state, actual_cost=actual_cost,
+                                       output_hash=output_hash)
         receipt = self._rpc('image_generation_finish', {
             **self._identity(), 'p_token': token, 'p_state': state,
             'p_actual_cost': actual_cost, 'p_output_hash': output_hash,
@@ -142,6 +151,10 @@ class ProductionGenerationGuard:
         if actual_cost is not None and (isinstance(actual_cost, bool)
                 or not math.isfinite(actual_cost) or actual_cost < 0):
             raise GenerationHold("Invalid generation cost")
+        from engine.image.provider_outcome import outcome_v3_enabled
+        if outcome_v3_enabled():
+            return self.finish_outcome(token, state=state, actual_cost=actual_cost,
+                                       output_hash=output_hash, reason=reason)
         receipt = self._rpc("image_generation_finish_retry", {
             **self._identity(), "p_plan_id": self.retry_plan_id, "p_token": token,
             "p_state": state, "p_actual_cost": actual_cost,
@@ -149,6 +162,18 @@ class ProductionGenerationGuard:
         })
         if receipt.get("settled") is not True:
             raise GenerationHold("Settlement not confirmed")
+
+    def finish_outcome(self, token: str, *, state: str, actual_cost: float | None,
+                       output_hash: str | None = None, reason: str | None = None):
+        from engine.image.provider_outcome import SettlementReceipt
+        receipt = self._rpc("image_generation_finish_outcome_v3", {
+            **self._identity(), "p_token": token, "p_state": state,
+            "p_actual_cost": actual_cost, "p_output_hash": output_hash,
+            "p_reason": reason, "p_plan_id": self.retry_plan_id,
+            "p_revision": self.revision,
+        })
+        self.last_settlement = SettlementReceipt.parse(receipt)
+        return self.last_settlement
 
     def select_retry_variant(self, prompts: tuple[str, ...], suffix: str) -> int:
         receipt = self._rpc('image_generation_retry_cursor', {
