@@ -10,6 +10,7 @@ it keeps combat briefs inside the COMBAT ACTION CONTRACT.
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -64,7 +65,8 @@ def _directed_attack(names: tuple[str, ...]) -> re.Pattern[str]:
                       r"who|with|from|back|again|hard|directly)\b))")
     targets = [pronoun_object] + [re.escape(name) + r"\b(?!'s)" for name in names]
     return re.compile(
-        rf"\b(?:{_ATTACK_VERBS})\b(?:\W+\w+){{0,8}}?\W+{_DIRECTED}\W+"
+        # Stay within a clause, but do not silently exempt verbose actions.
+        rf"\b(?:{_ATTACK_VERBS})\b[^.;!?\n]{{0,1600}}?\b{_DIRECTED}\W+"
         rf"(?:\w+\W+){{0,2}}?(?:{'|'.join(targets)})",
         re.IGNORECASE,
     )
@@ -73,7 +75,7 @@ def _directed_attack(names: tuple[str, ...]) -> re.Pattern[str]:
 def check_action(action: str, panel_idx: int = 0,
                  names: tuple[str, ...] | None = None) -> list[ActionViolation]:
     """Return rule violations for one panel action (English image brief)."""
-    text = " ".join(str(action or "").split())
+    text = " ".join(unicodedata.normalize("NFKC", str(action or "")).split())
     if not text:
         return []
     found: list[ActionViolation] = []

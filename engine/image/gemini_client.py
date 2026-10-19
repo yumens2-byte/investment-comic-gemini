@@ -391,6 +391,10 @@ def generate_panel(
         return output_path, 0.0
     total_cost = 0.0
     def settle(token, *, state, actual_cost, output_hash=None, reason=None):
+        from engine.image.provider_outcome import outcome_v3_enabled
+        if outcome_v3_enabled() and not plan:
+            return guard.finish_outcome(token, state=state, actual_cost=actual_cost,
+                                        output_hash=output_hash, reason=reason)
         if plan:
             guard.finish_reviewed(token, state=state, actual_cost=actual_cost,
                                   output_hash=output_hash, reason=reason)
@@ -442,21 +446,14 @@ def generate_panel(
             terminal = _terminal_error(exc)
             reason = normalized_reason(exc.reason)
             if plan:
-                private = Path(os.environ["ICG_IMAGE_DIAGNOSTICS_DIR"]).resolve()
-                import uuid
-                evidence = private / f"response-{panel_idx}-{uuid.uuid4().hex}.json"
-                with evidence.open("x", encoding="utf-8") as handle:
-                    evidence.chmod(0o600)
-                    private_record = {"panel": panel_idx, "plan_id": plan.plan_id,
+                private_record = {"panel": panel_idx, "plan_id": plan.plan_id,
                                       "run_id": os.environ.get("GITHUB_RUN_ID", "local"),
                                       "attempt": used + attempt, "finish_reason": reason,
                                       "prompt_hash": hashlib.sha256(prompt.encode()).hexdigest(),
                                       "prompt_tokens": exc.prompt_tokens, "output_tokens": exc.output_tokens,
                                       "details": exc.details}
-                    json.dump(private_record, handle, ensure_ascii=False)
             record.update(status="terminal" if terminal else "failed", cost_usd=known_cost,
                           error=str(exc), latency_sec=round(time.monotonic() - started, 2))
-            _write_jsonl_log(log_path, record)
             refusal = f"provider_reason={exc.reason}; panel={panel_idx}"
             # Surface the provider's reason before settlement can replace it with a hold text.
             logger.warning("[gemini] PROVIDER_REFUSAL %s terminal=%s cost=%s",
@@ -469,6 +466,13 @@ def generate_panel(
                        actual_cost=known_cost, reason=reason)
             except GenerationHold as hold:
                 settlement_error = hold
+            # A completed paid response is settled before any local evidence I/O.
+            record.update(result_code="CONTENT_REVIEW_REQUIRED" if terminal else "INVALID_IMAGE",
+                          settlement_status="RECONCILIATION_REQUIRED" if settlement_error else "SETTLED")
+            try:
+                _write_jsonl_log(log_path, record)
+            except OSError:
+                logger.warning("[gemini] local evidence unavailable after settlement; panel=%s", panel_idx)
             if not plan:
                 try:
                     guard.store_attempt_diagnostic(token, "refusal", {
@@ -479,11 +483,23 @@ def generate_panel(
                     })
                 except GenerationHold as hold:
                     settlement_error = settlement_error or hold
-            if settlement_error is not None:
-                raise GenerationHold(f"{settlement_error}; {refusal}") from exc
             if plan:
                 # Settle the paid result first; evidence failure must never trigger a new call.
-                guard.store_diagnostic("refusal", private_record)
+                try:
+                    guard.store_diagnostic("refusal", private_record)
+                except GenerationHold as hold:
+                    settlement_error = settlement_error or hold
+                try:
+                    import uuid
+                    private = Path(os.environ["ICG_IMAGE_DIAGNOSTICS_DIR"]).resolve()
+                    evidence = private / f"response-{panel_idx}-{uuid.uuid4().hex}.json"
+                    with evidence.open("x", encoding="utf-8") as handle:
+                        evidence.chmod(0o600)
+                        json.dump(private_record, handle, ensure_ascii=False)
+                except OSError:
+                    settlement_error = settlement_error or GenerationHold("Private response evidence unavailable after settlement")
+            if settlement_error is not None:
+                raise GenerationHold(f"{settlement_error}; {refusal}") from exc
             if terminal:
                 if plan and reason in CONTENT_REASONS and known_cost is not None:
                     total_cost += known_cost
@@ -493,7 +509,7 @@ def generate_panel(
                         sleeper(retry_delay(attempt))
                         continue
                     raise PanelGenerationFailed(f"content retry exhausted; {refusal}", total_cost) from exc
-                raise GenerationHold(f"provider refused image; {refusal}") from exc
+                raise GenerationHold(f"provider refused image; {refusal}; code=CONTENT_REVIEW_REQUIRED") from exc
             total_cost += known_cost if known_cost is not None else _calc_cost(
                 _estimate_prompt_tokens(prompt, ref_paths), _ESTIMATED_IMAGE_OUTPUT_TOKENS
             )
@@ -507,7 +523,6 @@ def generate_panel(
             terminal = _terminal_error(exc)
             record.update(status="terminal" if terminal else "unknown", error=str(exc),
                           latency_sec=round(time.monotonic() - started, 2))
-            _write_jsonl_log(log_path, record)
             # Never let a ledger-settlement exception erase the provider failure.
             # Keep full exception text out of public GitHub logs (may contain request data).
             provider_type = type(exc).__name__
@@ -516,6 +531,11 @@ def generate_panel(
                 settle(token, state="terminal" if terminal else "unknown", actual_cost=None)
             except Exception as settlement_exc:
                 settlement_type = type(settlement_exc).__name__
+            record["error"] = type(exc).__name__
+            try:
+                _write_jsonl_log(log_path, record)
+            except OSError:
+                logger.warning("[gemini] local evidence unavailable after uncertain outcome")
             logger.error(
                 "[gemini] PROVIDER_OUTCOME_UNCERTAIN panel=%s provider_error_type=%s "
                 "settlement_error_type=%s ledger_state=%s",
@@ -542,8 +562,8 @@ def generate_panel(
             _validate_png(image_bytes)
         except Exception as exc:
             record.update(status="failed", error=str(exc))
-            _write_jsonl_log(log_path, record)
             settle(token, state="failed", actual_cost=actual_cost)
+            _write_jsonl_log(log_path, record)
             if enabled and actual_cost is None:
                 raise GenerationHold("Image usage missing; reconciliation required")
             if enabled and attempt < allowed_calls:
@@ -636,9 +656,34 @@ def generate_episode(
                         "content_retry_policy": "reviewed_plan_required",
                         "provider_reason": provider_reason,
                         "observed_provider_cost_usd": observed_cost,
+                        "observed_usage_cost_usd": observed_cost,
+                        "returned_panel_cost_usd": total_cost,
+                        "cost_scope": "current_run_attempt",
+                        "cost_source": "usage_calculation",
+                        "result_code": "CONTENT_REVIEW_REQUIRED" if provider_reason in CONTENT_REASONS | REVIEW_REASONS else
+                                       "IMAGE_SUCCESS" if complete else "IMAGE_INCOMPLETE",
                         "cost_usd": total_cost, "held_panel": held_panel,
                         "cost_complete": held_panel is None and len(summary) == len(panels)}), encoding="utf-8",
         )
+        from engine.image.provider_outcome import outcome_v3_enabled
+        if outcome_v3_enabled():
+            # Per-execution telemetry never overwrites narrative status or artifact pointers.
+            from engine.common.supabase_client import get_client, get_schema
+            from engine.image.generation_guard import generation_revision
+            report = json.loads((output_dir / "generation-summary.json").read_text())
+            keys = {"run_id", "run_attempt", "expected_images", "successful_images",
+                    "not_attempted_images", "held_panel", "provider_reason", "complete",
+                    "result_code", "observed_usage_cost_usd", "cost_complete"}
+            try:
+                result = get_client().schema(get_schema()).rpc("image_generation_store_run_status_v3", {
+                    "p_scope": output_dir.as_posix(), "p_revision": generation_revision(),
+                    "p_run_id": report["run_id"], "p_run_attempt": report["run_attempt"],
+                    "p_summary": {k: v for k, v in report.items() if k in keys},
+                }).execute().data
+                if not isinstance(result, dict) or result.get("stored") is not True:
+                    raise ValueError("Run status not stored")
+            except Exception:
+                logger.warning("[gemini] run status telemetry unavailable; artifact summary preserved")
 
     write_summary()
 

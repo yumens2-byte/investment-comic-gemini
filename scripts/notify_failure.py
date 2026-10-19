@@ -79,12 +79,17 @@ def image_hold_details(root: Path = Path("output/episodes")) -> str:
             if type(expected) is not int or type(success) is not int or not 0 <= success <= expected:
                 continue
             details.append(f"이미지 {success}/{expected}개 완료 · 미시도 {item.get('not_attempted_images', 0)}개")
+            if item.get("result_code") == "CONTENT_REVIEW_REQUIRED":
+                details.append("콘텐츠 검토 필요 · 동일 입력 자동 재호출 차단")
+            cost = item.get("observed_usage_cost_usd")
+            if type(cost) in (int, float) and cost >= 0:
+                details.append("현재 시도 사용량 계산 비용: $" + f"{cost:.7f} (청구 확인값 아님)")
         except (OSError, ValueError, AttributeError):
             continue
     if not details:
         return ""
     return ("\n\n<b>이미지 생성 진행률</b>\n" + "\n".join(html.escape(d) for d in details[:3])
-            + "\n완료된 PNG는 보존했습니다. 동일 입력 반복 실행 대신 거절 상세와 검토된 복구 계획을 확인하세요.")
+            + "\n생성된 PNG가 있으면 보존합니다. 거절 상세와 검토된 복구 계획을 확인하세요.")
 
 
 def main() -> None:
