@@ -278,6 +278,9 @@ def main() -> None:
     row = _merge_local_video_path(row, episode_id)
     event_type = row.get("event_type", "NORMAL")
     script_dict = row.get("script_json", {})
+    if not dry_run:
+        from engine.image.quality_candidates import require_publication_gate
+        require_publication_gate(script_dict)
 
     from engine.quality.publish_guard import guard_legacy_track
 
@@ -474,6 +477,9 @@ def main() -> None:
             script_dict.get("_resolution_review"))
         if errors:
             raise QualityHold("narrative contract failed: " + ",".join(errors))
+        if script_dict.get("_image_quality_selection") and not script_dict.get("_state_candidate"):
+            from engine.publish.manifest import validate_manifest
+            validate_manifest(script_dict, slides)
         if script_dict.get("_state_candidate"):
             from engine.publish.manifest import validate_manifest
             from engine.publish.state_commit import require_state_ready

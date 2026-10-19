@@ -19,6 +19,11 @@ on:
         required: false
         default: 'false'
 
+      quality_selection_version:
+        description: '승인·선택된 품질 버전으로 명시적 조립 (일반 실행은 공란)'
+        required: false
+        default: ''
+
 permissions:
   contents: read
   actions: read
@@ -31,6 +36,7 @@ jobs:
 
     env:
       TZ: Asia/Seoul
+      ICG_IMAGE_QUALITY_CANDIDATES_ENABLED: 'true'
       # ── Notion 보안 분리 Page ID ─────────────────────────────────────────
       NOTION_NARRATIVE_SYSTEM_ID: '3439208cbdc3810d9e7ceb5f48f8f093'
       NOTION_NARRATIVE_USER_ID:   '3439208cbdc3816bb578d7355b3a1966'
@@ -78,9 +84,11 @@ jobs:
           EPISODE_ID: ${{ inputs.episode_id }}
           REQUEST_FORCE: ${{ inputs.force }}
           REQUEST_NARRATIVE_ONLY: ${{ inputs.allow_narrative_only }}
+          REQUEST_QUALITY_VERSION: ${{ inputs.quality_selection_version }}
           EVENT_NAME: ${{ github.event_name }}
         run: |
           args=(--prepare-only)
+          if [[ -n "$REQUEST_QUALITY_VERSION" ]]; then args+=(--quality-selection-version "$REQUEST_QUALITY_VERSION"); fi
           if [[ -n "$EPISODE_ID" ]]; then args+=(--episode "$EPISODE_ID"); fi
           if [[ "$REQUEST_FORCE" == "true" ]]; then args+=(--force); fi
           if [[ "$REQUEST_NARRATIVE_ONLY" == "true" ]]; then args+=(--allow-narrative-only); fi
@@ -96,14 +104,25 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ steps.fetch_run_id.outputs.run_id }}
 
+      - name: Restore selected quality artifacts
+        if: steps.fetch_run_id.outputs.ready == 'true' && inputs.quality_selection_version != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REQUEST_QUALITY_VERSION: ${{ inputs.quality_selection_version }}
+          EPISODE_ID: ${{ steps.fetch_run_id.outputs.episode_id }}
+        run: |
+          python -m scripts.download_quality_selection --date "${EPISODE_ID:4:10}" --version "$REQUEST_QUALITY_VERSION" --root "$RUNNER_TEMP/quality-artifacts"
+
       - name: STEP 7 — Assembly
         if: steps.fetch_run_id.outputs.ready == 'true'
         env:
           EPISODE_ID: ${{ steps.fetch_run_id.outputs.episode_id }}
+          REQUEST_QUALITY_VERSION: ${{ inputs.quality_selection_version }}
           REQUEST_FORCE: ${{ inputs.force }}
           REQUEST_NARRATIVE_ONLY: ${{ inputs.allow_narrative_only }}
         run: |
           args=(--episode "$EPISODE_ID")
+          if [[ -n "$REQUEST_QUALITY_VERSION" ]]; then args+=(--quality-selection-version "$REQUEST_QUALITY_VERSION" --quality-artifact-root "$RUNNER_TEMP/quality-artifacts"); fi
           if [[ "$REQUEST_FORCE" == "true" ]]; then args+=(--force); fi
           if [[ "$REQUEST_NARRATIVE_ONLY" == "true" ]]; then args+=(--allow-narrative-only); fi
           python -m scripts.run_resume "${args[@]}"

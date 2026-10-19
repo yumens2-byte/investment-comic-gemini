@@ -1796,7 +1796,8 @@ def step_image(
 
         performance_specs = None
         performance_quality = None
-        if os.environ.get("PERFORMANCE_SPEC_ENABLED", "false").lower() == "true":
+        if (os.environ.get("PERFORMANCE_SPEC_ENABLED", "false").lower() == "true"
+                and not script_dict.get("_scene_performance_v2")):
             from engine.image.performance_compiler import compile_episode_performance
             from engine.image.performance_validator import validate_episode_performance
 
@@ -1833,6 +1834,8 @@ def step_image(
         from engine.image.scene_contract import validate_scene_contracts
 
         validate_scene_contracts(script_dict)
+        from engine.image.scene_performance import episode_specs
+        dynamic_specs = episode_specs(script_dict)
 
         panel_prompts = reviewed_panel_prompts(script_dict, performance_specs=performance_specs)
         if panel_prompts is None:
@@ -1856,6 +1859,10 @@ def step_image(
         logger_inst.info("STEP_6", f"대본 {len(panel_prompts)}개 / 생성 대상 이미지 {len(panels_input)}개 / "
                          f"조립 전용 카드 {len(panel_prompts) - len(panels_input)}개. "
                          "콘텐츠 거절 재시도는 검토된 패널별 계획이 있을 때만 허용.")
+
+        if dynamic_specs:
+            for item in panels_input:
+                item["aspect_ratio"] = "4:5"
 
         panel_paths, total_cost = (gemini_generate(panels_input, output_dir)
                                    if panels_input else ([], 0.0))

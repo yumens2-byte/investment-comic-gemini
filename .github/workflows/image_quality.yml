@@ -1,0 +1,94 @@
+name: 🎬 Image Quality Human Gates
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        type: choice
+        options: [approve, generate, review, select, rollback, cancel]
+        required: true
+      candidate_id:
+        description: '등록된 품질 후보 UUID (rollback은 미사용)'
+        required: false
+      digest:
+        description: '등록 응답의 digest — 승인·검수·선택에 필수'
+        required: false
+      revision:
+        description: '후보의 generation revision'
+        required: true
+      expected_version:
+        description: '현재 선택 버전 (최초 0)'
+        default: '0'
+      target_version:
+        description: 'rollback 시 복원할 과거 선택 버전'
+        required: false
+      scope:
+        description: 'rollback: output/episodes/YYYY-MM-DD/panels'
+        required: false
+      note:
+        description: '승인·선택 근거 (20자 이상)'
+        required: false
+      review_json:
+        description: '실제 원본·조립본을 확인한 패널별 검수 JSON (review 단계)'
+        required: false
+permissions:
+  contents: read
+concurrency:
+  group: image-quality-${{ inputs.candidate_id || inputs.scope }}
+  cancel-in-progress: false
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PYTHONPATH: .
+      DRY_RUN: 'false'
+      ICG_IMAGE_OUTCOME_V3_ENABLED: 'true'
+      ICG_GENERATION_REVISION: ${{ inputs.revision }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      SUPABASE_SCHEMA: icg
+      GEMINI_API_SUB_PAY_KEY: ${{ secrets.GEMINI_API_SUB_PAY_KEY }}
+      REQUEST_STAGE: ${{ inputs.stage }}
+      REQUEST_ID: ${{ inputs.candidate_id }}
+      REQUEST_DIGEST: ${{ inputs.digest }}
+      REQUEST_VERSION: ${{ inputs.expected_version }}
+      REQUEST_TARGET: ${{ inputs.target_version }}
+      REQUEST_SCOPE: ${{ inputs.scope }}
+      REQUEST_NOTE: ${{ inputs.note }}
+      REQUEST_REVIEW: ${{ inputs.review_json }}
+      REQUEST_ACTOR: ${{ github.actor }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run one explicit human gate
+        run: |
+          mkdir -p "$RUNNER_TEMP/image-quality-private"
+          if [[ "$REQUEST_STAGE" == 'review' ]]; then
+            python -c 'import os,pathlib; p=pathlib.Path(os.environ["RUNNER_TEMP"])/"image-quality-private/review.json"; p.write_text(os.environ["REQUEST_REVIEW"]); p.chmod(0o600)'
+          fi
+          args=("$REQUEST_STAGE" --live --output "$RUNNER_TEMP/image-quality-private/receipt.json")
+          case "$REQUEST_STAGE" in
+            approve|select|cancel)
+              args+=(--id "$REQUEST_ID" --digest "$REQUEST_DIGEST" --actor "$REQUEST_ACTOR" --note "$REQUEST_NOTE")
+              if [[ "$REQUEST_STAGE" == 'select' ]]; then args+=(--expected-version "$REQUEST_VERSION"); fi ;;
+            generate) args+=(--id "$REQUEST_ID") ;;
+            review) args+=(--id "$REQUEST_ID" --digest "$REQUEST_DIGEST" --actor "$REQUEST_ACTOR" --review "$RUNNER_TEMP/image-quality-private/review.json") ;;
+            rollback) args+=(--scope "$REQUEST_SCOPE" --expected-version "$REQUEST_VERSION" --target-version "$REQUEST_TARGET" --actor "$REQUEST_ACTOR" --note "$REQUEST_NOTE") ;;
+            *) exit 1 ;;
+          esac
+          python -m scripts.image_quality "${args[@]}"
+      - name: Preserve generated candidate PNGs, including partial results
+        if: ${{ always() && inputs.stage == 'generate' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-quality-${{ inputs.candidate_id }}
+          path: |
+            ${{ runner.temp }}/image-quality-private/images/${{ inputs.candidate_id }}/*.png
+            ${{ runner.temp }}/image-quality-private/images/${{ inputs.candidate_id }}/result.json
+            ${{ runner.temp }}/image-quality-private/images/${{ inputs.candidate_id }}/previews/*.png
+          if-no-files-found: ignore
+          retention-days: 30

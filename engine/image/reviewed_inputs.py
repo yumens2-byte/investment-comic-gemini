@@ -17,10 +17,15 @@ def reviewed_panel_prompts(script: dict, *, performance_specs=None) -> list[Pane
         return None
     bundle = script['_reviewed_image_inputs']
     revision = script.get('_generation_revision')
-    if (not isinstance(bundle, dict) or bundle.get('version') != 'reviewed-image-inputs-1'
+    from engine.image.scene_performance import episode_specs, payload_hash
+    dynamic = episode_specs(script)
+    v2 = isinstance(bundle, dict) and bundle.get('version') == 'reviewed-image-inputs-2'
+    aspect = '4:5' if v2 else None
+    if (not isinstance(bundle, dict) or bundle.get('version') not in {'reviewed-image-inputs-1', 'reviewed-image-inputs-2'}
             or bundle.get('script_hash') != script_hash(script)
             or bundle.get('model') != 'gemini-2.5-flash-image'
-            or bundle.get('aspect_ratio') is not None
+            or bundle.get('aspect_ratio') != aspect
+            or bool(dynamic) != v2
             or type(revision) is not int or revision < 2 or performance_specs is not None):
         raise GenerationHold('Reviewed image configuration changed')
     scenes = script.get('panels')
@@ -54,6 +59,8 @@ def reviewed_panel_prompts(script: dict, *, performance_specs=None) -> list[Pane
         if (not isinstance(prompt, str) or not prompt.strip() or not isinstance(names, list)
                 or not isinstance(hashes, list) or len(names) != len(hashes)):
             raise GenerationHold('Malformed reviewed prompt or references')
+        if v2 and item.get('scene_sha256') != payload_hash(dynamic[idx].model_dump()):
+            raise GenerationHold('Reviewed performance changed')
         if str(idx) in contracts:
             if panel.get('action', '') not in prompt or panel.get('setting', '') not in prompt:
                 raise GenerationHold('Reviewed prompt differs from scene contract')
@@ -74,7 +81,7 @@ def reviewed_panel_prompts(script: dict, *, performance_specs=None) -> list[Pane
             raise GenerationHold('Reviewed reference bytes changed')
         guard = ProductionGenerationGuard(
             scope=f"output/episodes/{script.get('date')}/panels", panel=idx,
-            prompt=prompt + '\n[model=gemini-2.5-flash-image;aspect=None]', refs=refs)
+            prompt=prompt + f'\n[model=gemini-2.5-flash-image;aspect={aspect}]', refs=refs)
         if guard.revision != revision or guard.fingerprint != item.get('fingerprint'):
             raise GenerationHold('Reviewed provider identity changed')
         results.append(PanelPrompt(idx, ids, prompt, refs))
