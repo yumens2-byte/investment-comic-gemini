@@ -6,6 +6,7 @@ on:
       - engine/assembly/pil_composer.py
       - scripts/run_resume.py
       - scripts/run_assembly_artifact_beta.py
+      - scripts/prepare_assembly_beta.py
       - .github/workflows/assembly_artifact_beta.yml
   workflow_dispatch:
 permissions:
@@ -22,16 +23,26 @@ jobs:
           python-version: '3.11'
       - run: pip install pillow requests
       - run: sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+      - name: Resolve available source artifact (read only)
+        id: source
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python -m scripts.prepare_assembly_beta
       - uses: actions/download-artifact@v4
         with:
-          name: episode-36919762103
+          name: episode-${{ steps.source.outputs.run_id }}
           path: output/episodes/
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: 36919762103
-      - run: python -m scripts.run_assembly_artifact_beta
+          run-id: ${{ steps.source.outputs.run_id }}
+      - name: Replay approved source without publication
+        env:
+          SOURCE_EPISODE: ${{ steps.source.outputs.episode_id }}
+        run: python -m scripts.run_assembly_artifact_beta --episode "$SOURCE_EPISODE" --script "$RUNNER_TEMP/assembly-beta-source.json"
       - uses: actions/upload-artifact@v4
         with:
-          name: repaired-ICG-2026-10-02-001
+          name: assembly-replay-${{ steps.source.outputs.episode_id }}-${{ github.run_id }}
           path: output/assembly-beta/
           if-no-files-found: error
           retention-days: 14
