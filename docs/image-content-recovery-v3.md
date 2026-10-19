@@ -36,10 +36,10 @@ apply production SQL, generate paid images, assemble or publish.
    then `docs/sql/image-generation-outcome-v3.sql` and
    `docs/sql/image-generation-register-recovery-v3.sql`. Do not reapply old
    non-idempotent DDL blindly. Never delete historic calls or reset budgets.
-4. Deploy code. Keep `ICG_IMAGE_OUTCOME_V3_ENABLED=false` until SQL is verified;
-   the workflow variable defaults to false. The default path still gets the action
-   check, settlement ordering and summary improvements.
-5. Enable that repository variable only after the new capability RPC is available.
+4. Deploy code. Keep `ICG_IMAGE_OUTCOME_V3_ENABLED=false` until SQL is verified.
+   The release configuration in `run_market.yml` is explicitly set to true only
+   after the production DB contract is deployed and its capability verified.
+5. Enable that workflow environment setting only after the new capability RPC is available.
    Missing v3 DB capability fails before image reservation/provider invocation.
 6. Do a read-only preflight, then separately authorize and inspect one paid pilot.
    Passing local checks cannot guarantee provider acceptance.
@@ -107,7 +107,7 @@ after registration. Assembly and publication remain separate gated operations.
 ## Rollback and limits
 
 Disable new paid executions, inspect in-flight reservations, then switch off the
-outcome flag and roll back code if needed. Keep the additive SQL, diagnostics and
+workflow outcome setting and roll back code if needed. Keep the additive SQL, diagnostics and
 all receipts. A terminal/unknown row must not be cleared as a rollback shortcut.
 
 Local PGlite contracts execute real PostgreSQL SQL/PLpgSQL in one backend; queued
