@@ -190,7 +190,7 @@ def _generate_one(
         client: genai.Client 인스턴스.
         prompt_text: 패널 프롬프트.
         ref_paths: 캐릭터 REF 이미지 경로 목록.
-        aspect_ratio: "9:16" 등. None(기본)이면 모델 기본값(정사각) — 이미지 트랙
+        aspect_ratio: "9:16" 등. None(기본)이면 비율을 명시하지 않음 — 출력 비율은 응답에서 검증
             만화 패널의 기존 동작을 그대로 유지한다. 영상 트랙 북엔드만 지정한다.
 
     Returns:
@@ -696,7 +696,8 @@ def generate_episode(
             kwargs = {"retry_plan": panel.get("retry_plan")} if retry_enabled() else {}
             path, panel_cost = generate_panel(
                 panel_idx=idx, prompt_text=prompt, ref_paths=refs,
-                output_dir=output_dir, log_path=log_path, **kwargs,
+                output_dir=output_dir, log_path=log_path,
+                **({"aspect_ratio": panel["aspect_ratio"]} if "aspect_ratio" in panel else {}), **kwargs,
             )
         except PanelGenerationFailed as exc:
             logger.warning("[gemini] panel=%s settled failure: %s", idx, exc)

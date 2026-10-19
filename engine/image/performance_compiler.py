@@ -15,8 +15,8 @@ from engine.image.performance_schema import (
 _VERBS = (
     ("strike", ("punch", "kick", "slam", "strike", "smash"), "IMPACT", True),
     ("projectile", ("fire", "shoot", "launch", "beam"), "ACTION", True),
-    ("defend", ("block", "shield", "parry", "brace"), "REACTION", False),
-    ("move", ("leap", "dash", "charge", "dodge"), "ACTION", False),
+    ("defend", ("block", "parry", "brace"), "REACTION", False),
+    ("move", ("leap", "dash", "charge", "dodge", "pivot", "turn", "step"), "ACTION", False),
     ("observe", ("scan", "watch", "analyze", "inspect"), "OBSERVATION", False),
     ("recover", ("kneel", "rise", "breathe", "retreat"), "RECOVERY", False),
 )
@@ -30,7 +30,7 @@ _SHOT_MAP = {
 
 
 def _classify_action(action: str, panel_type: str) -> tuple[str, str, bool, bool]:
-    lowered = action.lower()
+    lowered = re.sub(r"\bfire crown\b", "flame crown", action.lower())
     for family, words, phase, interaction in _VERBS:
         if any(re.search(rf"\b{re.escape(word)}\w*\b", lowered) for word in words):
             return family, phase, interaction, False
@@ -38,13 +38,13 @@ def _classify_action(action: str, panel_type: str) -> tuple[str, str, bool, bool
         "COVER": ("confronts", "ANTICIPATION"),
         "TENSION": ("observes", "OBSERVATION"),
         "BATTLE": ("engages", "ACTION"),
-        "CLIMAX": ("strikes", "IMPACT"),
+        "CLIMAX": ("review_required", "OBSERVATION"),
         "AFTERMATH": ("recovers", "RECOVERY"),
         "TEXT_CARD": ("none", "NONE"),
         "DISCLAIMER": ("none", "NONE"),
     }
     verb, phase = defaults.get(panel_type, ("acts", "ACTION"))
-    return verb, phase, panel_type in {"BATTLE", "CLIMAX"}, True
+    return verb, phase, panel_type == "BATTLE", True
 
 
 def _role_character(panel: dict, role: str) -> str | None:

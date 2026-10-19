@@ -581,6 +581,10 @@ def build_for_episode(
     panels = episode_script.get("panels", [])
     from engine.image.scene_contract import validate_scene_contracts
     scene_contracts = validate_scene_contracts(episode_script)
+    from engine.image.scene_performance import episode_specs, render_prompt
+    dynamic_specs = episode_specs(episode_script)
+    if dynamic_specs and performance_specs is not None:
+        raise PipelineAborted("prompt", "Mixed performance versions")
     panel_prompts: list[PanelPrompt] = []
 
     specs_by_idx = {
@@ -622,6 +626,13 @@ def build_for_episode(
                                             or panel.get("scenario_type")
                                             or episode_script.get("scenario_type"))
         effective_panel["_action_mode"] = decision.get("action_mode")
+        if idx in dynamic_specs:
+            spec = dynamic_specs[idx]
+            prompt_text = render_prompt(
+                panel, spec, canon=_get_char_designs(spec.visible_cast), style=_get_style_block()
+            )
+            panel_prompts.append(PanelPrompt(idx, char_ids, prompt_text, ref_paths))
+            continue
         prompt_text = build_panel_prompt(
             effective_panel,
             ref_paths,

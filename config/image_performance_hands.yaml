@@ -1,0 +1,5 @@
+# Structured prop ownership for scene-performance-2. Does not modify visual canon.
+# Source: config/characters.yaml CHAR_HERO_002 default form description.
+CHAR_HERO_002:
+  LEFT: shield
+  RIGHT: rifle

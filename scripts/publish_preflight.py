@@ -69,6 +69,12 @@ def inspect_publish(episode: str | None, requested_date: str | None, channels: s
     if not isinstance(script, dict):
         raise ValueError('Malformed narrative metadata')
     reasons = []
+    from engine.image.generation_guard import GenerationHold
+    from engine.image.quality_candidates import require_publication_gate
+    try:
+        require_publication_gate(script)
+    except GenerationHold:
+        reasons.append("quality_human_gate_pending_or_selection_changed")
     from engine.quality.content_qc import require_content_ready
 
     qc_warnings = require_content_ready(script, row)
@@ -109,6 +115,12 @@ def inspect_publish(episode: str | None, requested_date: str | None, channels: s
         except (ValueError, OSError):
             pass
     readiness = []
+    if script.get("_image_quality_selection") and not script.get("_state_candidate") and files_present:
+        from engine.publish.manifest import validate_manifest
+        try:
+            validate_manifest(script, paths)
+        except (ValueError, OSError, GenerationHold):
+            readiness.append("assembly_manifest_mismatch")
     if script.get("_state_candidate"):
         from engine.publish.manifest import validate_manifest
         from engine.publish.state_commit import require_state_ready
@@ -117,7 +129,7 @@ def inspect_publish(episode: str | None, requested_date: str | None, channels: s
         if files_present:
             try:
                 validate_manifest(script, paths)
-            except (ValueError, OSError):
+            except (ValueError, OSError, GenerationHold):
                 readiness.append('assembly_manifest_mismatch')
         try:
             require_state_ready(episode_date, episode_no, script["_state_candidate"])

@@ -3,7 +3,7 @@ engine/assembly/pil_composer.py
 패널 이미지 위에 텍스트 오버레이 → 1080×1350 슬라이드 조립.
 
 레이아웃 (이미지 위 오버레이 방식):
-  - 이미지: 1080×1350 전체 크기로 리사이즈
+  - 이미지: 원본 비율 유지, 1080×1350 캔버스에 contain
   - 텍스트: 하단 300px 영역에 반투명 다크 박스 오버레이
     ┌────────────────────────────────┐ ← 0
     │     Gemini 순수 이미지          │ (1080x1350)
@@ -26,7 +26,7 @@ import logging
 import textwrap
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 from PIL.PngImagePlugin import PngInfo
 
 logger = logging.getLogger(__name__)
@@ -138,8 +138,11 @@ def _compose_image_slide(
     """이미지 전체(1080x1350) + 하단 반투명 텍스트 오버레이."""
     try:
         panel_img = Image.open(panel_image_path).convert("RGBA")
-        # 전체 슬라이드 크기로 리사이즈 (1080x1350)
-        panel_img = panel_img.resize((SLIDE_W, SLIDE_H), Image.LANCZOS)
+        # Preserve source geometry; pad rather than stretch or silently crop.
+        contained = ImageOps.contain(panel_img, (SLIDE_W, SLIDE_H), Image.Resampling.LANCZOS)
+        panel_img = Image.new("RGBA", (SLIDE_W, SLIDE_H), (11, 18, 32, 255))
+        panel_img.alpha_composite(contained, ((SLIDE_W - contained.width) // 2,
+                                             (SLIDE_H - contained.height) // 2))
     except Exception as exc:
         if strict:
             raise ValueError(f"Assembly source image invalid: panel {panel_idx}") from exc

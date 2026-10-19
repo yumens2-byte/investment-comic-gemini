@@ -97,7 +97,7 @@ def _latest_episode_id(
 
 
 def prepare_resume_target(episode_id=None, *, force=False, allow_narrative_only=False,
-                          scheduled=False) -> dict:
+                          scheduled=False, quality_selection_version=None) -> dict:
     """Resolve once for both artifact download and assembly; never hide DB failures."""
     from engine.common.supabase_client import icg_table
 
@@ -118,6 +118,13 @@ def prepare_resume_target(episode_id=None, *, force=False, allow_narrative_only=
     if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict):
         raise RuntimeError("Exact Resume episode unavailable")
     row = rows[0]
+    from engine.image.quality_candidates import load_selection, pending_human_gate
+    if quality_selection_version is not None:
+        load_selection(_parse_date(episode_id), quality_selection_version)
+    elif pending_human_gate(_parse_date(episode_id)):
+        if scheduled:
+            return {"status": "idle", "ready": False, "reason": "quality_human_gate_pending"}
+        raise RuntimeError("Quality human gate pending; select a candidate or cancel the draft, then use explicit quality selection version")
     guard_resume_status(row.get("status", ""), force=force,
                         allow_narrative_only=allow_narrative_only)
     artifact = row.get("artifact_run_id")
@@ -233,12 +240,14 @@ def main() -> None:
         action="store_true",
         help="narrative_done 조회 허용 (모든 필수 원본 이미지 검증은 유지)",
     )
+    parser.add_argument("--quality-selection-version", type=int)
+    parser.add_argument("--quality-artifact-root", type=Path)
     args = parser.parse_args()
 
     if args.prepare_only:
         emit_resume_target(prepare_resume_target(
             args.episode, force=args.force, allow_narrative_only=args.allow_narrative_only,
-            scheduled=args.scheduled))
+            scheduled=args.scheduled, quality_selection_version=args.quality_selection_version))
         return
 
     # 빈 문자열("") 입력 시 None으로 처리 (yml에서 미입력 시 "" 전달되는 경우)
@@ -285,6 +294,9 @@ def main() -> None:
         sys.exit(1)
 
     status = row.get("status", "")
+    from engine.image.quality_candidates import pending_human_gate
+    if args.quality_selection_version is None and pending_human_gate(episode_date):
+        raise RuntimeError("Quality human gate pending; explicit quality selection version required")
     try:
         guard_resume_status(
             status,
@@ -343,6 +355,18 @@ def main() -> None:
 
     from engine.quality.content_qc import require_reviewed_sources
 
+    if args.quality_selection_version is not None:
+        from engine.image.quality_candidates import selected_sources
+        if args.quality_artifact_root is None:
+            raise ValueError("Quality artifact root required")
+        panel_images, marker = selected_sources(
+            script_dict, args.quality_artifact_root, args.quality_selection_version,
+            output_dir / f"quality-selected-{args.quality_selection_version}"
+        )
+        script_dict["_image_quality_selection"] = marker
+    elif script_dict.get("_image_quality_selection"):
+        raise ValueError("Explicit quality selection version required for reassembly")
+
     require_reviewed_sources(script_dict, panel_images)
 
     # PIL 조립
@@ -359,6 +383,9 @@ def main() -> None:
         slides_run_id = _os.environ.get("GITHUB_RUN_ID")  # publish_sns.yml 아티팩트 다운로드용
         from engine.publish.manifest import build_manifest
 
+        if script_dict.get("_image_quality_selection"):
+            from engine.image.quality_candidates import require_current_selection
+            require_current_selection(script_dict["_image_quality_selection"])
         script_dict["_assembly_manifest"] = build_manifest(script_dict, slides)
 
         fallback_count = count_missing_paid_sources(panels, panel_images)
