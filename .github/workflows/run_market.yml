@@ -128,8 +128,8 @@ jobs:
       ICG_IMAGE_MAX_RETRIES: '2'
       # Production DB capability verified 2026-10-20; change to 'false' to roll back.
       ICG_IMAGE_OUTCOME_V3_ENABLED: 'true'
-      # Enable only after the additive isolation SQL is deployed and verified.
-      ICG_IMAGE_CONTENT_ISOLATION_V4_ENABLED: ${{ vars.ICG_IMAGE_CONTENT_ISOLATION_V4_ENABLED || 'false' }}
+      # Production v4 SQL capability and least-privilege grants verified 2026-10-21.
+      ICG_IMAGE_CONTENT_ISOLATION_V4_ENABLED: 'true'
       RUN_STAGE: ${{ inputs.stage || 'all' }}
       FORCE_RUN: ${{ inputs.force || 'false' }}
       SCENARIO_V2_ENABLED: ${{ (inputs.scenario_v2 != '' && inputs.scenario_v2 != 'auto') && inputs.scenario_v2 || vars.SCENARIO_V2_ENABLED || 'false' }}
