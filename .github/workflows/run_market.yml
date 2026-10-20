@@ -34,8 +34,12 @@ on:
         description: '공휴일/주말 강제 실행 여부 (true/false)'
         required: false
         default: 'false'
+      # DN2026_0028: 자유 입력 오기입이 argparse(exit 2)에서 막히던 문제(run 39361890176) 차단.
+      # options는 scripts/run_market.py --stage choices와 동일해야 한다.
       stage:
         description: '실행 단계 (all/data/analysis/narrative/persist/image/recovery). recovery는 새 회차로 대본부터 복구'
+        type: choice
+        options: [all, data, analysis, narrative, persist, image, recovery]
         required: false
         default: 'all'
       scenario_v2:
