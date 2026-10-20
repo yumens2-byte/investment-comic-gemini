@@ -9,6 +9,18 @@ begin
  or p_panel<=0 or p_scope !~ '^output/episodes/[0-9]{4}-[0-9]{2}-[0-9]{2}/panels$'
  or p_fingerprint !~ '^[0-9a-f]{64}$'
  then return jsonb_build_object('hold','invalid independent generation identity'); end if;
+ -- Do not let an older client bypass a reviewed revision or a persisted recovery.
+ if (select count(*) from icg.episode_assets e where
+ 'output/episodes/'||e.episode_date::text||'/panels'=p_scope and e.episode_no=1)<>1
+ or not exists(select 1 from icg.episode_assets e where
+ 'output/episodes/'||e.episode_date::text||'/panels'=p_scope and e.episode_no=1
+ and e.status='narrative_done' and jsonb_typeof(e.script_json)='object'
+ and (not (e.script_json ? '_generation_revision') or
+      e.script_json->'_generation_revision'='1'::jsonb))
+ or exists(select 1 from icg.image_generation_calls c where c.scope=p_scope and c.revision>1)
+ or exists(select 1 from icg.image_generation_recovery_receipts r where r.scope=p_scope)
+ or exists(select 1 from icg.image_generation_retry_plans p where p.scope=p_scope)
+ then return jsonb_build_object('hold','independent generation requires original narrative revision'); end if;
  -- A refusal stays terminal. Only a settled, evidenced ordinary refusal on ANOTHER
  -- panel can be isolated. Unknown cost, reservations and legacy terminals block.
  if exists(select 1 from icg.image_generation_calls c where c.scope=p_scope
