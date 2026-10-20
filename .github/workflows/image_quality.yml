@@ -64,6 +64,12 @@ jobs:
           python-version: '3.11'
           cache: pip
       - run: pip install -r requirements.txt
+      - name: Install and verify Korean preview font before any paid call
+        if: inputs.stage == 'generate'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+          python -c 'from engine.assembly.pil_composer import require_korean_font; require_korean_font(["한글 제목과 내레이션"] )'
       - name: Run one explicit human gate
         run: |
           mkdir -p "$RUNNER_TEMP/image-quality-private"

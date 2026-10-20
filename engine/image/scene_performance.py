@@ -212,6 +212,7 @@ def render_prompt(panel: dict, spec: ScenePerformance, *, canon: str, style: str
                 if ch["char_id"] in spec.visible_cast
             ),
             f"CANON HAND OCCUPANCY: {hands}. Render visible portions exactly; never add a free hand.",
+            *visual_continuity_locks(spec),
             "CANON AND REFS DEFINE APPEARANCE, NOT POSE: " + canon,
             f"SETTING: {panel['setting']}",
             "REQUIRED STORY FACTS: " + "; ".join(spec.required_story_facts),
@@ -219,8 +220,41 @@ def render_prompt(panel: dict, spec: ScenePerformance, *, canon: str, style: str
             "Keep actors apart. No character-directed attack, weapon discharge, bodily impact, blood or injury.",
             "No additional cast, extra limbs, altered handedness, readable text, letters, numbers, tickers, logos or watermarks.",
             "Preserve reference anatomy and props, bold ink lines, 2D cel shading and detailed backgrounds.",
+            "REFERENCE SURFACE OVERRIDE: references supply anatomy, costume and prop silhouette only. "
+            "Replace all reference lettering, abbreviations and labels with uninterrupted material. "
+            "Every visible shield, signal and background surface is unlabelled; no readable glyphs.",
         ]
     )
+
+
+def visual_continuity_locks(spec: ScenePerformance) -> list[str]:
+    """Additional instructions for newly built prompts; never rewrite frozen inputs."""
+    locks = [
+        "SHOT LOCK: use the requested crop and perspective; props outside the crop stay offscreen. "
+        "Leave the lower caption area free of the focal face and essential surface detail.",
+    ]
+    if "CHAR_HERO_002" not in spec.visible_cast:
+        return locks
+    locks.append(
+        "PROP IDENTITY LOCK: the heroine has one amber-gold polygonal shield attached to her LEFT forearm "
+        "and one lowered black rifle in her RIGHT hand. Preserve the same shield outline and material "
+        "throughout the episode; lighting and perspective never turn the shield into a circular disc. "
+        "The shield surface has no letters, abbreviations or labels, including those present in references."
+    )
+    if spec.motion.target_kind == "DISPLAY":
+        locks.append(
+            "DISPLAY SEPARATION LOCK: the environmental signal is a separate object beyond the heroine, "
+            "with a visible background gap from her body and shield. Its light may reflect on her face; "
+            "its circular outline never overlays, surrounds or replaces the forearm shield. "
+            "In CU framing keep both weapons below the crop; do not expand to a waist-up portrait."
+        )
+    if spec.motion.family == "AFTERMATH_DETAIL":
+        locks.append(
+            "DETAIL LOCK: fine surface cracks are the highest-contrast focal detail in the upper image area. "
+            "The intact shield outline remains recognizable; the face and rifle stay outside this crop. "
+            "Use grazing light and material detail rather than symbols or lettering to reveal the weakness."
+        )
+    return locks
 
 
 def rhythm_report(specs: list[ScenePerformance]) -> dict:
