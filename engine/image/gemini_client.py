@@ -648,7 +648,7 @@ def generate_episode(
                                            [Path(p) for p in panel.get("ref_image_paths", [])])
     reviewed_count = sum(bool(p.get("retry_plan")) for p in panels) if enabled else 0
     logger.info("[gemini] image tasks=%d; reviewed content retry plans=%d; extra retry limit=%d. "
-                "Content refusal without a reviewed plan stops for review.",
+                "A refused panel always requires review; only verified opt-in v4 outcomes allow independent panels.",
                 len(panels), reviewed_count, limit)
     results: list[Path | None] = []
     summary = []
