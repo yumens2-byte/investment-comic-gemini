@@ -658,8 +658,8 @@ def generate_episode(
     def write_summary(*, complete=False, held_panel=None, provider_reason=None):
         if held_panel is None and content_holds:
             held_panel = content_holds[0]["panel"]
-        if provider_reason is None and content_holds:
-            provider_reason = content_holds[0]["provider_reason"]
+            if provider_reason is None:
+                provider_reason = content_holds[0]["provider_reason"]
         pending = [{"panel": p.get("panel_idx", 0), "status": "not_attempted",
                     "cost_usd": None} for p in panels[len(summary):]]
         observed_cost = 0.0
