@@ -60,7 +60,7 @@ prepare와 inspect는 DB 쓰기와 이미지 provider 호출이 0이다.
 
 등록 뒤 이미지 호출이 실패해도 등록을 임의 취소하거나 비용·호출 이력을 삭제하지 않는다.
 공통 execute를 무조건 재실행하지 않는다. 이미 등록된 회차는 이 경로에서 차단하고,
-기존 run-market 이미지 재개/정산 절차로 실제 ledger와 artifact를 먼저 확인한다.
+기존 run-market 이미지 재개/정산 절차로 실제 ledger와 artifact를 먼저 확인한다.\n실패 보고서는 등록 응답이 불명확하면 registered=unconfirmed/phase=registration,\n등록 확정 뒤 이미지에서 멈추면 registered=true/phase=image를 유지한다.\n등록 이후에는 같은 revision과 실제 partial artifact를 확인하여 stage=image로 재개하거나,\n새 콘텐츠 거절이 있으면 해당 ledger를 검토하는 수동 복구 절차를 따른다. 무조건 execute를 다시 누르지 않는다.
 
 ## 4. 요청 계약
 
