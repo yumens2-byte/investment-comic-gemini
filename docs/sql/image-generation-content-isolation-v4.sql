@@ -12,7 +12,7 @@ begin
  -- A refusal stays terminal. Only a settled, evidenced ordinary refusal on ANOTHER
  -- panel can be isolated. Unknown cost, reservations and legacy terminals block.
  if exists(select 1 from icg.image_generation_calls c where c.scope=p_scope
- and (c.state in ('reserved','unknown') or (c.state='terminal' and not (
+ and (c.state in ('reserved','unknown') or (c.state='terminal' and (
    c.panel<>p_panel and c.revision=1 and c.retry_plan_id is null
    and c.result_code='CONTENT_REVIEW_REQUIRED' and c.settled_at is not null
    and c.provider_reason in ('PROHIBITED_CONTENT','SAFETY','IMAGE_SAFETY',
@@ -24,7 +24,7 @@ begin
    and exists(select 1 from icg.image_generation_attempt_diagnostics d
      where d.token=c.token and d.kind='refusal'
      and d.payload->>'finish_reason'=c.provider_reason)
- ))))
+ ) is not true)))
  then return jsonb_build_object('hold','scope requires reconciliation'); end if;
  if exists(select 1 from icg.image_generation_calls where scope=p_scope and panel=p_panel
  and fingerprint<>p_fingerprint)
