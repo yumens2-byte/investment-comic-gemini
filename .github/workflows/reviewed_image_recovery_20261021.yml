@@ -1,0 +1,74 @@
+name: Reviewed image recovery 2026-10-21
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/icg-image-recovery/2026-10-21.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: icg-2026-10-21
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    if: github.repository == 'yumens2-byte/investment-comic-gemini' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PYTHONPATH: .
+      TZ: Asia/Seoul
+      DRY_RUN: 'false'
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      SUPABASE_SCHEMA: icg
+      GEMINI_API_SUB_PAY_KEY: ${{ secrets.GEMINI_API_SUB_PAY_KEY }}
+      PUBLISH_NON_MAJOR: ${{ secrets.PUBLISH_NON_MAJOR }}
+      ICG_GENERATION_REVISION: '2'
+      ICG_IMAGE_RETRY_V2_ENABLED: 'false'
+      ICG_IMAGE_OUTCOME_V3_ENABLED: 'true'
+      ICG_IMAGE_CONTENT_ISOLATION_V4_ENABLED: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Restore approved original artifact before any registration
+        uses: actions/download-artifact@v4
+        with:
+          name: episode-39489073022
+          run-id: '39489073022'
+          github-token: ${{ github.token }}
+          path: output/recovery-source
+      - name: Restore selected original PNGs
+        run: python -m scripts.restore_generation_artifact --date 2026-10-21
+      - name: Validate exact source and PNG receipts then atomically register reviewed revision
+        run: python -m scripts.recover_reviewed_images_release --private-dir "$RUNNER_TEMP/icg-reviewed-recovery" --register
+      - name: Initialize private provider diagnostics
+        run: |
+          printf 'ICG_IMAGE_DIAGNOSTICS_DIR=%s/icg-image-diagnostics\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Read-only image preflight
+        run: python -m scripts.run_market --preflight-only --stage image --date 2026-10-21
+      - name: Generate registered reviewed images only
+        run: python -m scripts.run_market --stage image --date 2026-10-21
+      - name: Preserve generated and original panels
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: episode-${{ github.run_id }}
+          path: output/episodes/
+          retention-days: 14
+      - name: Upload read-only inspection
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reviewed-recovery-preflight-${{ github.run_id }}
+          path: output/run-market-preflight.json
+          retention-days: 14
