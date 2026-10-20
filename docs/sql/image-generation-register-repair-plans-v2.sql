@@ -21,6 +21,9 @@ begin
  if revision_no not between 1 and 100
  then return jsonb_build_object('hold','invalid repair revision'); end if;
  target_scope:='output/episodes/'||(p_script->>'date')||'/panels';
+ if (select count(*) from icg.episode_assets e where e.episode_date::text=p_script->>'date'
+     and e.episode_no=1)<>1
+ then return jsonb_build_object('hold','ambiguous repair episode'); end if;
  select e.script_json into current_script from icg.episode_assets e
  where e.episode_date::text=p_script->>'date' and e.episode_no=1
  and e.status='narrative_done' for update;
