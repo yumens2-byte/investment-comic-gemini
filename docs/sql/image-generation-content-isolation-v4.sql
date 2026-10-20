@@ -3,7 +3,7 @@
 create function icg.image_generation_inspect_independent_v4(
  p_scope text,p_panel integer,p_fingerprint text,p_revision integer
 ) returns jsonb language plpgsql security invoker set search_path='' as $$
-declare r record;
+declare selected_call record;
 begin
  if p_scope is null or p_panel is null or p_fingerprint is null or p_revision is distinct from 1
  or p_panel<=0 or p_scope !~ '^output/episodes/[0-9]{4}-[0-9]{2}-[0-9]{2}/panels$'
@@ -18,7 +18,7 @@ begin
  and (not (e.script_json ? '_generation_revision') or
       e.script_json->'_generation_revision'='1'::jsonb))
  or exists(select 1 from icg.image_generation_calls c where c.scope=p_scope and c.revision>1)
- or exists(select 1 from icg.image_generation_recovery_receipts r where r.scope=p_scope)
+ or exists(select 1 from icg.image_generation_recovery_receipts rr where rr.scope=p_scope)
  or exists(select 1 from icg.image_generation_retry_plans p where p.scope=p_scope)
  then return jsonb_build_object('hold','independent generation requires original narrative revision'); end if;
  -- A refusal stays terminal. Only a settled, evidenced ordinary refusal on ANOTHER
@@ -41,9 +41,9 @@ begin
  if exists(select 1 from icg.image_generation_calls where scope=p_scope and panel=p_panel
  and fingerprint<>p_fingerprint)
  then return jsonb_build_object('hold','artifact identity changed'); end if;
- select * into r from icg.image_generation_calls where scope=p_scope and panel=p_panel
+ select * into selected_call from icg.image_generation_calls where scope=p_scope and panel=p_panel
  and state='success' order by created_at desc limit 1;
- if found then return jsonb_build_object('output_hash',r.output_hash); end if;
+ if found then return jsonb_build_object('output_hash',selected_call.output_hash); end if;
  return '{}'::jsonb;
 end $$;
 
