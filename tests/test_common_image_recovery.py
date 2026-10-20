@@ -248,3 +248,44 @@ def test_missing_canonical_ref_is_not_silently_accepted(recovery, monkeypatch):
     monkeypatch.setattr("engine.image.reviewed_inputs.get_refs_for_panel", lambda ids: [])
     with pytest.raises(GenerationHold, match="CANON_REFERENCES_INCOMPLETE"):
         service.prepare_request(request, asset, calls, root)
+
+
+def test_lifetime_panel_budget_stops_prepare_before_any_registration(recovery, monkeypatch):
+    request, asset, calls, root = recovery
+    calls.extend([dict(calls[-1], state="failed", result_code="TRANSIENT") for _ in range(2)])
+    registered = Mock()
+    monkeypatch.setattr(service, "register", registered)
+    with pytest.raises(GenerationHold, match="RECOVERY_PANEL_BUDGET_EXHAUSTED"):
+        service.prepare_request(request, asset, calls, root)
+    registered.assert_not_called()
+
+
+def test_success_reuse_requires_same_candidate_fingerprint_even_at_lifetime_limit():
+    candidate = {"_reviewed_image_inputs": {"panels": [{"idx": 1, "fingerprint": "a" * 64}]}}
+    calls = [{"panel": 1, "state": "failed", "cost": .01} for _ in range(2)]
+    calls.append({"panel": 1, "state": "success", "cost": .04, "fingerprint": "a" * 64})
+    service._check_remaining_budget(candidate, calls)
+    calls[-1]["fingerprint"] = "b" * 64
+    with pytest.raises(GenerationHold, match="RECOVERY_PANEL_BUDGET_EXHAUSTED"):
+        service._check_remaining_budget(candidate, calls)
+
+
+@pytest.mark.parametrize("count,cost,expected", [
+    (29, .01, "RECOVERY_SCOPE_CALL_BUDGET_EXHAUSTED"),
+    (28, .10, ""),
+    (29, .10, "RECOVERY_SCOPE_COST_BUDGET_EXHAUSTED"),
+])
+def test_scope_headroom_includes_every_needed_new_image(count, cost, expected):
+    candidate = {"_reviewed_image_inputs": {"panels": [
+        {"idx": 1, "fingerprint": "a" * 64}, {"idx": 2, "fingerprint": "b" * 64}]}}
+    calls = [{"panel": 99, "state": "failed", "cost": cost} for _ in range(count)]
+    if expected == "RECOVERY_SCOPE_COST_BUDGET_EXHAUSTED":
+        # Exactly one image still needed: calls fit, conservative cost does not.
+        candidate["_reviewed_image_inputs"]["panels"].pop()
+        calls[0]["cost"] = .1000000000000001
+    if expected:
+        with pytest.raises(GenerationHold, match=expected):
+            service._check_remaining_budget(candidate, calls)
+    else:
+        # Decimal arithmetic accepts exactly 30 calls / $3.00.
+        service._check_remaining_budget(candidate, calls)
