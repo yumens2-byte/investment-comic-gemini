@@ -250,14 +250,24 @@ def test_missing_canonical_ref_is_not_silently_accepted(recovery, monkeypatch):
         service.prepare_request(request, asset, calls, root)
 
 
-def test_lifetime_panel_budget_stops_prepare_before_any_registration(recovery, monkeypatch):
+def test_lifetime_panel_budget_stops_execute_before_any_registration(recovery, monkeypatch, tmp_path):
     request, asset, calls, root = recovery
+    _, candidate = service.prepare_request(request, asset, calls, root)
     calls.extend([dict(calls[-1], state="failed", result_code="TRANSIENT") for _ in range(2)])
-    registered = Mock()
+    monkeypatch.setattr(service, "snapshot", lambda day: (asset, calls))
+    monkeypatch.setattr(service, "read_request", lambda *args: (request, "a" * 64))
+    actual_prepare = service.prepare_request
+    monkeypatch.setattr(service, "prepare_request",
+                        lambda req, row, rows, ignored: actual_prepare(req, row, rows, root))
+    registered, generated = Mock(), Mock()
     monkeypatch.setattr(service, "register", registered)
+    monkeypatch.setattr(service, "run_images", generated)
     with pytest.raises(GenerationHold, match="RECOVERY_PANEL_BUDGET_EXHAUSTED"):
-        service.prepare_request(request, asset, calls, root)
+        service.operate("execute", request_path="request.json", request_sha256="a" * 64,
+                        candidate_sha256=service.full_hash(candidate), confirm=service.CONFIRMATION,
+                        private_dir=tmp_path / "private")
     registered.assert_not_called()
+    generated.assert_not_called()
 
 
 def test_success_reuse_requires_same_candidate_fingerprint_even_at_lifetime_limit():
