@@ -137,10 +137,31 @@ def test_preparation_preserves_episode_and_compositor_cards(reviewed, monkeypatc
         ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
 
 
-def test_registration_failure_never_reports_success(monkeypatch):
+def test_registration_failure_never_reports_success(reviewed, monkeypatch):
+    panel, original, ref, repairs, _ = reviewed
+    monkeypatch.setattr("engine.image.ref_loader.get_refs_for_panel", lambda _: [ref])
+    source = {"date": "2026-10-22", "_generation_revision": 1, "panels": [panel]}
+    spec = {"repairs": repairs, "story_facts": ["unnoticed shield crack"], "actor": "reviewer",
+            "note": "Reviewed different actions preserving the hidden shield clue."}
+    candidate, fingerprints = prepare(source, {"4": original}, {"4": spec})
     client = Mock()
     client.schema.return_value = client
     client.rpc.return_value.execute.return_value.data = {"hold": "source changed"}
     monkeypatch.setattr("engine.common.supabase_client.get_client", lambda: client)
     with pytest.raises(GenerationHold, match="REGISTRATION_REJECTED"):
-        register({}, {}, {})
+        register(source, candidate, fingerprints)
+
+
+def test_modified_prepared_fingerprint_never_reaches_database(reviewed, monkeypatch):
+    panel, original, ref, repairs, _ = reviewed
+    monkeypatch.setattr("engine.image.ref_loader.get_refs_for_panel", lambda _: [ref])
+    source = {"date": "2026-10-22", "_generation_revision": 1, "panels": [panel]}
+    spec = {"repairs": repairs, "story_facts": ["unnoticed shield crack"], "actor": "reviewer",
+            "note": "Reviewed different actions preserving the hidden shield clue."}
+    candidate, fingerprints = prepare(source, {"4": original}, {"4": spec})
+    fingerprints["4"][1] = "0" * 64
+    client = Mock()
+    monkeypatch.setattr("engine.common.supabase_client.get_client", client)
+    with pytest.raises(GenerationHold, match="PREPARED_PLANS_CHANGED"):
+        register(source, candidate, fingerprints)
+    client.assert_not_called()
