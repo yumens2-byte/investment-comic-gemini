@@ -196,6 +196,21 @@ def generate(candidate_id: str, output_root: Path) -> dict:
     if os.environ.get("ICG_GENERATION_REVISION") != str(bundle["revision"]):
         raise GenerationHold("Quality revision changed")
     script = bundle["candidate_script"]
+    from engine.assembly.pil_composer import require_korean_font
+
+    selected = {item["panel_idx"] for item in bundle["panels"]}
+    require_korean_font(
+        [
+            text
+            for panel in script["panels"]
+            if panel["idx"] in selected
+            for text in (
+                panel.get("key_text", ""),
+                panel.get("narration", ""),
+                panel.get("market_ref") or "",
+            )
+        ]
+    )
     prompts = {pp.panel_idx: pp for pp in reviewed_panel_prompts(script)}
     # Validate every selected fingerprint before the first paid call.
     guards = {}
@@ -257,6 +272,58 @@ def generate(candidate_id: str, output_root: Path) -> dict:
         )
         (root / "result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     return result
+
+
+def rebuild_previews(
+    script: dict, receipt: dict, artifact_root: Path, output_dir: Path
+) -> list[Path]:
+    """Recompose successful PNGs offline; never spend again to repair captions.
+
+    The caller must supply the original frozen candidate script and receipt.
+    Verify the complete local set before writing any preview.
+    """
+    from engine.assembly.pil_composer import _compose_image_slide, require_korean_font
+    from engine.image.gemini_client import _validate_png
+
+    panels = {p["idx"]: p for p in script["panels"]}
+    items = receipt.get("panels")
+    if not items or len({p["panel_idx"] for p in items}) != len(items):
+        raise GenerationHold("Unique successful image receipt required")
+    sources = []
+    texts = []
+    for item in items:
+        idx = item["panel_idx"]
+        if type(idx) is not int or idx not in panels:
+            raise GenerationHold("Preview panel outside candidate script")
+        source = Path(artifact_root) / f"P{idx}.png"
+        raw = source.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != item.get("output_hash"):
+            raise GenerationHold("Preview image differs from successful receipt")
+        _validate_png(raw)
+        panel = panels[idx]
+        texts.extend(
+            [panel.get("key_text", ""), panel.get("narration", ""), panel.get("market_ref") or ""]
+        )
+        sources.append((idx, source, panel))
+    require_korean_font(texts)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    outputs = []
+    for idx, source, panel in sources:
+        output = output_dir / f"P{idx}-slide.png"
+        if output.resolve() == source.resolve():
+            raise GenerationHold("Preview cannot overwrite source image")
+        _compose_image_slide(
+            output,
+            source,
+            panel.get("key_text", ""),
+            panel.get("narration", ""),
+            idx,
+            panel.get("market_ref"),
+            strict=True,
+        )
+        outputs.append(output)
+    return outputs
 
 
 def materialize_selection(

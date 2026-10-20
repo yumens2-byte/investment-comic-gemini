@@ -21,6 +21,8 @@ def main():
         "action",
         choices=[
             "prepare",
+            "repair-brief",
+            "preview",
             "register",
             "approve",
             "cancel",
@@ -51,11 +53,31 @@ def main():
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--live", action="store_true")
     args = p.parse_args()
-    if args.action not in {"prepare", "export"} and (
+    if args.action not in {"prepare", "export", "repair-brief", "preview"} and (
         not args.live or os.environ.get("DRY_RUN", "true").lower() != "false"
     ):
         p.error("Database and paid actions require --live and DRY_RUN=false")
-    if args.action == "prepare":
+    if args.action == "repair-brief":
+        from engine.image.vault_retake import repair_vault_brief
+
+        result = repair_vault_brief(read(args.candidate))
+    elif args.action == "preview":
+        from engine.image.quality_candidates import rebuild_previews
+
+        paths = rebuild_previews(
+            read(args.candidate), read(args.manifest), args.artifact_root, args.output
+        )
+        print(
+            json.dumps(
+                {
+                    "previews": len(paths),
+                    "quality_status": "UNKNOWN",
+                    "publication_authorized": False,
+                }
+            )
+        )
+        return
+    elif args.action == "prepare":
         result = prepare(
             read(args.source),
             read(args.candidate),

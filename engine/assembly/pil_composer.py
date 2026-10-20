@@ -23,6 +23,7 @@ engine/assembly/pil_composer.py
 from __future__ import annotations
 
 import logging
+import os
 import textwrap
 from pathlib import Path
 
@@ -59,7 +60,7 @@ _FONT_PATHS = [
 
 def _get_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     """사용 가능한 폰트 반환 (fallback: 기본 폰트)."""
-    for path in _FONT_PATHS:
+    for path in [os.environ.get("ICG_CJK_FONT_PATH", ""), *_FONT_PATHS]:
         if Path(path).exists():
             try:
                 return ImageFont.truetype(path, size)
@@ -67,6 +68,29 @@ def _get_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
                 continue
     logger.warning("[pil_composer] NotoSansCJK 없음 → 기본 폰트 사용")
     return ImageFont.load_default()
+
+
+def require_korean_font(texts: list[str]) -> None:
+    """Reject missing Hangul glyphs before saving slides or spending on images."""
+    chars = {
+        c
+        for text in texts
+        for c in (text or "")
+        if (0x1100 <= ord(c) <= 0x11FF or 0x3130 <= ord(c) <= 0x318F or 0xAC00 <= ord(c) <= 0xD7AF)
+    }
+    if not chars:
+        return
+    font = _get_font(22)
+
+    def glyph(c):
+        mask = font.getmask(c)
+        return mask.size, bytes(mask)
+
+    missing = glyph("\U0010ffff")
+    if any(glyph(c) == missing or not font.getbbox(c)[2] for c in chars):
+        raise ValueError(
+            "Korean glyphs unavailable; install fonts-noto-cjk or set ICG_CJK_FONT_PATH"
+        )
 
 
 def _draw_overlay(draw: ImageDraw.ImageDraw, slide: Image.Image) -> None:
@@ -108,12 +132,19 @@ def compose_slide(
         output_path = Path(f"/tmp/S{panel_idx}.png")
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    if strict:
+        require_korean_font(
+            [key_text, narration, market_ref or ""]
+            + (["투자 참고 정보"] if panel_type == "DISCLAIMER" else [])
+        )
+
     if panel_type == "DISCLAIMER":
         return _compose_disclaimer_slide(output_path, narration)
 
     if panel_type == "TEXT_CARD":
-        return _compose_text_card(output_path, key_text, narration, panel_idx, market_ref,
-                                  render_kind="text_card")
+        return _compose_text_card(
+            output_path, key_text, narration, panel_idx, market_ref, render_kind="text_card"
+        )
 
     if panel_image_path is None or not panel_image_path.exists():
         if strict:
@@ -136,13 +167,16 @@ def _compose_image_slide(
     strict: bool = False,
 ) -> Path:
     """이미지 전체(1080x1350) + 하단 반투명 텍스트 오버레이."""
+    if strict:
+        require_korean_font([key_text, narration, market_ref or ""])
     try:
         panel_img = Image.open(panel_image_path).convert("RGBA")
         # Preserve source geometry; pad rather than stretch or silently crop.
         contained = ImageOps.contain(panel_img, (SLIDE_W, SLIDE_H), Image.Resampling.LANCZOS)
         panel_img = Image.new("RGBA", (SLIDE_W, SLIDE_H), (11, 18, 32, 255))
-        panel_img.alpha_composite(contained, ((SLIDE_W - contained.width) // 2,
-                                             (SLIDE_H - contained.height) // 2))
+        panel_img.alpha_composite(
+            contained, ((SLIDE_W - contained.width) // 2, (SLIDE_H - contained.height) // 2)
+        )
     except Exception as exc:
         if strict:
             raise ValueError(f"Assembly source image invalid: panel {panel_idx}") from exc
@@ -298,6 +332,22 @@ def compose_episode(
     """
     if strict:
         validate_panel_sources(panels, panel_images)
+        require_korean_font(
+            [
+                text
+                for p in panels
+                for text in (
+                    p.get("key_text", ""),
+                    p.get("narration", ""),
+                    p.get("market_ref") or "",
+                )
+            ]
+            + (
+                ["투자 참고 정보"]
+                if any(p.get("panel_type") == "DISCLAIMER" for p in panels)
+                else []
+            )
+        )
     output_dir.mkdir(parents=True, exist_ok=True)
     slides: list[Path] = []
 
