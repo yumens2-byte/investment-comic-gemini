@@ -208,6 +208,11 @@ def prepare_request(request: dict, asset: dict, calls: list, root: Path) -> tupl
                         actor=request["actor"], note=request["note"])
     candidate["_image_recovery_review"]["require_manual_resume"] = True
     validate_candidate(candidate)
+    by_idx = {p["idx"]: p for p in candidate["panels"]}
+    for item in candidate["_reviewed_image_inputs"]["panels"]:
+        if (len(item["refs"]) != len(by_idx[item["idx"]].get("characters", []))
+                or len(item["ref_sha256"]) != len(item["refs"])):
+            raise GenerationHold("RECOVERY_CANON_REFERENCES_INCOMPLETE")
     return source, candidate
 
 
