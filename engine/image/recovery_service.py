@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 from datetime import date
+from decimal import Decimal
 from pathlib import Path, PurePosixPath
 
 from engine.image.gemini_client import _validate_png
@@ -181,6 +182,23 @@ def inspection(asset: dict, calls: list, day: str) -> dict:
             "scenes_path": "", "scenes_sha256": "", "actor": "", "note": ""}
 
 
+def _check_remaining_budget(candidate: dict, calls: list) -> None:
+    """Conservative lifetime checks before CAS; DB reservations remain authoritative."""
+    required = 0
+    for item in candidate["_reviewed_image_inputs"]["panels"]:
+        history = [call for call in calls if call["panel"] == item["idx"]]
+        if any(call["state"] == "success" and call.get("fingerprint") == item["fingerprint"]
+               for call in history):
+            continue
+        if len(history) >= 3:
+            raise GenerationHold("RECOVERY_PANEL_BUDGET_EXHAUSTED")
+        required += 1
+    if len(calls) + required > 30:
+        raise GenerationHold("RECOVERY_SCOPE_CALL_BUDGET_EXHAUSTED")
+    if sum((Decimal(str(call["cost"])) for call in calls), Decimal(0)) + Decimal(".10") * required > 3:
+        raise GenerationHold("RECOVERY_SCOPE_COST_BUDGET_EXHAUSTED")
+
+
 def prepare_request(request: dict, asset: dict, calls: list, root: Path) -> tuple[dict, dict]:
     validate_request(request)
     day = request["episode_date"]
@@ -208,6 +226,7 @@ def prepare_request(request: dict, asset: dict, calls: list, root: Path) -> tupl
                         actor=request["actor"], note=request["note"])
     candidate["_image_recovery_review"]["require_manual_resume"] = True
     validate_candidate(candidate)
+    _check_remaining_budget(candidate, calls)
     by_idx = {p["idx"]: p for p in candidate["panels"]}
     for item in candidate["_reviewed_image_inputs"]["panels"]:
         if (len(item["refs"]) != len(by_idx[item["idx"]].get("characters", []))
