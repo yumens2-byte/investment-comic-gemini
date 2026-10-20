@@ -1,0 +1,24 @@
+{
+  "version": "reviewed-image-release-1",
+  "confirmation": "RECOVER_REVIEWED_IMAGES_20261021",
+  "episode_date": "2026-10-21",
+  "episode_id": "ICG-2026-10-21-001",
+  "episode_no": 1,
+  "source_revision": 1,
+  "target_revision": 2,
+  "source_artifact_run_id": "39489073022",
+  "source_script_sha256": "bf397368f40648981e43c85eca2518cdc965e1e3853eb5dbd3e734346032663c",
+  "public_script_sha256": "fc850024480d524862e4354a63243d5b0e3972fb1941e2820ec48fb7dbaf1abd",
+  "scenes_path": "docs/incidents/2026-10-21-reviewed-scenes.json",
+  "scenes_sha256": "c130928ed2fd0c80c3ceb1eb9778e23f0de098cefdcc55c04b13186213170451",
+  "terminal_token": "3eec942a-43ae-4298-922c-c0beaf80b07b",
+  "terminal_reason": "PROHIBITED_CONTENT",
+  "terminal_cost_usd": 0.0007916999999999999,
+  "success_hashes": {
+    "1": "9816ef626945afc98b772458344abd9713df077f921f6b9d78e3480f087e4705",
+    "2": "e38a23f9b2dd28ece984986be938bf96db6c644197e50cecf65d5cfd71cf7a30",
+    "3": "344aba9d4008e70008708cbd9d1e951d1a481e72561f4940c0ab2832c8f35a1e"
+  },
+  "actor": "user-authorized-release-20261021",
+  "note": "User authorized production rollout and recovery on 2026-10-21. Reviewed non-contact scenes preserve cast, public story, and unseen inner shield crack."
+}
