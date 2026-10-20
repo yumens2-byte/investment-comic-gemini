@@ -24,6 +24,7 @@ jobs:
           node tests/integration/image_attempt_diagnostics_sql.mjs
           node tests/integration/image_retry_sql.mjs
           node tests/integration/image_outcome_v3_sql.mjs
+          node tests/integration/image_content_isolation_v4_sql.mjs
           node tests/integration/image_quality_sql.mjs
   narrative-database-contract:
     name: Narrative Database Contract
