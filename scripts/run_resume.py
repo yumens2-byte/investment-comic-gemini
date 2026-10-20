@@ -112,12 +112,18 @@ def prepare_resume_target(episode_id=None, *, force=False, allow_narrative_only=
     date.fromisoformat(_parse_date(episode_id))
     if int(episode_id.rsplit("-", 1)[1]) <= 0:
         raise ValueError("Invalid Resume episode number")
-    rows = (icg_table("episode_assets").select("status,artifact_run_id")
+    rows = (icg_table("episode_assets").select("status,artifact_run_id,script_json")
             .eq("episode_date", _parse_date(episode_id))
             .eq("episode_no", int(episode_id.rsplit("-", 1)[1])).limit(1).execute()).data
     if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict):
         raise RuntimeError("Exact Resume episode unavailable")
     row = rows[0]
+    script = row.get("script_json")
+    recovery_review = script.get("_image_recovery_review") if isinstance(script, dict) else None
+    if (scheduled and isinstance(recovery_review, dict)
+            and recovery_review.get("require_manual_resume") is True):
+        return {"status": "idle", "ready": False,
+                "reason": "reviewed_recovery_requires_manual_resume"}
     from engine.image.quality_candidates import load_selection, pending_human_gate
     if quality_selection_version is not None:
         load_selection(_parse_date(episode_id), quality_selection_version)
