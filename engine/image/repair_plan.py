@@ -40,7 +40,7 @@ def normalized(text: str) -> str:
 def source_identity(panel: dict) -> dict:
     cast = panel.get("characters")
     if (type(panel.get("idx")) is not int or panel["idx"] < 1
-            or not isinstance(cast, list) or not cast
+            or not isinstance(cast, list)
             or any(not isinstance(c, dict) or not isinstance(c.get("char_id"), str)
                    or not c["char_id"] for c in cast)):
         raise GenerationHold("REPAIR_SOURCE_CAST_REQUIRED")
@@ -62,7 +62,7 @@ def validate_review(body: dict) -> None:
             or body.get("source_sha256") != digest(source)):
         raise GenerationHold("REPAIR_REVIEW_REQUIRED")
     if (type(source.get("panel_idx")) is not int or not isinstance(source.get("cast"), list)
-            or not source["cast"] or not isinstance(source.get("action"), str)):
+            or not isinstance(source.get("action"), str)):
         raise GenerationHold("REPAIR_SOURCE_INVALID")
     cast = source["cast"]
     actions = {normalized(source["action"])}
@@ -107,7 +107,7 @@ def validate_bundle(bundle: dict, original: str, refs: list[Path]) -> None:
     if bundle.get("prompts") != prompts or len(set(prompts)) != len(prompts):
         raise GenerationHold("REPAIR_PROMPTS_CHANGED")
     hashes = [hashlib.sha256(Path(ref).read_bytes()).hexdigest() for ref in refs]
-    if not refs or bundle.get("ref_sha256") != hashes:
+    if len(refs) != len(review["source"]["cast"]) or bundle.get("ref_sha256") != hashes:
         raise GenerationHold("REPAIR_REFERENCES_CHANGED")
     content = {k: v for k, v in bundle.items() if k != "plan_id"}
     if bundle.get("plan_id") != digest(content):
