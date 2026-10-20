@@ -181,3 +181,27 @@ def test_deployment_workflows_use_safe_inputs_context_and_env_keys() -> None:
         assert not re.search(r"^[ \t]*[A-Za-z_][A-Za-z0-9_]*\s+:", text, re.MULTILINE), (
             f"{path} contains an env/YAML key with whitespace before ':'"
         )
+
+
+def _run_market_stage_choices() -> list[str]:
+    import ast
+
+    tree = ast.parse(Path("scripts/run_market.py").read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "add_argument"
+                and node.args and isinstance(node.args[0], ast.Constant)
+                and node.args[0].value == "--stage"):
+            for kw in node.keywords:
+                if kw.arg == "choices":
+                    return list(ast.literal_eval(kw.value))
+    raise AssertionError("--stage choices not found in scripts/run_market.py")
+
+
+def test_stage_input_is_choice_matching_cli_choices() -> None:
+    # DN2026_0028: free-text stage typos failed preflight with argparse exit 2 (run 39361890176).
+    workflow = _workflow_yaml()
+    triggers = workflow.get("on", workflow.get(True))
+    stage = triggers["workflow_dispatch"]["inputs"]["stage"]
+    assert stage["type"] == "choice"
+    assert [str(o) for o in stage["options"]] == _run_market_stage_choices()
+    assert stage["default"] in stage["options"]
