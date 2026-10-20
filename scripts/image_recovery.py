@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 
 from engine.image.generation_guard import GenerationHold
-from engine.image.recovery_service import operate, resolve
+from engine.image.recovery_service import RecoveryProgressHold, operate, resolve
 
 
 def main() -> None:
@@ -39,8 +39,9 @@ def main() -> None:
     except Exception as exc:
         code = str(exc) if isinstance(exc, GenerationHold) else type(exc).__name__
         # Provider/DB exceptions can contain private request text.
-        report = {"mode": args.mode, "status": "blocked", "error_type": type(exc).__name__,
-                  "code": code if re.fullmatch(r"[A-Z0-9_]+", code) else "RECOVERY_HELD"}
+        report = dict(exc.report) if isinstance(exc, RecoveryProgressHold) else {"mode": args.mode}
+        report.update(status="blocked", error_type=type(exc).__name__,
+                      code=code if re.fullmatch(r"[A-Z0-9_]+", code) else "RECOVERY_HELD")
         args.report.parent.mkdir(parents=True, exist_ok=True)
         args.report.write_text(json.dumps(report, indent=2), encoding="utf-8")
         print(json.dumps(report))
