@@ -1,7 +1,6 @@
 """Common reviewed image recovery service; no incident-specific dates or dispatch triggers."""
 from __future__ import annotations
 
-import copy
 import hashlib
 import json
 import math
@@ -128,13 +127,18 @@ def _eligible(asset: dict, calls: list, day: str) -> tuple[dict, dict, dict]:
             or not 1 <= source.get("_generation_revision", 1) < 100
             or (source.get("_state_candidate") or {}).get("version") != "state-candidate-1"):
         raise GenerationHold("RECOVERY_SOURCE_NOT_ELIGIBLE")
+    artifact = asset.get("artifact_run_id")
+    if not isinstance(artifact, str) or not artifact.isascii() or not artifact.isdigit() or int(artifact) <= 0:
+        raise GenerationHold("RECOVERY_ARTIFACT_ID_REQUIRED")
     if source.get("_scene_performance_v2"):
         raise GenerationHold("RECOVERY_DYNAMIC_V2_REQUIRES_SPECIALIZED_PREPARATION")
     if (not isinstance(calls, list) or not calls or len(calls) > 30
             or any(not isinstance(c, dict) or type(c.get("panel")) is not int or c["panel"] <= 0
                    or type(c.get("revision")) is not int
                    or not 1 <= c["revision"] <= source.get("_generation_revision", 1)
-                   or c.get("state") not in {"success", "failed", "terminal"} for c in calls)):
+                   or c.get("state") not in {"success", "failed", "terminal"}
+                   or type(c.get("cost")) not in (int, float) or not math.isfinite(c["cost"])
+                   or not 0 <= c["cost"] <= .10 for c in calls)):
         raise GenerationHold("RECOVERY_UNSETTLED_OR_INVALID_LEDGER")
     terminal = [c for c in calls if c["state"] == "terminal"]
     if len(terminal) != 1:
