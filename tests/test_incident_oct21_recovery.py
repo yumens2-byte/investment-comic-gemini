@@ -35,6 +35,8 @@ def test_oct21_recovery_scenes_prepare_without_paid_or_db_calls(monkeypatch):
     assert candidate["next_hook"] == source["next_hook"]
     assert candidate["panels"][6:] == source["panels"][6:]
     assert len(candidate["_reviewed_image_inputs"]["panels"]) == 6
+    assert "Debt Titan" not in scenes["2"]["prompt_text"]
+    assert [len(item["refs"]) for item in candidate["_reviewed_image_inputs"]["panels"]] == [2, 1, 2, 2, 2, 2]
     for before, after in zip(source["panels"], candidate["panels"]):
         assert before["characters"] == after["characters"]
         assert before["narration"] == after["narration"]
