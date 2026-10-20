@@ -461,8 +461,9 @@ def generate_panel(
             if terminal:
                 _record_provider_refusal(panel_idx, exc.reason, known_cost)
             settlement_error = None
+            settlement_receipt = None
             try:
-                settle(token, state="terminal" if terminal else "failed",
+                settlement_receipt = settle(token, state="terminal" if terminal else "failed",
                        actual_cost=known_cost, reason=reason)
             except GenerationHold as hold:
                 settlement_error = hold
@@ -509,6 +510,22 @@ def generate_panel(
                         sleeper(retry_delay(attempt))
                         continue
                     raise PanelGenerationFailed(f"content retry exhausted; {refusal}", total_cost) from exc
+                from engine.image.provider_outcome import (
+                    SettlementReceipt,
+                    content_isolation_v4_enabled,
+                )
+                if (content_isolation_v4_enabled() and not plan
+                        and getattr(guard, "revision", None) == 1
+                        and isinstance(settlement_receipt, SettlementReceipt)
+                        and settlement_receipt.result_code == "CONTENT_REVIEW_REQUIRED"
+                        and settlement_receipt.state == "terminal"
+                        and settlement_receipt.hold_code == "CONTENT_REVIEW_REQUIRED"
+                        and known_cost is not None and 0 <= known_cost <= 0.10
+                        and settlement_receipt.cost_usd == known_cost):
+                    raise SettledContentRefusal(
+                        f"provider refused image; {refusal}; code=CONTENT_REVIEW_REQUIRED",
+                        total_cost + known_cost, reason,
+                    ) from exc
                 raise GenerationHold(f"provider refused image; {refusal}; code=CONTENT_REVIEW_REQUIRED") from exc
             total_cost += known_cost if known_cost is not None else _calc_cost(
                 _estimate_prompt_tokens(prompt, ref_paths), _ESTIMATED_IMAGE_OUTPUT_TOKENS
@@ -594,6 +611,15 @@ class PanelGenerationFailed(GenerationHold):
         self.cost = cost
 
 
+class SettledContentRefusal(GenerationHold):
+    """Confirmed ordinary refusal; never retry this panel or release its ledger hold."""
+
+    def __init__(self, message: str, cost: float, provider_reason: str):
+        super().__init__(message)
+        self.cost = cost
+        self.provider_reason = provider_reason
+
+
 def generate_episode(
     panels: list[dict],
     output_dir: Path,
@@ -626,9 +652,14 @@ def generate_episode(
                 len(panels), reviewed_count, limit)
     results: list[Path | None] = []
     summary = []
+    content_holds = []
     total_cost = 0.0
 
     def write_summary(*, complete=False, held_panel=None, provider_reason=None):
+        if held_panel is None and content_holds:
+            held_panel = content_holds[0]["panel"]
+        if provider_reason is None and content_holds:
+            provider_reason = content_holds[0]["provider_reason"]
         pending = [{"panel": p.get("panel_idx", 0), "status": "not_attempted",
                     "cost_usd": None} for p in panels[len(summary):]]
         observed_cost = 0.0
@@ -663,7 +694,9 @@ def generate_episode(
                         "result_code": "CONTENT_REVIEW_REQUIRED" if provider_reason in CONTENT_REASONS | REVIEW_REASONS else
                                        "IMAGE_SUCCESS" if complete else "IMAGE_INCOMPLETE",
                         "cost_usd": total_cost, "held_panel": held_panel,
-                        "cost_complete": held_panel is None and len(summary) == len(panels)}), encoding="utf-8",
+                        "held_panels": [p["panel"] for p in summary if p["status"] == "held"],
+                        "cost_complete": len(summary) == len(panels) and all(
+                            isinstance(p.get("cost_usd"), (int, float)) for p in summary)}), encoding="utf-8",
         )
         from engine.image.provider_outcome import outcome_v3_enabled
         if outcome_v3_enabled():
@@ -699,6 +732,16 @@ def generate_episode(
                 output_dir=output_dir, log_path=log_path,
                 **({"aspect_ratio": panel["aspect_ratio"]} if "aspect_ratio" in panel else {}), **kwargs,
             )
+        except SettledContentRefusal as exc:
+            # This typed exception is emitted only after a verified v3 receipt and diagnostics.
+            # The opt-in v4 DB contract still enforces the scope budgets and unresolved holds.
+            content_holds.append({"panel": idx, "provider_reason": exc.provider_reason})
+            results.append(None)
+            total_cost += exc.cost
+            summary.append({"panel": idx, "status": "held", "cost_usd": exc.cost})
+            write_summary()
+            logger.warning("[gemini] panel=%s settled content refusal isolated; review required", idx)
+            continue
         except PanelGenerationFailed as exc:
             logger.warning("[gemini] panel=%s settled failure: %s", idx, exc)
             path, panel_cost = None, exc.cost
@@ -717,6 +760,14 @@ def generate_episode(
         summary.append({"panel": idx, "status": "success" if path else "failed",
                         "cost_usd": panel_cost})
         write_summary()
+
+    if content_holds:
+        write_summary()
+        held = ",".join(str(item["panel"]) for item in content_holds)
+        raise GenerationHold(
+            f"code=CONTENT_REVIEW_REQUIRED; held_panels={held}; "
+            "independent panels processed; preserve successful PNGs"
+        )
 
     success_count = sum(1 for p in results if p is not None)
     logger.info(
