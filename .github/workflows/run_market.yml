@@ -129,7 +129,7 @@ jobs:
       # Production DB capability verified 2026-10-20; change to 'false' to roll back.
       ICG_IMAGE_OUTCOME_V3_ENABLED: 'true'
       # Production v4 SQL capability and least-privilege grants verified 2026-10-21.
-      ICG_IMAGE_CONTENT_ISOLATION_V4_ENABLED: ${{ vars.ICG_IMAGE_CONTENT_ISOLATION_V4_ENABLED || 'true' }}
+      ICG_IMAGE_CONTENT_ISOLATION_V4_ENABLED: 'true'
       RUN_STAGE: ${{ inputs.stage || 'all' }}
       FORCE_RUN: ${{ inputs.force || 'false' }}
       SCENARIO_V2_ENABLED: ${{ (inputs.scenario_v2 != '' && inputs.scenario_v2 != 'auto') && inputs.scenario_v2 || vars.SCENARIO_V2_ENABLED || 'false' }}
