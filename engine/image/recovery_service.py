@@ -22,6 +22,14 @@ HEX = re.compile(r"^[0-9a-f]{64}$")
 CONTENT_REASONS = {"PROHIBITED_CONTENT", "SAFETY", "IMAGE_SAFETY"}
 
 
+class RecoveryProgressHold(GenerationHold):
+    """Allowlisted phase checkpoint; never contains the raw provider/DB exception."""
+
+    def __init__(self, code: str, report: dict):
+        super().__init__(code)
+        self.report = dict(report)
+
+
 def full_hash(value: dict) -> str:
     """Compute with the native Python DB response; preserve 100.0 versus 100."""
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True,
@@ -254,10 +262,17 @@ def operate(mode: str, *, day: str = "", request_path: str = "", request_sha256:
               "target_revision": request["target_revision"], "registered": False,
               "manual_resume": True, "source_images_verified": len(request["success_hashes"])}
     if mode == "execute":
-        register(source, candidate, request["terminal_token"], request["terminal_cost_usd"])
-        report["registered"] = True
-        run_images(request)
-        report["image_stage_completed"] = True
+        try:
+            register(source, candidate, request["terminal_token"], request["terminal_cost_usd"])
+        except Exception as exc:
+            report.update(registered="unconfirmed", phase="registration")
+            raise RecoveryProgressHold("RECOVERY_REGISTRATION_UNCONFIRMED", report) from exc
+        report.update(registered=True, phase="image")
+        try:
+            run_images(request)
+        except Exception as exc:
+            raise RecoveryProgressHold("RECOVERY_IMAGE_STAGE_HELD", report) from exc
+        report.update(image_stage_completed=True, phase="complete")
     else:
         report.update(database_writes=0, paid_calls=0)
     return report
