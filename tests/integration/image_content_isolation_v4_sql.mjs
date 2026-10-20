@@ -24,7 +24,8 @@ const reserve=(panel=2,fingerprint=other,revision=1)=>rpc('image_generation_rese
 async function fixture(){
  await db.exec(`reset role; truncate icg.image_generation_diagnostics,icg.image_generation_attempt_diagnostics,
  icg.image_generation_recovery_receipts,icg.image_generation_calls,icg.image_generation_retry_plans,
- icg.episode_assets,icg.image_generation_run_status; set role service_role;`);
+ icg.episode_assets,icg.image_generation_run_status;
+ insert into icg.episode_assets values('2026-10-21',1,'narrative_done','{}'); set role service_role;`);
 }
 async function refusal({cost=.001,reason='PROHIBITED_CONTENT',evidence=true}={}){
  const {token}=await reserve(1,fp);
@@ -96,6 +97,58 @@ await check('anonymous roles cannot read or invoke independent contract',async()
   await assert.rejects(()=>rpc('image_generation_content_isolation_v4_capability',[]),/permission denied/);
  }
 });
+
+await check('current narrative revision and status cannot be bypassed',async()=>{
+ for(const script of [{_generation_revision:2},{_generation_revision:'1'},{_generation_revision:null}]){
+  await fixture();await db.query('update icg.episode_assets set script_json=$1',[JSON.stringify(script)]);
+  assert.ok((await reserve()).hold);
+ }
+ await fixture();await db.query("update icg.episode_assets set status='published'");assert.ok((await reserve()).hold);
+ await fixture();await db.exec('reset role; truncate icg.episode_assets; set role service_role');assert.ok((await reserve()).hold);
+ await fixture();await db.query('update icg.episode_assets set script_json=$1',[JSON.stringify({_generation_revision:1})]);
+ assert.ok((await reserve()).token);
+});
+await check('revision call history and reviewed plan cannot be downgraded',async()=>{
+ await fixture();await db.query("insert into icg.image_generation_calls(scope,panel,fingerprint,state,cost,revision) values($1,3,$2,'failed',0,2)",[scope,fp]);
+ assert.ok((await reserve()).hold);
+ await fixture();await db.query(`insert into icg.image_generation_retry_plans
+ (plan_id,scope,panel,revision,fingerprints,script_json,review_evidence)
+ values($1,$2,4,1,$3,'{}','Reviewed offline test plan forbids ordinary downgrade')`,
+ ['d'.repeat(64),scope,JSON.stringify([fp])]);
+ assert.ok((await reserve()).hold);
+});
+async function seedBudget(count,cost,{sameScope=false,samePanel=false,month=false}={}){
+ // Synthetic historical ledger rows isolate each aggregate budget independently.
+ await db.query(`insert into icg.image_generation_calls(scope,panel,fingerprint,state,cost,created_at)
+ select case when $1::boolean then $2 else 'historical-budget-'||g::text end,
+ case when $3::boolean then 2 else g+10 end,$4,'failed',$5,
+ case when $6::boolean then date_trunc('month',now() at time zone 'UTC') at time zone 'UTC' else now() end
+ from generate_series(1,$7::integer) g`,[sameScope,scope,samePanel,other,cost,month,count]);
+}
+await check('scope lifetime count and cost caps preserve exact boundary',async()=>{
+ await fixture();await seedBudget(30,0,{sameScope:true});assert.equal((await reserve()).hold,'generation budget exhausted');
+ await fixture();await seedBudget(29,.1,{sameScope:true});assert.ok((await reserve()).token);
+ await fixture();await seedBudget(29,.10001,{sameScope:true});assert.equal((await reserve()).hold,'generation budget exhausted');
+});
+await check('UTC day count and cost caps preserve exact boundary',async()=>{
+ await fixture();await seedBudget(60,0);assert.equal((await reserve()).hold,'generation budget exhausted');
+ await fixture();await seedBudget(59,0);assert.ok((await reserve()).token);
+ await fixture();await seedBudget(10,.591);assert.equal((await reserve()).hold,'generation budget exhausted');
+ await fixture();await seedBudget(10,.59);assert.ok((await reserve()).token);
+});
+await check('UTC month count and cost caps remain cumulative across earlier days',async()=>{
+ const {day}= (await db.query("select extract(day from now() at time zone 'UTC')::int as day")).rows[0];
+ if(day===1){
+  // The monthly window equals the daily window on day one; daily caps are stricter.
+  await fixture();await seedBudget(300,0,{month:true});assert.equal((await reserve()).hold,'generation budget exhausted');
+  return;
+ }
+ await fixture();await seedBudget(300,0,{month:true});assert.equal((await reserve()).hold,'generation budget exhausted');
+ await fixture();await seedBudget(299,0,{month:true});assert.ok((await reserve()).token);
+ await fixture();await seedBudget(150,.2,{month:true});assert.equal((await reserve()).hold,'generation budget exhausted');
+ await fixture();await seedBudget(150,.199,{month:true});assert.ok((await reserve()).token);
+});
+
 await db.close();
 console.log(JSON.stringify({status:'PASS',checks:checks.length,cases:checks,
  limitation:'single PostgreSQL backend; multi-session lock contention and provider acceptance not tested'},null,2));
