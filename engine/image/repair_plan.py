@@ -116,6 +116,11 @@ def validate_bundle(bundle: dict, original: str, refs: list[Path]) -> None:
 
 def make_bundle(panel: dict, original: str, refs: list[Path], repairs: list[dict],
                 *, story_facts: list[str], actor: str, note: str) -> dict:
+    if (not isinstance(original, str) or not original.strip()
+            or not isinstance(repairs, list) or not 1 <= len(repairs) <= 2
+            or any(not isinstance(r, dict) or not isinstance(r.get("prompt_text"), str)
+                   for r in repairs)):
+        raise GenerationHold("REPAIR_VARIANT_INVALID")
     source = source_identity(panel)
     review = {"source": source, "source_sha256": digest(source),
               "repairs": copy.deepcopy(repairs), "story_facts": story_facts,
@@ -132,6 +137,12 @@ def prepare(source: dict, base_prompts: dict, repair_specs: dict) -> tuple[dict,
     """Prepare all paid panels offline; no narrative edits or paid/provider calls."""
     from engine.image.ref_loader import get_refs_for_panel
 
+    if (not isinstance(source, dict) or not isinstance(base_prompts, dict)
+            or not isinstance(repair_specs, dict)
+            or type(source.get("_generation_revision")) is not int
+            or not 1 <= source["_generation_revision"] <= 100
+            or source.get("_scene_performance_v2")):
+        raise GenerationHold("REPAIR_EPISODE_CONFIGURATION_UNSUPPORTED")
     panels = source.get("panels")
     if (not isinstance(panels, list) or not panels
             or any(not isinstance(p, dict) or type(p.get("idx")) is not int for p in panels)
