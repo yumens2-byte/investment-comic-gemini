@@ -69,6 +69,16 @@ class ProductionGenerationGuard:
         return {'p_scope': self.scope, 'p_panel': self.panel,
                 'p_fingerprint': self.fingerprint}
 
+    def _independent_v4(self) -> bool:
+        from engine.image.provider_outcome import content_isolation_v4_enabled
+        return content_isolation_v4_enabled() and self.revision == 1 and not self.retry_plan_id
+
+    def _check_independent_v4(self) -> None:
+        if self._independent_v4():
+            receipt = self._rpc('image_generation_content_isolation_v4_capability', {})
+            if receipt.get('version') != 'image-content-isolation-4':
+                raise GenerationHold('Content isolation v4 database contract unavailable; provider not called')
+
     def reuse(self, output_path: Path) -> bool:
         from engine.image.provider_outcome import outcome_v3_enabled
         if outcome_v3_enabled():
@@ -81,6 +91,10 @@ class ProductionGenerationGuard:
         if self.retry_plan_id:
             params["p_plan_id"] = self.retry_plan_id
         elif self.revision > 1:
+            params['p_revision'] = self.revision
+        self._check_independent_v4()
+        if self._independent_v4():
+            name = 'image_generation_inspect_independent_v4'
             params['p_revision'] = self.revision
         receipt = self._rpc(name, params)
         digest = receipt.get('output_hash')
@@ -110,6 +124,10 @@ class ProductionGenerationGuard:
         if self.retry_plan_id:
             params["p_plan_id"] = self.retry_plan_id
         elif self.revision > 1:
+            params['p_revision'] = self.revision
+        self._check_independent_v4()
+        if self._independent_v4():
+            name = 'image_generation_reserve_independent_v4'
             params['p_revision'] = self.revision
         receipt = self._rpc(name, params)
         token = receipt.get('token')
