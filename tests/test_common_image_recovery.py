@@ -240,3 +240,11 @@ def test_post_registration_image_failure_reports_committed_phase(recovery, monke
     assert held.value.report["registered"] is True
     assert held.value.report["phase"] == "image"
     assert "PRIVATE_REQUEST_DATA" not in json.dumps(held.value.report)
+
+
+def test_missing_canonical_ref_is_not_silently_accepted(recovery, monkeypatch):
+    request, asset, calls, root = recovery
+    monkeypatch.setattr("scripts.prepare_image_recovery.get_refs_for_panel", lambda ids: [])
+    monkeypatch.setattr("engine.image.reviewed_inputs.get_refs_for_panel", lambda ids: [])
+    with pytest.raises(GenerationHold, match="CANON_REFERENCES_INCOMPLETE"):
+        service.prepare_request(request, asset, calls, root)
