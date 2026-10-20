@@ -76,6 +76,7 @@ def prepare_release(request: dict, asset: dict, calls: list, root: Path) -> tupl
         raise GenerationHold("RELEASE_SCENES_CHANGED")
     candidate = prepare(source, json.loads(scene_bytes), request["target_revision"],
                         actor=request["actor"], note=request["note"])
+    candidate["_image_recovery_review"]["require_manual_resume"] = True
     validate_candidate(candidate)
     return source, candidate
 
