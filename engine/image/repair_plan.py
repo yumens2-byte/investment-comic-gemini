@@ -175,6 +175,20 @@ def prepare(source: dict, base_prompts: dict, repair_specs: dict) -> tuple[dict,
 def register(source: dict, candidate: dict, fingerprints: dict) -> dict:
     from engine.common.supabase_client import get_client, get_schema
 
+    plans = candidate.get("_reviewed_image_retry_plans")
+    if not isinstance(plans, dict) or not plans:
+        raise GenerationHold("REPAIR_PREPARED_PLANS_REQUIRED")
+    try:
+        base = {key: value["prompts"][0] for key, value in plans.items()}
+        specs = {key: {"repairs": value["review"]["repairs"],
+                       "story_facts": value["review"]["story_facts"],
+                       "actor": value["review"]["actor"], "note": value["review"]["review_note"]}
+                 for key, value in plans.items()}
+    except (KeyError, TypeError, IndexError) as exc:
+        raise GenerationHold("REPAIR_PREPARED_PLANS_INVALID") from exc
+    checked_candidate, checked_fingerprints = prepare(source, base, specs)
+    if checked_candidate != candidate or checked_fingerprints != fingerprints:
+        raise GenerationHold("REPAIR_PREPARED_PLANS_CHANGED")
     receipt = get_client().schema(get_schema()).rpc("image_generation_register_repair_plans_v2", {
         "p_expected_script": source, "p_script": candidate, "p_fingerprints": fingerprints,
     }).execute().data
