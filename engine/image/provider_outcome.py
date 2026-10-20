@@ -44,3 +44,13 @@ class SettlementReceipt:
         if receipt.hold_code and receipt.hold_code != "CONTENT_REVIEW_REQUIRED":
             raise GenerationHold(receipt.hold_code)
         return receipt
+
+
+def content_isolation_v4_enabled() -> bool:
+    """Explicit rollout; missing DB capability must never fall back to legacy calls."""
+    value = os.environ.get("ICG_IMAGE_CONTENT_ISOLATION_V4_ENABLED", "false").lower()
+    if value not in {"true", "false"}:
+        raise GenerationHold("Invalid content isolation feature flag")
+    if value == "true" and not outcome_v3_enabled():
+        raise GenerationHold("Content isolation requires outcome v3")
+    return value == "true"
