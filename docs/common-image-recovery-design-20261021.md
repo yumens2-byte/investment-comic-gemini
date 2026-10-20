@@ -153,3 +153,16 @@ DB 쓰기 beta를 read-only inspect에 섞지 않는다. 테스트 reserved/unkn
 첫 배포에서는 새 모듈만 추가한다. 현재 일회성 YAML/helper/request는 그대로 두고 공통 inspect/prepare를
 운영에서 확인한다. 이후 공통 회귀로 이전이 확인된 파일만 cleanup inventory에 따라 별도 삭제 PR로 처리한다.
 사건 근거·SQL 이력·REF 및 회귀 fixture를 일괄 삭제하지 않는다.
+
+
+## 등록 전 남은 예산 검사
+
+후보의 `_reviewed_image_inputs.panels`별 idx/fingerprint를 현재 scope 이력과 비교한다.
+같은 패널의 성공 fingerprint가 후보와 같고 원본 PNG 검증을 통과한 경우만 재사용으로 센다.
+새 생성이 필요한 패널의 lifetime 호출 이력이 이미 3회이면
+`RECOVERY_PANEL_BUDGET_EXHAUSTED`로 prepare/execute를 등록 전에 차단한다.
+기존 scope 호출 수 + 필요한 새 이미지 수가 30을 넘거나,
+기존 확정 비용 + 새 이미지마다 보수적 $0.10의 합계가 $3.00을 넘는 경우도 차단한다.
+비용 합산은 Decimal로 경계값을 계산한다. 이 검사는 ledger를 초기화하거나 비용 한도를
+늘리지 않는다. day/month 전역 예산과 검사 이후 동시 변경은 기존 DB reservation이 최종 판단한다.
+inspect는 후보 생성 전의 요청 템플릿만 제공하므로 실행 가능 판정이 아니다.
