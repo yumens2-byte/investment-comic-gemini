@@ -179,11 +179,13 @@ def test_registration_failure_never_calls_provider(recovery, monkeypatch, tmp_pa
     monkeypatch.setattr(service, "register", Mock(side_effect=GenerationHold("CAS_REJECTED")))
     generated = Mock()
     monkeypatch.setattr(service, "run_images", generated)
-    with pytest.raises(GenerationHold, match="CAS_REJECTED"):
+    with pytest.raises(service.RecoveryProgressHold, match="REGISTRATION_UNCONFIRMED") as held:
         service.operate("execute", request_path="request.json", request_sha256="a" * 64,
                         candidate_sha256=service.full_hash(candidate), confirm=service.CONFIRMATION,
                         private_dir=tmp_path / "private")
     generated.assert_not_called()
+    assert held.value.report["registered"] == "unconfirmed"
+    assert held.value.report["phase"] == "registration"
 
 
 def test_private_candidates_cannot_be_written_under_artifact_output(monkeypatch, tmp_path):
@@ -219,3 +221,22 @@ def test_image_execution_requires_allowlisted_read_only_preflight(monkeypatch, t
     with pytest.raises(GenerationHold, match="PREFLIGHT_BLOCKED"):
         service.run_images({"target_revision": 3, "episode_date": "2027-03-04"})
     assert len(calls) == 1 and "--preflight-only" in calls[0]
+
+
+def test_post_registration_image_failure_reports_committed_phase(recovery, monkeypatch, tmp_path):
+    request, asset, calls, root = recovery
+    monkeypatch.setattr(service, "snapshot", lambda day: (asset, calls))
+    monkeypatch.setattr(service, "read_request", lambda *args: (request, "a" * 64))
+    actual_prepare = service.prepare_request
+    monkeypatch.setattr(service, "prepare_request",
+                        lambda req, row, rows, ignored: actual_prepare(req, row, rows, root))
+    _, candidate = actual_prepare(request, asset, calls, root)
+    monkeypatch.setattr(service, "register", Mock())
+    monkeypatch.setattr(service, "run_images", Mock(side_effect=TimeoutError("PRIVATE_REQUEST_DATA")))
+    with pytest.raises(service.RecoveryProgressHold, match="IMAGE_STAGE_HELD") as held:
+        service.operate("execute", request_path="request.json", request_sha256="a" * 64,
+                        candidate_sha256=service.full_hash(candidate), confirm=service.CONFIRMATION,
+                        private_dir=tmp_path / "private")
+    assert held.value.report["registered"] is True
+    assert held.value.report["phase"] == "image"
+    assert "PRIVATE_REQUEST_DATA" not in json.dumps(held.value.report)
