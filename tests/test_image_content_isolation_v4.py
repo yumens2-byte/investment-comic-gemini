@@ -114,6 +114,9 @@ def test_reconciliation_after_isolated_refusal_still_stops(monkeypatch, tmp_path
         adapter.generate_episode([{"panel_idx": i} for i in range(1, 7)], tmp_path)
     summary = json.loads((tmp_path / "generation-summary.json").read_text())
     assert calls == [1, 2, 3]
+    assert summary["held_panel"] == 3
+    assert summary["provider_reason"] is None
+    assert summary["result_code"] == "IMAGE_INCOMPLETE"
     assert summary["not_attempted_images"] == 3
     assert summary["cost_complete"] is False and summary["complete"] is False
 
