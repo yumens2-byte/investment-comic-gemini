@@ -55,6 +55,7 @@ def test_exact_source_and_canonical_refs_prepare_without_modifying_source(recove
     source, candidate = release.prepare_release(request, asset, calls, root)
     assert asset == original
     assert candidate["_generation_revision"] == 2
+    assert candidate["_image_recovery_review"]["require_manual_resume"] is True
     assert candidate["_state_candidate"] == source["_state_candidate"]
     assert len(candidate["_reviewed_image_inputs"]["panels"]) == 6
     assert candidate["panels"][6:] == source["panels"][6:]
@@ -158,3 +159,18 @@ def test_one_shot_workflow_runs_only_after_approved_main_push_and_restoration():
     assert "--stage all" not in commands and "--stage recovery" not in commands
     uploads = [s["with"]["path"] for s in steps if s.get("uses", "").startswith("actions/upload-artifact")]
     assert uploads == ["output/episodes/", "output/run-market-preflight.json"]
+
+
+def test_recovered_episode_requires_manual_resume_but_normal_schedule_is_unchanged(monkeypatch):
+    from scripts import run_resume
+    from tests.test_image_hold_monitoring import target_table
+
+    row = {"status": "image_generated", "artifact_run_id": "123",
+           "script_json": {"_image_recovery_review": {"require_manual_resume": True}}}
+    target_table(monkeypatch, [row])
+    result = run_resume.prepare_resume_target("ICG-2026-10-21-001", scheduled=True)
+    assert result["ready"] is False
+    assert result["reason"] == "reviewed_recovery_requires_manual_resume"
+    assert run_resume.prepare_resume_target("ICG-2026-10-21-001")["ready"] is True
+    row["script_json"]["_image_recovery_review"]["require_manual_resume"] = False
+    assert run_resume.prepare_resume_target("ICG-2026-10-21-001", scheduled=True)["ready"] is True
