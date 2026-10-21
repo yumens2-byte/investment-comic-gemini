@@ -1,6 +1,6 @@
 # 공통 이미지 복구 모듈 상세설계 및 운영 가이드
 
-기준: main a4c0910a08c52cfe9b7ad1f3456e03479d2397e7.
+기준: main 385b0039eb279fc45bff7c7ba8e508a8dadaeb14 (PR #137 stage 선택형 및 회귀 검증 보존).
 이 변경은 별도 브랜치에서 구현·회귀 검증한다. 운영 병합, 운영 DB 변경, 유료 생성,
 기존 파일 삭제는 수행하지 않는다.
 
@@ -60,7 +60,11 @@ prepare와 inspect는 DB 쓰기와 이미지 provider 호출이 0이다.
 
 등록 뒤 이미지 호출이 실패해도 등록을 임의 취소하거나 비용·호출 이력을 삭제하지 않는다.
 공통 execute를 무조건 재실행하지 않는다. 이미 등록된 회차는 이 경로에서 차단하고,
-기존 run-market 이미지 재개/정산 절차로 실제 ledger와 artifact를 먼저 확인한다.\n실패 보고서는 등록 응답이 불명확하면 registered=unconfirmed/phase=registration,\n등록 확정 뒤 이미지에서 멈추면 registered=true/phase=image를 유지한다.\n등록 이후에는 같은 revision과 실제 partial artifact를 확인하여 stage=image로 재개하거나,\n새 콘텐츠 거절이 있으면 해당 ledger를 검토하는 수동 복구 절차를 따른다. 무조건 execute를 다시 누르지 않는다.
+기존 run-market 이미지 재개/정산 절차로 실제 ledger와 artifact를 먼저 확인한다.
+실패 보고서는 등록 응답이 불명확하면 registered=unconfirmed/phase=registration,
+등록 확정 뒤 이미지에서 멈추면 registered=true/phase=image를 유지한다.
+등록 이후에는 같은 revision과 실제 partial artifact를 확인하여 stage=image로 재개하거나,
+새 콘텐츠 거절이 있으면 해당 ledger를 검토하는 수동 복구 절차를 따른다. 무조건 execute를 다시 누르지 않는다.
 
 ## 4. 요청 계약
 
@@ -166,3 +170,7 @@ DB 쓰기 beta를 read-only inspect에 섞지 않는다. 테스트 reserved/unkn
 비용 합산은 Decimal로 경계값을 계산한다. 이 검사는 ledger를 초기화하거나 비용 한도를
 늘리지 않는다. day/month 전역 예산과 검사 이후 동시 변경은 기존 DB reservation이 최종 판단한다.
 inspect는 후보 생성 전의 요청 템플릿만 제공하므로 실행 가능 판정이 아니다.
+
+## 통합 검증 대상
+
+PR #135의 source-bound 검토 재시도 계획과 PR #137의 Run Market stage 선택형/회귀 테스트를 함께 포함하여 CI를 검증한다. 공통 복구가 retry-plan을 자동 등록하거나 재시도 플래그를 켜지는 않는다. 배포 시 PR #135 → PR #136 순서를 사용하며, 현재 단계에서는 main 병합과 DB 반영을 수행하지 않는다.

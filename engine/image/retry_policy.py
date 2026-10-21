@@ -39,6 +39,10 @@ class ReviewedRetryPlan:
 
     @classmethod
     def from_bundle(cls, bundle: dict, original: str, refs: list[Path]):
+        if isinstance(bundle, dict) and bundle.get("version") == "image-retry-plan-2":
+            from engine.image.repair_plan import validate_bundle
+            validate_bundle(bundle, original, refs)
+            return cls(bundle["plan_id"], tuple(bundle["prompts"]))
         if not isinstance(bundle, dict) or bundle.get('version') != 'image-retry-plan-1':
             raise GenerationHold('Reviewed retry plan required')
         plan_id, prompts = bundle.get('plan_id'), bundle.get('prompts')

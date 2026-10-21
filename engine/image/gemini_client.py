@@ -506,6 +506,10 @@ def generate_panel(
                     total_cost += known_cost
                     if attempt < allowed_calls and variant + 1 < len(plan.prompts):
                         variant += 1
+                        logger.info(
+                            "[gemini] REVIEWED_SCENE_REPAIR panel=%s reason=%s variant=%s remaining_calls=%s",
+                            panel_idx, reason, variant, allowed_calls - attempt,
+                        )
                         guard.activate_prompt(plan.prompts[variant] + f"\n[model={_MODEL};aspect={aspect_ratio}]")
                         sleeper(retry_delay(attempt))
                         continue
