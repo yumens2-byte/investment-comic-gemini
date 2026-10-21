@@ -1,0 +1,112 @@
+name: Reviewed Image Recovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'inspect=읽기 점검, prepare=후보 검증, execute=등록 후 이미지 생성'
+        type: choice
+        options: [inspect, prepare, execute]
+        default: inspect
+      target_date:
+        description: 'inspect 대상 날짜 YYYY-MM-DD. prepare/execute는 요청 파일의 날짜 사용'
+        required: false
+        default: ''
+      request_path:
+        description: '검토 요청 JSON 경로 (.github/icg-image-recovery/ 또는 config/image-recovery/requests/)'
+        required: false
+        default: ''
+      request_sha256:
+        description: 'prepare 보고서의 요청 SHA256. execute 필수'
+        required: false
+        default: ''
+      candidate_sha256:
+        description: 'prepare 보고서의 후보 SHA256. execute 필수'
+        required: false
+        default: ''
+      confirm:
+        description: 'execute는 RECOVER_REVIEWED_IMAGES 입력. 나머지 모드는 공란'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  # Serialize recovery operations. Existing Run Market groups differ; DB CAS/locks remain authoritative.
+  group: icg-image-recovery
+  cancel-in-progress: false
+
+jobs:
+  recovery:
+    if: github.repository == 'yumens2-byte/investment-comic-gemini' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      PYTHONPATH: .
+      TZ: Asia/Seoul
+      DRY_RUN: 'true'
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      SUPABASE_SCHEMA: icg
+      GEMINI_API_SUB_PAY_KEY: ${{ secrets.GEMINI_API_SUB_PAY_KEY }}
+      PUBLISH_NON_MAJOR: ${{ secrets.PUBLISH_NON_MAJOR }}
+      ICG_IMAGE_OUTCOME_V3_ENABLED: 'true'
+      ICG_IMAGE_CONTENT_ISOLATION_V4_ENABLED: 'true'
+      REQUEST_MODE: ${{ inputs.mode }}
+      REQUEST_DATE: ${{ inputs.target_date }}
+      REQUEST_PATH: ${{ inputs.request_path }}
+      REQUEST_SHA256: ${{ inputs.request_sha256 }}
+      CANDIDATE_SHA256: ${{ inputs.candidate_sha256 }}
+      REQUEST_CONFIRM: ${{ inputs.confirm }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Resolve validated operation identity
+        id: identity
+        run: |
+          python -m scripts.image_recovery --resolve-only --mode "$REQUEST_MODE" \
+            --date "$REQUEST_DATE" --request "$REQUEST_PATH" --request-sha256 "$REQUEST_SHA256" \
+            --private-dir "$RUNNER_TEMP/icg-image-recovery"
+      - name: Download original episode panels
+        if: inputs.mode != 'inspect'
+        uses: actions/download-artifact@v4
+        with:
+          name: episode-${{ steps.identity.outputs.source_artifact_run_id }}
+          run-id: ${{ steps.identity.outputs.source_artifact_run_id }}
+          github-token: ${{ github.token }}
+          path: output/recovery-source
+      - name: Restore selected date panels
+        if: inputs.mode != 'inspect'
+        env:
+          EPISODE_DATE: ${{ steps.identity.outputs.episode_date }}
+        run: python -m scripts.restore_generation_artifact --date "$EPISODE_DATE"
+      - name: Initialize private provider diagnostics
+        run: |
+          printf 'ICG_IMAGE_DIAGNOSTICS_DIR=%s/icg-image-diagnostics\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Common recovery operation
+        run: |
+          python -m scripts.image_recovery --mode "$REQUEST_MODE" --date "$REQUEST_DATE" \
+            --request "$REQUEST_PATH" --request-sha256 "$REQUEST_SHA256" \
+            --candidate-sha256 "$CANDIDATE_SHA256" --confirm "$REQUEST_CONFIRM" \
+            --private-dir "$RUNNER_TEMP/icg-image-recovery"
+      - name: Upload allowlisted recovery report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-recovery-report-${{ github.run_id }}
+          path: output/image-recovery-report.json
+          retention-days: 14
+      - name: Preserve episode PNGs
+        if: always() && inputs.mode != 'inspect'
+        uses: actions/upload-artifact@v4
+        with:
+          name: episode-${{ github.run_id }}
+          path: output/episodes/
+          retention-days: 14
