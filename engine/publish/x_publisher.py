@@ -152,6 +152,7 @@ def publish_episode_x(
     slides: list[Path],
     dry_run: bool = True,
     receipt_callback=None,
+    before_send=None,
 ) -> list[str]:
     """
     에피소드를 X에 발행.
@@ -201,12 +202,16 @@ def publish_episode_x(
         return tweet_ids
 
     # 실 발행
+    if script_dict.get('_visual_policy') and before_send is None:
+        raise ValueError('Visual publication snapshot callback required')
     _validate_slides(slides)
     api_v1, client_v2 = _make_clients()
     tweet_ids: list[str] = []
     reply_to: str | None = None
 
     for i, (chunk, caption) in enumerate(zip(chunks, captions), start=1):
+        if before_send is not None:
+            before_send()
         media_ids = _upload_media(api_v1, chunk)
 
         # 청크에 이미지가 있는데 media_ids가 비면 치명적 문제 — 텍스트만 발행되는 상황
@@ -232,6 +237,8 @@ def publish_episode_x(
         if reply_to:
             kwargs["in_reply_to_tweet_id"] = reply_to
 
+        if before_send is not None:
+            before_send()
         resp = client_v2.create_tweet(**kwargs)
         raw_id = resp.data.get("id") if isinstance(resp.data, dict) else None
         if raw_id is None or isinstance(raw_id, bool) or not str(raw_id).strip() or str(raw_id) == "0":

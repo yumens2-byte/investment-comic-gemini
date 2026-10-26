@@ -14,6 +14,8 @@ ignore = ["E501"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["engine", "scripts"]
+# The migration directory is not the installed Supabase Python SDK.
+known-third-party = ["supabase"]
 
 [tool.ruff.format]
 quote-style = "double"

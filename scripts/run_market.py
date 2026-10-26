@@ -1510,6 +1510,11 @@ def step_narrative(episode_date: str, episode_id: str, ctx: dict, logger_inst) -
                 attempt_observer=_narrative_attempt_observer,
             )
             script_dict = script.model_dump()
+            if os.environ.get('ICG_VISUAL_QUALITY_MODE', 'off') == 'enforce':
+                from engine.image.scene_performance import normalize_drafts
+                script_dict = normalize_drafts(script_dict)
+            else:
+                script_dict.pop('scene_performance', None)
             if ctx.get("episode_decision"):
                 script_dict["_episode_decision"] = ctx["episode_decision"]
             last_generated["script"] = script_dict
@@ -1752,12 +1757,27 @@ def step_persist(
     try:
         from engine.persist.asset_writer import upsert as asset_upsert
         from engine.persist.notion_mirror import create_or_update
+        from engine.quality.visual import policy_for_new_episode
+        pending_policy = policy_for_new_episode()
+        if pending_policy is not None and not script_dict.get('_visual_policy'):
+            script_dict['_visual_policy_intent'] = pending_policy
 
         asset_upsert(
             episode_date,
             ctx["event_type"],
             _build_episode_asset_payload(episode_id, ctx, script_dict),
         )
+        from engine.quality.visual import freeze_initial_inputs, policy_for_new_episode
+        if policy_for_new_episode() is not None:
+            from engine.common.supabase_client import icg_table
+            rows = icg_table('episode_assets').select('script_json').eq('episode_date', episode_date).eq(
+                'episode_no', int(episode_id.rsplit('-', 1)[1])).limit(2).execute().data
+            if not isinstance(rows, list) or len(rows) != 1:
+                raise RuntimeError('VISUAL_EXACT_PERSISTED_SOURCE_REQUIRED')
+            frozen = freeze_initial_inputs(rows[0]['script_json'], actor='run-market',
+                note='Initial immutable input registration; no visual approval is granted.')
+            script_dict.clear()
+            script_dict.update(frozen)
 
         create_or_update(
             episode_date=episode_date,
@@ -1796,7 +1816,11 @@ def step_image(
 
         performance_specs = None
         performance_quality = None
+        if any(key in script_dict for key in ('_visual_policy_intent', '_visual_policy', '_visual_policy_sha256')):
+            from engine.quality.visual import require_inputs
+            require_inputs(script_dict)
         if (os.environ.get("PERFORMANCE_SPEC_ENABLED", "false").lower() == "true"
+                and "_reviewed_image_inputs" not in script_dict
                 and not script_dict.get("_scene_performance_v2")):
             from engine.image.performance_compiler import compile_episode_performance
             from engine.image.performance_validator import validate_episode_performance

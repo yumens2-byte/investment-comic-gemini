@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -161,6 +162,55 @@ def get_canon_name(char_id: str) -> str:
     """char_id의 영문 Canon 이름 반환."""
     _, entry = _get_char_entry(char_id)
     return entry.get("name_en", char_id)
+
+
+def get_ref_bindings_for_panel(characters: list[dict]) -> list[dict]:
+    """Strict form-aware references for new v2 inputs; never fall back or skip.
+
+    Legacy ID-only and already frozen inputs retain their original loader contract.
+    Each binding records the selected form and the bytes checked against canon.
+    """
+    if not isinstance(characters, list):
+        raise UnknownCharacterError("invalid panel cast")
+    result = []
+    seen = set()
+    for character in characters:
+        if not isinstance(character, dict) or not isinstance(character.get("char_id"), str):
+            raise UnknownCharacterError("invalid panel character")
+        char_id = character["char_id"]
+        if char_id in seen:
+            raise UnknownCharacterError(f"{char_id}: duplicate panel character")
+        seen.add(char_id)
+        _, entry = _get_char_entry(char_id)
+        explicit = character.get("form")
+        if explicit is not None and (not isinstance(explicit, str) or not explicit):
+            raise UnknownCharacterError(f"{char_id}: invalid form")
+        if "forms" in entry:
+            form = explicit if explicit is not None else entry.get("default_form")
+            selected = entry["forms"].get(form)
+            if not isinstance(selected, dict):
+                raise UnknownCharacterError(f"{char_id}: unregistered form")
+        else:
+            if explicit is not None:
+                raise UnknownCharacterError(f"{char_id}: form not registered")
+            form, selected = None, entry
+        expected = selected.get("sha256")
+        if not isinstance(expected, str) or not re.fullmatch(r"[a-f0-9]{64}", expected):
+            raise UnknownCharacterError(f"{char_id}: reference hash not approved")
+        name = selected.get("ref")
+        if not isinstance(name, str):
+            raise UnknownCharacterError(f"{char_id}: reference path not registered")
+        path = Path(name)
+        root = Path("assets/characters").resolve()
+        if (path.is_absolute() or ".." in path.parts or "\\" in name
+                or not path.resolve().is_relative_to(root)):
+            raise UnknownCharacterError(f"{char_id}: reference outside canon assets")
+        actual = _sha256(path)  # A missing file is fatal; do not generate without it.
+        if actual != expected:
+            raise CanonLockViolation(char_id, expected, actual)
+        result.append({"char_id": char_id, "form": form,
+                       "ref": path.as_posix(), "sha256": actual})
+    return result
 
 
 def invalidate_cache() -> None:

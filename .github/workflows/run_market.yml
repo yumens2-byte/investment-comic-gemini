@@ -6,6 +6,12 @@ on:
     - cron: '36 16 * * 0-5'
   workflow_dispatch:
     inputs:
+      visual_quality_mode:
+        description: '신규 품질 정책: auto=vars/off, enforce=미발행 이미지·모바일 검수 필수'
+        type: choice
+        options: [auto, 'off', shadow, enforce]
+        required: false
+        default: auto
       image_retry_v2:
         description: '검토·등록된 이미지 재시도 계획 사용 (true/false). 패널 총 3회 한도'
         type: choice
@@ -135,6 +141,7 @@ jobs:
       # Production v4 SQL capability and least-privilege grants verified 2026-10-21.
       ICG_IMAGE_CONTENT_ISOLATION_V4_ENABLED: 'true'
       RUN_STAGE: ${{ inputs.stage || 'all' }}
+      ICG_VISUAL_QUALITY_MODE: ${{ (inputs.visual_quality_mode != '' && inputs.visual_quality_mode != 'auto') && inputs.visual_quality_mode || vars.ICG_VISUAL_QUALITY_MODE || 'off' }}
       FORCE_RUN: ${{ inputs.force || 'false' }}
       SCENARIO_V2_ENABLED: ${{ (inputs.scenario_v2 != '' && inputs.scenario_v2 != 'auto') && inputs.scenario_v2 || vars.SCENARIO_V2_ENABLED || 'false' }}
       EPISODE_TYPE_V3_ENABLED: ${{ (inputs.episode_type_v3 != '' && inputs.episode_type_v3 != 'auto') && inputs.episode_type_v3 || vars.EPISODE_TYPE_V3_ENABLED || 'false' }}

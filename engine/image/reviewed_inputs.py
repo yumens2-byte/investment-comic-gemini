@@ -20,13 +20,17 @@ def reviewed_panel_prompts(script: dict, *, performance_specs=None) -> list[Pane
     from engine.image.scene_performance import episode_specs, payload_hash
     dynamic = episode_specs(script)
     v2 = isinstance(bundle, dict) and bundle.get('version') == 'reviewed-image-inputs-2'
+    initial = v2 and bundle.get('origin') == 'INITIAL_GENERATION' and revision == 1
+    if initial or '_visual_policy' in script or '_visual_policy_sha256' in script:
+        from engine.quality.visual import require_inputs
+        require_inputs(script)
     aspect = '4:5' if v2 else None
     if (not isinstance(bundle, dict) or bundle.get('version') not in {'reviewed-image-inputs-1', 'reviewed-image-inputs-2'}
             or bundle.get('script_hash') != script_hash(script)
             or bundle.get('model') != 'gemini-2.5-flash-image'
             or bundle.get('aspect_ratio') != aspect
             or bool(dynamic) != v2
-            or type(revision) is not int or revision < 2 or performance_specs is not None):
+            or type(revision) is not int or (revision < 2 and not initial) or performance_specs is not None):
         raise GenerationHold('Reviewed image configuration changed')
     scenes = script.get('panels')
     items = bundle.get('panels')
@@ -63,8 +67,15 @@ def reviewed_panel_prompts(script: dict, *, performance_specs=None) -> list[Pane
             raise GenerationHold('Reviewed performance changed')
         if item.get('reuse_only') is not None and item.get('reuse_only') is not True:
             raise GenerationHold('Invalid reuse-only input')
-        if item.get('reuse_only') is True and contracts.get(str(idx), {}).get('version') != 'reuse-only-scene-1':
-            raise GenerationHold('Reuse-only input requires a preserved scene contract')
+        if item.get('reuse_only') is True:
+            if v2:
+                proof = (script.get('_preserved_performance_inputs') or {}).get(str(idx))
+                expected = {k: item.get(k) for k in ('fingerprint', 'output_hash', 'scene_sha256')}
+                expected['panel_sha256'] = payload_hash(panel)
+                if proof != expected or not all(isinstance(v, str) and len(v) == 64 for v in expected.values()):
+                    raise GenerationHold('Preserved performance input changed')
+            elif contracts.get(str(idx), {}).get('version') != 'reuse-only-scene-1':
+                raise GenerationHold('Reuse-only input requires a preserved scene contract')
         if str(idx) in contracts and not item.get('reuse_only'):
             if panel.get('action', '') not in prompt or panel.get('setting', '') not in prompt:
                 raise GenerationHold('Reviewed prompt differs from scene contract')
@@ -75,7 +86,17 @@ def reviewed_panel_prompts(script: dict, *, performance_specs=None) -> list[Pane
                     or not name.startswith('assets/characters/')):
                 raise GenerationHold('Reviewed reference path outside canon assets')
         refs = [Path(name) for name in names]
-        if refs != get_refs_for_panel(ids):
+        if bundle.get('ref_binding_version') is not None:
+            from engine.image.ref_loader import get_ref_bindings_for_panel
+            if not v2 or bundle['ref_binding_version'] != 'canon-form-1':
+                raise GenerationHold('Unknown reviewed reference binding version')
+            bindings = get_ref_bindings_for_panel(panel.get('characters', []))
+            if item.get('ref_bindings') != bindings:
+                raise GenerationHold('Reviewed reference form binding changed')
+            expected_refs = [Path(binding['ref']) for binding in bindings]
+        else:
+            expected_refs = get_refs_for_panel(ids)
+        if refs != expected_refs:
             raise GenerationHold('Reviewed references differ from canon cast')
         try:
             actual = [hashlib.sha256(ref.read_bytes()).hexdigest() for ref in refs]

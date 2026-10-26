@@ -142,7 +142,10 @@ def _eligible(asset: dict, calls: list, day: str) -> tuple[dict, dict, dict]:
     if not isinstance(artifact, str) or not artifact.isascii() or not artifact.isdigit() or int(artifact) <= 0:
         raise GenerationHold("RECOVERY_ARTIFACT_ID_REQUIRED")
     if source.get("_scene_performance_v2"):
-        raise GenerationHold("RECOVERY_DYNAMIC_V2_REQUIRES_SPECIALIZED_PREPARATION")
+        from engine.image.scene_performance import episode_specs
+        episode_specs(source)
+        if (source.get('_reviewed_image_inputs') or {}).get('version') != 'reviewed-image-inputs-2':
+            raise GenerationHold('RECOVERY_V2_FROZEN_SOURCE_REQUIRED')
     if (not isinstance(calls, list) or not calls or len(calls) > 30
             or any(not isinstance(c, dict) or type(c.get("panel")) is not int or c["panel"] <= 0
                    or type(c.get("revision")) is not int
@@ -201,7 +204,7 @@ def _check_remaining_budget(candidate: dict, calls: list) -> None:
         raise GenerationHold("RECOVERY_SCOPE_COST_BUDGET_EXHAUSTED")
 
 
-def success_inputs(calls: list) -> dict:
+def success_inputs(calls: list, *, aspect_ratio=None) -> dict:
     """Read immutable pre-call diagnostics; never rebuild successful inputs from Notion."""
     from engine.common.supabase_client import icg_table
     successful = [call for call in calls if call["state"] == "success"]
@@ -218,7 +221,7 @@ def success_inputs(calls: list) -> dict:
         prompt = payload.get("prompt_text")
         if (not isinstance(prompt, str) or not prompt.strip()
                 or payload.get("model") != "gemini-2.5-flash-image"
-                or payload.get("aspect_ratio") is not None):
+                or payload.get("aspect_ratio") != aspect_ratio):
             raise GenerationHold("RECOVERY_SUCCESS_INPUTS_INVALID")
         result[str(call["panel"])] = {"payload": payload, "call": call}
     return result
@@ -229,21 +232,43 @@ def preserved_inputs(source: dict, calls: list) -> dict:
     from engine.image.ref_loader import get_refs_for_panel
     panels = {str(p["idx"]): p for p in source["panels"]}
     result = {}
-    for key, evidence in success_inputs(calls).items():
+    dynamic = bool(source.get('_scene_performance_v2'))
+    evidence_by_panel = success_inputs(calls, aspect_ratio='4:5') if dynamic else success_inputs(calls)
+    fixed = {str(p['idx']): p for p in (source.get('_reviewed_image_inputs') or {}).get('panels', [])}
+    for key, evidence in evidence_by_panel.items():
         call, payload = evidence["call"], evidence["payload"]
         if key not in panels:
             raise GenerationHold("RECOVERY_SUCCESS_PANEL_INVALID")
-        refs = get_refs_for_panel([c["char_id"] for c in panels[key].get("characters", [])])
+        if dynamic:
+            if key not in fixed:
+                raise GenerationHold('RECOVERY_SUCCESS_FROZEN_INPUT_MISSING')
+            if (source.get('_reviewed_image_inputs') or {}).get('ref_binding_version') == 'canon-form-1':
+                from engine.image.ref_loader import get_ref_bindings_for_panel
+                bindings = get_ref_bindings_for_panel(panels[key].get('characters', []))
+                if fixed[key].get('ref_bindings') != bindings:
+                    raise GenerationHold('RECOVERY_SUCCESS_FORM_CHANGED')
+                refs = [Path(b['ref']) for b in bindings]
+            else:
+                refs = get_refs_for_panel([c['char_id'] for c in panels[key].get('characters', [])])
+            if [str(ref) for ref in refs] != fixed[key]['refs']:
+                raise GenerationHold('RECOVERY_SUCCESS_REFERENCE_CHANGED')
+        else:
+            refs = get_refs_for_panel([c["char_id"] for c in panels[key].get("characters", [])])
         hashes = [hashlib.sha256(ref.read_bytes()).hexdigest() for ref in refs]
         prompt = payload["prompt_text"]
         guard = ProductionGenerationGuard(scope=call["scope"], panel=call["panel"],
-                                         prompt=prompt + "\n[model=gemini-2.5-flash-image;aspect=None]", refs=refs)
+                                         prompt=prompt + f"\n[model=gemini-2.5-flash-image;aspect={'4:5' if dynamic else None}]", refs=refs)
         if payload.get("ref_sha256") != hashes or guard.fingerprint != call.get("fingerprint"):
             raise GenerationHold("RECOVERY_SUCCESS_IDENTITY_CHANGED")
         result[key] = {"idx": call["panel"], "prompt_text": prompt,
                        "refs": [ref.as_posix() for ref in refs], "ref_sha256": hashes,
                        "fingerprint": guard.fingerprint, "output_hash": call["output_hash"],
                        "reuse_only": True}
+        if dynamic:
+            if (fixed[key].get('prompt_text') != prompt or fixed[key].get('ref_sha256') != hashes
+                    or fixed[key].get('fingerprint') != guard.fingerprint):
+                raise GenerationHold('RECOVERY_V2_SUCCESS_INPUT_CHANGED')
+            result[key] = dict(fixed[key], output_hash=call['output_hash'], reuse_only=True)
     return result
 
 
@@ -272,8 +297,11 @@ def prepare_request(request: dict, asset: dict, calls: list, root: Path) -> tupl
         raise GenerationHold("RECOVERY_SCENES_CHANGED")
     document = json.loads(data)
     preserved = {}
+    if source.get('_scene_performance_v2') and request.get('preserve_successful_images') is not True:
+        raise GenerationHold('RECOVERY_V2_SUCCESS_PRESERVATION_REQUIRED')
     if request.get("preserve_successful_images") is True:
-        if not isinstance(document, dict) or document.get("version") != "selective-image-scenes-1":
+        version = 'selective-image-scenes-2' if source.get('_scene_performance_v2') else 'selective-image-scenes-1'
+        if not isinstance(document, dict) or document.get("version") != version:
             raise GenerationHold("RECOVERY_SELECTIVE_SCENES_REQUIRED")
         preserved = preserved_inputs(source, calls)
         document = document.get("panels")

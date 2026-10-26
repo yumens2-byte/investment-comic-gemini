@@ -148,6 +148,7 @@ def publish_episode_telegram(
     dry_run: bool = True,
     receipts: dict[str, list[int]] | None = None,
     receipt_callback=None,
+    before_send=None,
 ) -> dict[str, bool]:
     """
     에피소드를 Telegram에 발행.
@@ -174,6 +175,8 @@ def publish_episode_telegram(
 
     results: dict[str, bool] = {}
     if not dry_run:
+        if script_dict.get('_visual_policy') and before_send is None:
+            raise ValueError('Visual publication snapshot callback required')
         _validate_slides(slides)
 
     for channel_id in channels:
@@ -197,6 +200,8 @@ def publish_episode_telegram(
             for batch_start in range(0, len(slides), 10):
                 batch = slides[batch_start : batch_start + 10]
                 cap = caption if batch_start == 0 else ""
+                if before_send is not None:
+                    before_send()
                 resp = _send_media_group(token, channel_id, batch, cap)
                 if _valid_album_response(resp, len(batch)):
                     if receipt_callback is not None:

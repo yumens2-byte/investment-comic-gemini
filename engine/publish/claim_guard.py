@@ -59,6 +59,9 @@ def _release_query(episode_date: str, episode_no: int, token: str):
 
 def claim_publication(row: dict, episode_date: str, episode_no: int) -> str:
     require_no_publication_hold(row)
+    from engine.quality.visual import claim, policy_present
+    if policy_present(row.get('script_json') or {}, row):
+        return claim(row, episode_date, episode_no)
     token = PREFIX + str(uuid.uuid4())
     response = _claim_query(row, episode_date, episode_no, token).execute()
     rows = response.data

@@ -380,7 +380,11 @@ def main() -> None:
     try:
         slides_dir = output_dir / "slides"
         panels = script_dict.get("panels", [])
-        slides = compose_episode(panels, panel_images, slides_dir, strict=True)
+        from engine.quality.visual import policy_present, prepare_assembly
+        if policy_present(script_dict, row):
+            slides, script_dict = prepare_assembly(script_dict, panel_images, slides_dir)
+        else:
+            slides = compose_episode(panels, panel_images, slides_dir, strict=True)
 
         # slides_json 업데이트
         import os as _os

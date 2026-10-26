@@ -162,6 +162,52 @@ def test_rhythm_report_is_not_an_image_quality_claim():
     assert report["kind"] == "DECLARED_STORYBOARD_ONLY"
 
 
+def test_audit_evidence_is_bound_but_never_rendered_as_an_instruction():
+    from engine.image.scene_performance import payload_hash
+    original = spec()
+    reviewed = deepcopy(original)
+    reviewed['review_evidence'] = 'Reviewed non-contact movement with no injury.'
+    s = validate_scene(panel(), reviewed)
+    assert payload_hash(reviewed) != payload_hash(original)
+    prompt = render_prompt(panel(), s, canon='red gold armor', style='bold ink')
+    assert reviewed['review_evidence'] not in prompt
+    reviewed['motion']['torso'] = 'The heroine makes contact with the villain'
+    with pytest.raises(GenerationHold, match='TEXT_REVIEW_REQUIRED'):
+        validate_scene(panel(), reviewed)
+
+
+@pytest.mark.parametrize('role,block,code', [
+    ('style', 'Bodies angled toward center contact point.', 'TEXT_REVIEW_REQUIRED'),
+    ('canon', 'Shield surface includes ETF text.', 'SURFACE_TEXT_REVIEW_REQUIRED'),
+    ('style', 'Both figures remain stationary.', 'MOTION_CONFLICT'),
+    ('canon', 'Show every full character visible.', 'CROP_CONFLICT'),
+    ('style', 'No attacks. The heroine shoots at him.', 'TEXT_REVIEW_REQUIRED'),
+    ('canon', 'No text but paint the ETF letters.', 'SURFACE_TEXT_REVIEW_REQUIRED'),
+])
+def test_final_runtime_render_blocks_cannot_override_scene(role, block, code):
+    blocks = {'canon': 'red gold armor', 'style': 'bold cel shading'}
+    blocks[role] = block
+    with pytest.raises(GenerationHold, match=code):
+        render_prompt(panel(), validate_scene(panel(), spec()), **blocks)
+
+
+def test_exact_surface_prohibition_does_not_trigger_typography_conflict():
+    prompt = render_prompt(panel(), validate_scene(panel(), spec()),
+                           canon='red armor. No readable text, letters or numbers.',
+                           style='bold ink. Without logos.')
+    assert 'red armor' in prompt
+
+
+def test_new_quality_inputs_bind_reference_forms(frozen):
+    inputs = frozen['candidate_script']['_reviewed_image_inputs']
+    assert inputs['ref_binding_version'] == 'canon-form-1'
+    assert [b['char_id'] for b in inputs['panels'][0]['ref_bindings']] == ['hero', 'villain']
+    from engine.image.reviewed_inputs import reviewed_panel_prompts
+    inputs['panels'][0]['ref_bindings'][0]['form'] = 'form999'
+    with pytest.raises(GenerationHold, match='form binding changed'):
+        reviewed_panel_prompts(frozen['candidate_script'])
+
+
 @pytest.fixture
 def frozen(monkeypatch, tmp_path):
     from engine.image import prompt_builder, ref_loader, reviewed_inputs
@@ -176,6 +222,10 @@ def frozen(monkeypatch, tmp_path):
         ref.write_bytes(name.encode())
         refs.append(ref)
     monkeypatch.setattr(ref_loader, "get_refs_for_panel", lambda ids: refs if ids else [])
+    monkeypatch.setattr(ref_loader, "_load_canon", lambda: {"heroes": {
+        name: {"ref": str(ref), "sha256": hashlib.sha256(ref.read_bytes()).hexdigest()}
+        for name, ref in zip(("hero", "villain"), refs)
+    }})
     monkeypatch.setattr(reviewed_inputs, "get_refs_for_panel", lambda ids: refs if ids else [])
     monkeypatch.setattr(prompt_builder, "_get_char_designs", lambda ids: "Approved red gold armor")
     monkeypatch.setattr(prompt_builder, "_get_style_block", lambda: "Bold cel shading")
