@@ -70,6 +70,11 @@ def inspect_publish(episode: str | None, requested_date: str | None, channels: s
         raise ValueError('Malformed narrative metadata')
     reasons = []
     from engine.image.generation_guard import GenerationHold
+    from engine.quality.visual import require_ready
+    try:
+        require_ready(script, row=row)
+    except GenerationHold:
+        reasons.append('visual_review_required_or_policy_changed')
     from engine.image.quality_candidates import require_publication_gate
     try:
         require_publication_gate(script)

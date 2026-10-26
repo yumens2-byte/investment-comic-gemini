@@ -68,6 +68,7 @@ class PanelPrompt:
     char_ids: list[str]
     prompt_text: str
     ref_image_paths: list[Path]
+    render_sources_report: dict | None = None
 
 
 def verify_negative_block_present(prompt_text: str) -> bool:
@@ -576,7 +577,7 @@ def build_for_episode(
         PanelPrompt 리스트 (panels 순서 동일).
     """
     from engine.common.exceptions import CanonLockViolation, PipelineAborted
-    from engine.image.ref_loader import get_refs_for_panel
+    from engine.image.ref_loader import get_ref_bindings_for_panel, get_refs_for_panel
 
     panels = episode_script.get("panels", [])
     from engine.image.scene_contract import validate_scene_contracts
@@ -608,7 +609,11 @@ def build_for_episode(
         try:
             valid_char_ids = [c for c in char_ids if c]
             if valid_char_ids:
-                ref_paths = get_refs_for_panel(valid_char_ids)
+                if dynamic_specs:
+                    ref_paths = [Path(binding["ref"]) for binding in
+                                 get_ref_bindings_for_panel(panel.get("characters", []))]
+                else:
+                    ref_paths = get_refs_for_panel(valid_char_ids)
         except CanonLockViolation as exc:
             logger.error("[prompt_builder] Canon Lock 위반: %s", exc)
             raise
@@ -628,10 +633,12 @@ def build_for_episode(
         effective_panel["_action_mode"] = decision.get("action_mode")
         if idx in dynamic_specs:
             spec = dynamic_specs[idx]
+            from engine.image.render_sources import project_sources
+            canon, style, projection = project_sources(_get_char_designs(spec.visible_cast), _get_style_block())
             prompt_text = render_prompt(
-                panel, spec, canon=_get_char_designs(spec.visible_cast), style=_get_style_block()
+                panel, spec, canon=canon, style=style
             )
-            panel_prompts.append(PanelPrompt(idx, char_ids, prompt_text, ref_paths))
+            panel_prompts.append(PanelPrompt(idx, char_ids, prompt_text, ref_paths, projection))
             continue
         prompt_text = build_panel_prompt(
             effective_panel,

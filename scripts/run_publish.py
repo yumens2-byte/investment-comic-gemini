@@ -278,6 +278,9 @@ def main() -> None:
     row = _merge_local_video_path(row, episode_id)
     event_type = row.get("event_type", "NORMAL")
     script_dict = row.get("script_json", {})
+    from engine.quality.visual import policy_present
+    if args.video_only and policy_present(script_dict, row):
+        raise ValueError('VISUAL_VIDEO_REVIEW_NOT_SUPPORTED')
     if not dry_run:
         from engine.image.quality_candidates import require_publication_gate
         require_publication_gate(script_dict)
@@ -496,8 +499,15 @@ def main() -> None:
             raise QualityHold("requested Telegram channel is not configured")
 
     # Retain a durable hold through all channel sends and history updates.
+    from engine.quality.visual import policy_present, require_ready, require_snapshot
+    visual_policy = policy_present(script_dict, row)
+    if visual_policy:
+        require_ready(script_dict, slides, row)
     publication_token = None if dry_run else claim_publication(row, episode_date, episode_no)
     receipt_mode = bool(script_dict.get("_state_candidate")) and not dry_run
+
+    def before_visual_send():
+        require_snapshot(script_dict, publication_token, slides)
 
     def persist_receipt(channel, ids):
         from engine.publish.state_commit import record_delivery
@@ -509,6 +519,8 @@ def main() -> None:
         ts = sl.step_start("STEP_8_X", "X 발행")
         try:
             receipt_args = {"receipt_callback": lambda ids: persist_receipt("x", ids)} if receipt_mode else {}
+            if visual_policy and not dry_run:
+                receipt_args['before_send'] = before_visual_send
             tweet_ids = publish_episode_x(script_dict, slides, dry_run=dry_run, **receipt_args)
             sl.step_done("STEP_8_X", ts, f"트윗 {len(tweet_ids)}개")
         except Exception as exc:
@@ -526,6 +538,8 @@ def main() -> None:
             receipt_args = {"receipts": telegram_receipts} if script_dict.get("_state_candidate") else {}
             if receipt_mode:
                 receipt_args["receipt_callback"] = lambda channel, ids: persist_receipt("telegram:" + channel, ids)
+            if visual_policy and not dry_run:
+                receipt_args['before_send'] = before_visual_send
             results = publish_episode_telegram(script_dict, slides, tg_channels, dry_run=dry_run, **receipt_args)
             telegram_sent = bool(results) and all(results.values())
             sl.step_done("STEP_8_TG", ts, f"결과: {results}")
@@ -543,7 +557,7 @@ def main() -> None:
     # only appends a video post when the episode is a battle event and a video asset is
     # attached to episode_assets. Any failure is logged to STEP_8_*_VIDEO and does not
     # roll back the already-completed image/PIL publication.
-    if not battle_video_plan.enabled:
+    if not battle_video_plan.enabled or visual_policy:
         sl.info("STEP_8_VIDEO", f"전투씬 영상 스킵 reason={battle_video_plan.reason}")
     else:
         assert battle_video_plan.video_path is not None

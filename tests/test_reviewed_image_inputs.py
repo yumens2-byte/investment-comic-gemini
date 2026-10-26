@@ -109,14 +109,17 @@ def test_performance_configuration_cannot_replace_review(prepared):
         module.reviewed_panel_prompts(prepared, performance_specs=[])
 
 
-def test_image_stage_uses_exact_review_and_never_live_compiler(prepared, monkeypatch):
+@pytest.mark.parametrize('performance_flag', ['false', 'true'])
+def test_image_stage_uses_exact_review_and_never_live_compiler(prepared, monkeypatch, performance_flag):
     from unittest.mock import Mock
 
     from engine.image import gemini_client, prompt_builder
     from engine.persist import asset_writer
     from scripts import run_market
 
-    monkeypatch.delenv('PERFORMANCE_SPEC_ENABLED', raising=False)
+    monkeypatch.setenv('PERFORMANCE_SPEC_ENABLED', performance_flag)
+    compiler = Mock(side_effect=AssertionError('fixed inputs must bypass legacy compiler'))
+    monkeypatch.setattr('engine.image.performance_compiler.compile_episode_performance', compiler)
     live = Mock(side_effect=AssertionError('live Notion must not change reviewed inputs'))
     monkeypatch.setattr(prompt_builder, 'build_for_episode', live)
     generation = Mock(return_value=([Path('P1.png')], .04))
@@ -124,6 +127,7 @@ def test_image_stage_uses_exact_review_and_never_live_compiler(prepared, monkeyp
     monkeypatch.setattr(asset_writer, 'patch_by_episode', Mock())
     paths = run_market.step_image('2026-10-02', 'ICG-2026-10-02-001', {}, prepared, Mock())
     live.assert_not_called()
+    compiler.assert_not_called()
     assert paths == [Path('P1.png'), None, None]
     assert generation.call_args.args[0][0]['prompt_text'] == 'Approved exact scene and style'
 

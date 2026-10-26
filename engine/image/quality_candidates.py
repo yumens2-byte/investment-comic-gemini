@@ -38,6 +38,7 @@ def prepare(
 ) -> dict:
     """Offline preparation, no database writes or paid calls. Freeze final prompts."""
     from engine.image.prompt_builder import build_for_episode
+    from engine.image.ref_loader import get_ref_bindings_for_panel
     from engine.image.reviewed_inputs import reviewed_panel_prompts
 
     if (
@@ -99,21 +100,32 @@ def prepare(
                     hashlib.sha256(p.read_bytes()).hexdigest() for p in pp.ref_image_paths
                 ],
                 "scene_sha256": payload_hash(specs[pp.panel_idx].model_dump()),
+                "render_sources_report": pp.render_sources_report,
+                "ref_bindings": get_ref_bindings_for_panel(
+                    candidate["panels"][pp.panel_idx - 1].get("characters", [])
+                ),
                 "fingerprint": guard.fingerprint,
             }
         )
+    candidate_id = str(uuid.uuid4())
+    if candidate.get('_visual_policy') is not None:
+        candidate['_quality_candidate_id'] = candidate_id
     candidate["_reviewed_image_inputs"] = {
         "version": "reviewed-image-inputs-2",
         "script_hash": script_hash(candidate),
         "model": "gemini-2.5-flash-image",
         "aspect_ratio": "4:5",
+        "ref_binding_version": "canon-form-1",
         "panels": items,
     }
-    reviewed_panel_prompts(candidate)
+    offline = deepcopy(candidate)
+    offline.pop('_visual_policy', None)
+    offline.pop('_visual_policy_sha256', None)
+    reviewed_panel_prompts(offline)
     bundle = {
         "version": "image-quality-candidate-1",
         "purpose": "QUALITY_RETAKE",
-        "id": str(uuid.uuid4()),
+        "id": candidate_id,
         "date": candidate["date"],
         "revision": revision,
         "source_script": deepcopy(source),

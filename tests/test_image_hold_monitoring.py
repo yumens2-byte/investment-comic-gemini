@@ -128,14 +128,16 @@ def test_alert_uses_only_current_run_attempt_without_private_inputs(monkeypatch,
     assert '4/6' in text and '1/6' not in text and 'PRIVATE' not in text
 
 
-def test_held_image_run_preserves_artifact_pointer_without_success_status(monkeypatch, tmp_path):
+@pytest.mark.parametrize('attempt', ['1', '5'])
+def test_held_image_run_preserves_artifact_pointer_without_success_status(monkeypatch, tmp_path, attempt):
     from engine.image import prompt_builder
     from engine.persist import asset_writer
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv('GITHUB_RUN_ID', '123')
+    monkeypatch.setenv('GITHUB_RUN_ATTEMPT', attempt)
     summary = tmp_path / 'output/episodes/2026-10-14/panels/generation-summary.json'
     summary.parent.mkdir(parents=True)
-    summary.write_text(json.dumps({'run_id': '123', 'run_attempt': '1', 'successful_images': 1}))
+    summary.write_text(json.dumps({'run_id': '123', 'run_attempt': attempt, 'successful_images': 1}))
     prompts = [SimpleNamespace(panel_idx=1, prompt_text='safe', ref_image_paths=[])]
     monkeypatch.setattr(prompt_builder, 'build_for_episode', lambda *a, **kw: prompts)
     monkeypatch.setattr(adapter, 'generate_episode', Mock(side_effect=GenerationHold('P1 held')))
@@ -156,21 +158,45 @@ def test_malformed_resume_query_is_not_idle(monkeypatch, rows):
         run_resume.prepare_resume_target(scheduled=True)
 
 
-def test_failed_artifact_pointer_write_preserves_original_hold(monkeypatch, tmp_path):
+@pytest.mark.parametrize('attempt', ['1', '5'])
+def test_failed_artifact_pointer_write_preserves_original_hold(monkeypatch, tmp_path, attempt):
     from engine.image import prompt_builder
     from engine.persist import asset_writer
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv('GITHUB_RUN_ID', '123')
+    monkeypatch.setenv('GITHUB_RUN_ATTEMPT', attempt)
     summary = tmp_path / 'output/episodes/2026-10-14/panels/generation-summary.json'
     summary.parent.mkdir(parents=True)
-    summary.write_text(json.dumps({'run_id': '123', 'run_attempt': '1', 'successful_images': 1}))
+    summary.write_text(json.dumps({'run_id': '123', 'run_attempt': attempt, 'successful_images': 1}))
     prompts = [SimpleNamespace(panel_idx=1, prompt_text='safe', ref_image_paths=[])]
     monkeypatch.setattr(prompt_builder, 'build_for_episode', lambda *a, **kw: prompts)
     monkeypatch.setattr(adapter, 'generate_episode', Mock(side_effect=GenerationHold('original hold')))
-    monkeypatch.setattr(asset_writer, 'patch_by_episode', Mock(side_effect=ConnectionError('outage')))
+    patch = Mock(side_effect=ConnectionError('outage'))
+    monkeypatch.setattr(asset_writer, 'patch_by_episode', patch)
     with pytest.raises(GenerationHold, match='original hold'):
         run_market.step_image('2026-10-14', 'ICG-2026-10-14-001', {},
             {'panels': [{'idx': 1, 'panel_type': 'TENSION'}]}, Mock())
+    patch.assert_called_once()
+
+
+def test_held_image_run_rejects_other_attempt_pointer(monkeypatch, tmp_path):
+    from engine.image import prompt_builder
+    from engine.persist import asset_writer
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv('GITHUB_RUN_ID', '123')
+    monkeypatch.setenv('GITHUB_RUN_ATTEMPT', '5')
+    summary = tmp_path / 'output/episodes/2026-10-14/panels/generation-summary.json'
+    summary.parent.mkdir(parents=True)
+    summary.write_text(json.dumps({'run_id': '123', 'run_attempt': '1', 'successful_images': 1}))
+    monkeypatch.setattr(prompt_builder, 'build_for_episode', lambda *a, **kw: [
+        SimpleNamespace(panel_idx=1, prompt_text='safe', ref_image_paths=[])])
+    monkeypatch.setattr(adapter, 'generate_episode', Mock(side_effect=GenerationHold('original hold')))
+    patch = Mock()
+    monkeypatch.setattr(asset_writer, 'patch_by_episode', patch)
+    with pytest.raises(GenerationHold, match='original hold'):
+        run_market.step_image('2026-10-14', 'ICG-2026-10-14-001', {},
+            {'panels': [{'idx': 1, 'panel_type': 'TENSION'}]}, Mock())
+    patch.assert_not_called()
 
 
 @pytest.mark.parametrize('summary', [None,

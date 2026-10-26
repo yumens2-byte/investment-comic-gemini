@@ -7,7 +7,7 @@ import json
 import re
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, create_model, model_validator
 
 from engine.image.action_safety import check_action
 from engine.image.generation_guard import GenerationHold
@@ -96,6 +96,38 @@ def text_hash(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
+# LLMs provide visual decisions only, never hashes, reviewers, versions or approvals.
+SceneDraft = create_model('SceneDraft', __base__=StrictModel, **{
+    name: (field.annotation, field)
+    for name, field in ScenePerformance.model_fields.items()
+    if name not in {'version', 'panel_idx', 'action_sha256', 'setting_sha256', 'review_evidence'}
+})
+
+
+def normalize_drafts(script: dict) -> dict:
+    """Convert declarative drafts without inventing motion or adding another API call."""
+    from copy import deepcopy
+    result = deepcopy(script)
+    drafts = result.pop('scene_performance', None)
+    if not isinstance(drafts, dict):
+        raise GenerationHold('VISUAL_PLAN_MISSING')
+    paid = [p for p in result.get('panels', []) if p.get('panel_type') not in {'TEXT_CARD', 'DISCLAIMER'}]
+    if not paid or set(drafts) != {str(p['idx']) for p in paid}:
+        raise GenerationHold('VISUAL_DRAFT_COVERAGE_REQUIRED')
+    normalized = {}
+    for panel in paid:
+        try:
+            draft = SceneDraft.model_validate(drafts[str(panel['idx'])]).model_dump()
+        except (TypeError, ValueError) as exc:
+            raise GenerationHold('VISUAL_DRAFT_INVALID') from exc
+        draft.update(version='scene-performance-2', panel_idx=panel['idx'],
+            action_sha256=text_hash(panel['action']), setting_sha256=text_hash(panel['setting']),
+            review_evidence='Program-normalized draft; actual image and mobile review are still UNKNOWN.')
+        normalized[str(panel['idx'])] = validate_scene(panel, draft).model_dump()
+    result['_scene_performance_v2'] = normalized
+    return result
+
+
 def payload_hash(value: dict) -> str:
     return text_hash(json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":")))
 
@@ -154,8 +186,8 @@ def validate_scene(panel: dict, value: dict) -> ScenePerformance:
     ):
         raise GenerationHold("DYNAMIC_ACTION_CONTRADICTS_STATIONARY_TEXT")
 
-    # All supplied positive strings are inspected, including props, facts and review
-    # fields. Unknown instructions do not inherit an observation-only exemption.
+    # Inspect provider instructions, not audit evidence. The latter is validated by
+    # the strict model, hashed with the scene and never rendered into the prompt.
     def strings(item):
         if isinstance(item, str):
             yield item
@@ -166,9 +198,40 @@ def validate_scene(panel: dict, value: dict) -> ScenePerformance:
             for child in item:
                 yield from strings(child)
 
-    for text in strings(value):
+    for text in strings(spec.model_dump(exclude={"review_evidence"})):
         validate_positive_text(text, spec.panel_idx)
     return spec
+
+
+def validate_render_blocks(spec: ScenePerformance, *, canon: str, style: str) -> None:
+    """Check runtime additions after scene validation, before freezing provider input.
+
+    A final negative sentence cannot cancel an earlier conflicting instruction.
+    Do not silently rewrite the source canon or an already reviewed prompt.
+    """
+    for block in (canon, style):
+        validate_positive_text(block, spec.panel_idx)
+        for clause in re.split(r"[.;!?\n]", block):
+            # Only an exact, bounded surface prohibition is trusted here. A
+            # clause beginning with 'No' cannot exempt an added positive request.
+            surface = r"(?:readable )?(?:text|lettering|letters|labels?|logos?|tickers?|numbers?|abbreviations?|watermarks?)"
+            if re.fullmatch(rf"\s*(?:No|Without) {surface}(?:(?:,\s*| (?:and|or) ){surface})*\s*",
+                            clause, re.I):
+                continue
+            if re.search(
+                r"\b(?:text|lettering|letters|labels?|logos?|tickers?|numbers?|abbreviations?)\b",
+                clause, re.I,
+            ):
+                raise GenerationHold(f"P{spec.panel_idx} RENDER_SURFACE_TEXT_REVIEW_REQUIRED")
+        if spec.motion.family in {"ENTER", "TURN", "BRACE", "PIVOT"} and re.search(
+            r"\b(?:stationary|stand(?:s)? still|remain(?:s)? still)\b", block, re.I,
+        ):
+            raise GenerationHold(f"P{spec.panel_idx} RENDER_MOTION_CONFLICT")
+        if spec.camera.shot_size in {"CU", "ECU"} and re.search(
+            r"\b(?:full[- ]bod(?:y|ies)|full characters?|entire bod(?:y|ies)|"
+            r"all (?:figures|characters|cast) (?:visible|in frame))\b", block, re.I,
+        ):
+            raise GenerationHold(f"P{spec.panel_idx} RENDER_CROP_CONFLICT")
 
 
 def episode_specs(script: dict) -> dict[int, ScenePerformance]:
@@ -187,6 +250,7 @@ def episode_specs(script: dict) -> dict[int, ScenePerformance]:
 def render_prompt(panel: dict, spec: ScenePerformance, *, canon: str, style: str) -> str:
     # Revalidate bound inputs at the last point before freezing the prompt.
     validate_scene(panel, spec.model_dump())
+    validate_render_blocks(spec, canon=canon, style=style)
     c, m = spec.camera, spec.motion
     hands = json.dumps(spec.prop_hands, ensure_ascii=False, sort_keys=True)
     return "\n".join(
@@ -264,6 +328,9 @@ def rhythm_report(specs: list[ScenePerformance]) -> dict:
     for before, after in zip(specs, specs[1:]):
         if before.motion.family == after.motion.family == "OBSERVE":
             warnings.append(f"P{before.panel_idx}/P{after.panel_idx}: consecutive observation")
+    for triple in zip(specs, specs[1:], specs[2:]):
+        if len({(s.camera.shot_size, s.camera.view_angle) for s in triple}) == 1:
+            warnings.append('/'.join(f'P{s.panel_idx}' for s in triple)+': repeated shot and view')
     if specs and len({s.camera.shot_size for s in specs}) < min(3, len(specs)):
         warnings.append("insufficient declared shot variation")
     if len(specs) >= 6 and sum(s.motion.family in dynamic for s in specs) < 4:

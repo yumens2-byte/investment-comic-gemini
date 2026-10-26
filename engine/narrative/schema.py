@@ -128,6 +128,9 @@ class ThreadTransition(BaseModel):
 class EpisodeScript(BaseModel):
     """ICG 에피소드 전체 스크립트."""
 
+    scene_performance: dict[str, dict] | None = Field(default=None,
+        description='Optional structured visual drafts; program computes hashes and approval metadata')
+
     episode_id: str = Field(
         description="에피소드 ID (예: ICG-2026-04-14-001)",
         pattern=r"^ICG-\d{4}-\d{2}-\d{2}-\d{3}$",

@@ -25,6 +25,7 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+import os
 import re
 from collections.abc import Callable
 
@@ -378,6 +379,13 @@ def generate_episode(
     from engine.narrative.thread_contracts import thread_prompt
 
     system_prompt += thread_prompt((narrative_context_pack or {}).get("previous_episode") or {})
+    if os.environ.get('ICG_VISUAL_QUALITY_MODE', 'off') == 'enforce':
+        from engine.image.scene_performance import SceneDraft
+        system_prompt += ('\nFor every paid image panel, add scene_performance keyed by panel idx. '
+            'Use exactly this draft schema. No hashes, review metadata or approval. '
+            'Preserve the story facts, keep actors apart while using motion/reaction and varied shots. '
+            'Reserve the lower 300/1350 of the image for a caption; important anatomy and props stay above it. '
+            + json.dumps(SceneDraft.model_json_schema(), ensure_ascii=False))
 
     # ── render_user_prompt() 호출 — v2.0 + v2.3 파라미터 ────────────────────
     try:
@@ -540,6 +548,9 @@ def generate_episode(
                 )
 
             script = EpisodeScript.model_validate(raw_json)
+            if os.environ.get('ICG_VISUAL_QUALITY_MODE', 'off') == 'enforce':
+                from engine.image.scene_performance import normalize_drafts
+                normalize_drafts(script.model_dump())
 
             # v2.0 scenario_type 전달하여 Canon 검증
             _validate_canon(script, scenario_type=scenario_type)

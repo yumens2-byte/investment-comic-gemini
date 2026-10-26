@@ -43,6 +43,9 @@ def prepare(source: dict, scenes: dict, revision: int, *, actor: str, note: str,
     preserved_inputs = preserved_inputs or {}
     if set(scenes) & set(preserved_inputs) or set(scenes) | set(preserved_inputs) != required:
         raise GenerationHold("Reviewed scenes must cover every paid panel")
+    if source.get('_scene_performance_v2'):
+        return _prepare_performance(source, scenes, revision, actor=actor, note=note,
+                                    preserved_inputs=preserved_inputs)
     candidate = copy.deepcopy(source)
     for key in ("_reviewed_image_retry_plans", "_reviewed_image_inputs", "_assembly_manifest"):
         candidate.pop(key, None)
@@ -104,12 +107,91 @@ def prepare(source: dict, scenes: dict, revision: int, *, actor: str, note: str,
     return candidate
 
 
+def _prepare_performance(source: dict, scenes: dict, revision: int, *, actor: str, note: str,
+                         preserved_inputs: dict) -> dict:
+    from engine.image.prompt_builder import _get_char_designs, _get_style_block
+    from engine.image.ref_loader import get_ref_bindings_for_panel
+    from engine.image.scene_performance import (
+        episode_specs,
+        payload_hash,
+        render_prompt,
+        validate_scene,
+    )
+    source_specs = episode_specs(source)
+    original = source.get('_reviewed_image_inputs') or {}
+    if original.get('version') != 'reviewed-image-inputs-2':
+        raise GenerationHold('RECOVERY_V2_FROZEN_SOURCE_REQUIRED')
+    candidate = copy.deepcopy(source)
+    for field in ('_reviewed_image_retry_plans', '_assembly_manifest', '_effective_render_manifest',
+                  '_mobile_layout_report', '_image_quality_selection'):
+        candidate.pop(field, None)
+    candidate['_generation_revision'] = revision
+    candidate['_preserved_performance_inputs'] = {}
+    items = []
+    for panel in candidate['panels']:
+        idx = str(panel['idx'])
+        if panel['idx'] not in source_specs:
+            continue
+        if idx in preserved_inputs:
+            item = copy.deepcopy(preserved_inputs[idx])
+            if (item.get('idx') != panel['idx'] or item.get('reuse_only') is not True
+                    or item.get('scene_sha256') != payload_hash(source_specs[panel['idx']].model_dump())):
+                raise GenerationHold('RECOVERY_V2_SUCCESS_SPEC_CHANGED')
+            proof = {k: item.get(k) for k in ('fingerprint', 'output_hash', 'scene_sha256')}
+            candidate['_preserved_performance_inputs'][idx] = dict(proof, panel_sha256=payload_hash(panel))
+            items.append(item)
+            continue
+        scene = scenes[idx]
+        if not isinstance(scene, dict) or not isinstance(scene.get('performance'), dict):
+            raise GenerationHold('RECOVERY_V2_REVIEWED_PERFORMANCE_REQUIRED')
+        for field in ('action', 'setting'):
+            if not isinstance(scene.get(field), str) or not scene[field].strip():
+                raise GenerationHold('RECOVERY_V2_ACTION_REQUIRED')
+            panel[field] = scene[field]
+        performance = copy.deepcopy(scene['performance'])
+        performance.update(panel_idx=panel['idx'], action_sha256=text_hash(panel['action']),
+                           setting_sha256=text_hash(panel['setting']), review_evidence=note)
+        spec = validate_scene(panel, performance)
+        if spec.required_story_facts != source_specs[panel['idx']].required_story_facts:
+            raise GenerationHold('RECOVERY_V2_STORY_FACTS_CHANGED')
+        candidate['_scene_performance_v2'][idx] = spec.model_dump()
+        bindings = get_ref_bindings_for_panel(panel.get('characters', []))
+        refs = [Path(b['ref']) for b in bindings]
+        from engine.image.render_sources import project_sources
+        canon, style, projection = project_sources(_get_char_designs(spec.visible_cast), _get_style_block())
+        prompt = render_prompt(panel, spec, canon=canon, style=style)
+        hashes = [b['sha256'] for b in bindings]
+        fingerprint = hashlib.sha256(json.dumps([prompt+'\n[model=gemini-2.5-flash-image;aspect=4:5]', hashes],
+            ensure_ascii=False, separators=(',', ':')).encode()).hexdigest()
+        items.append({'idx': panel['idx'], 'prompt_text': prompt, 'refs': [str(p) for p in refs],
+            'ref_sha256': hashes, 'ref_bindings': bindings,
+            'render_sources_report': projection,
+            'scene_sha256': payload_hash(spec.model_dump()), 'fingerprint': fingerprint})
+    candidate['_reviewed_image_inputs'] = dict(original, origin='RECOVERY', panels=items,
+                                              script_hash=script_hash(candidate))
+    # Older v2 inputs without binding metadata retain their frozen reference contract.
+    if original.get('ref_binding_version') is None:
+        for item in items:
+            if item.get('reuse_only'):
+                continue
+            panel = candidate['panels'][item['idx']-1]
+            if [str(p) for p in get_refs_for_panel([c['char_id'] for c in panel.get('characters', [])])] != item['refs']:
+                raise GenerationHold('RECOVERY_LEGACY_V2_FORM_REQUIRES_EXPLICIT_MIGRATION')
+    candidate['_image_recovery_review'] = {'actor': actor, 'note': note}
+    return candidate
+
+
 def validate_candidate(candidate: dict) -> None:
     from engine.image.reviewed_inputs import reviewed_panel_prompts
     previous = os.environ.get("ICG_GENERATION_REVISION")
     try:
         os.environ["ICG_GENERATION_REVISION"] = str(candidate.get("_generation_revision"))
-        if reviewed_panel_prompts(candidate) is None:
+        # Offline structural validation cannot authorize a not-yet-registered DB
+        # revision. Registration RPC validates policy/CAS; execution rechecks DB.
+        offline = copy.deepcopy(candidate)
+        offline.pop('_visual_policy', None)
+        offline.pop('_visual_policy_sha256', None)
+        if reviewed_panel_prompts(offline) is None:
             raise GenerationHold("Reviewed inputs missing")
     finally:
         if previous is None:
