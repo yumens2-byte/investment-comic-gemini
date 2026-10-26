@@ -78,6 +78,8 @@ def read_request(name: str, expected_hash: str = "") -> tuple[dict, str]:
 def validate_request(request: dict) -> None:
     if not isinstance(request, dict) or request.get("version") != VERSION:
         raise GenerationHold("RECOVERY_REQUEST_VERSION_INVALID")
+    if "preserve_successful_images" in request and type(request["preserve_successful_images"]) is not bool:
+        raise GenerationHold("RECOVERY_PRESERVATION_FLAG_INVALID")
     day = canonical_date(request.get("episode_date"))
     number = request.get("episode_no")
     source_rev, target_rev = request.get("source_revision"), request.get("target_revision")
@@ -199,6 +201,52 @@ def _check_remaining_budget(candidate: dict, calls: list) -> None:
         raise GenerationHold("RECOVERY_SCOPE_COST_BUDGET_EXHAUSTED")
 
 
+def success_inputs(calls: list) -> dict:
+    """Read immutable pre-call diagnostics; never rebuild successful inputs from Notion."""
+    from engine.common.supabase_client import icg_table
+    successful = [call for call in calls if call["state"] == "success"]
+    if not successful:
+        return {}
+    rows = icg_table("image_generation_attempt_diagnostics").select("token,payload").eq(
+        "kind", "inputs").in_("token", [call["token"] for call in successful]).execute().data
+    if not isinstance(rows, list) or len(rows) != len(successful):
+        raise GenerationHold("RECOVERY_SUCCESS_INPUTS_UNAVAILABLE")
+    by_token = {row["token"]: row["payload"] for row in rows}
+    result = {}
+    for call in successful:
+        payload = by_token.get(call["token"], {})
+        prompt = payload.get("prompt_text")
+        if (not isinstance(prompt, str) or not prompt.strip()
+                or payload.get("model") != "gemini-2.5-flash-image"
+                or payload.get("aspect_ratio") is not None):
+            raise GenerationHold("RECOVERY_SUCCESS_INPUTS_INVALID")
+        result[str(call["panel"])] = {"payload": payload, "call": call}
+    return result
+
+
+def preserved_inputs(source: dict, calls: list) -> dict:
+    from engine.image.generation_guard import ProductionGenerationGuard
+    from engine.image.ref_loader import get_refs_for_panel
+    panels = {str(p["idx"]): p for p in source["panels"]}
+    result = {}
+    for key, evidence in success_inputs(calls).items():
+        call, payload = evidence["call"], evidence["payload"]
+        if key not in panels:
+            raise GenerationHold("RECOVERY_SUCCESS_PANEL_INVALID")
+        refs = get_refs_for_panel([c["char_id"] for c in panels[key].get("characters", [])])
+        hashes = [hashlib.sha256(ref.read_bytes()).hexdigest() for ref in refs]
+        prompt = payload["prompt_text"]
+        guard = ProductionGenerationGuard(scope=call["scope"], panel=call["panel"],
+                                         prompt=prompt + "\n[model=gemini-2.5-flash-image;aspect=None]", refs=refs)
+        if payload.get("ref_sha256") != hashes or guard.fingerprint != call.get("fingerprint"):
+            raise GenerationHold("RECOVERY_SUCCESS_IDENTITY_CHANGED")
+        result[key] = {"idx": call["panel"], "prompt_text": prompt,
+                       "refs": [ref.as_posix() for ref in refs], "ref_sha256": hashes,
+                       "fingerprint": guard.fingerprint, "output_hash": call["output_hash"],
+                       "reuse_only": True}
+    return result
+
+
 def prepare_request(request: dict, asset: dict, calls: list, root: Path) -> tuple[dict, dict]:
     validate_request(request)
     day = request["episode_date"]
@@ -222,8 +270,19 @@ def prepare_request(request: dict, asset: dict, calls: list, root: Path) -> tupl
     data = scenes.read_bytes()
     if len(data) > 262144 or hashlib.sha256(data).hexdigest() != request["scenes_sha256"]:
         raise GenerationHold("RECOVERY_SCENES_CHANGED")
-    candidate = prepare(source, json.loads(data), request["target_revision"],
-                        actor=request["actor"], note=request["note"])
+    document = json.loads(data)
+    preserved = {}
+    if request.get("preserve_successful_images") is True:
+        if not isinstance(document, dict) or document.get("version") != "selective-image-scenes-1":
+            raise GenerationHold("RECOVERY_SELECTIVE_SCENES_REQUIRED")
+        preserved = preserved_inputs(source, calls)
+        document = document.get("panels")
+        if not isinstance(document, dict) or set(document) & set(successes):
+            raise GenerationHold("RECOVERY_SUCCESS_REGENERATION_FORBIDDEN")
+        if set(preserved) != set(successes):
+            raise GenerationHold("RECOVERY_SUCCESS_INPUTS_UNAVAILABLE")
+    candidate = prepare(source, document, request["target_revision"],
+                        actor=request["actor"], note=request["note"], preserved_inputs=preserved)
     candidate["_image_recovery_review"]["require_manual_resume"] = True
     validate_candidate(candidate)
     _check_remaining_budget(candidate, calls)
@@ -285,6 +344,9 @@ def operate(mode: str, *, day: str = "", request_path: str = "", request_sha256:
               "request_sha256": request_digest, "candidate_sha256": digest,
               "target_revision": request["target_revision"], "registered": False,
               "manual_resume": True, "source_images_verified": len(request["success_hashes"])}
+    items = candidate["_reviewed_image_inputs"]["panels"]
+    report["reuse_only_panels"] = [p["idx"] for p in items if p.get("reuse_only")]
+    report["generation_panels"] = [p["idx"] for p in items if not p.get("reuse_only")]
     if mode == "execute":
         try:
             register(source, candidate, request["terminal_token"], request["terminal_cost_usd"])

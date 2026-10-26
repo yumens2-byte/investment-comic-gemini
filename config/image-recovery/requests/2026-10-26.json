@@ -1,0 +1,26 @@
+{
+  "version": "reviewed-image-recovery-2",
+  "episode_date": "2026-10-26",
+  "episode_id": "ICG-2026-10-26-001",
+  "episode_no": 1,
+  "source_revision": 1,
+  "target_revision": 2,
+  "source_artifact_run_id": "40224937364",
+  "source_script_sha256": "e63e01cd5a06a409a6653bc3a989dafce2fe7ca27081b47653ba1da266e8eb7e",
+  "public_script_sha256": "363ea819a4cbcd98a8b12a0a7d521352e721068f2f1069ad8f1b750db5203c1a",
+  "terminal_token": "6f66fa53-4c66-49e6-b7b0-716c164040eb",
+  "terminal_reason": "PROHIBITED_CONTENT",
+  "terminal_cost_usd": 0.0007907999999999999,
+  "success_hashes": {
+    "1": "a82f98eabd838b6634fce5f62a17fd94f2e893f75caa157ec332507752797828",
+    "2": "4021e6a55776d5030d9851f194b0857745269b6453f3410004227968ff6a0d91",
+    "3": "c90fe91ca1c155709ee823327f6c45c88ab54b72e0b57fd70f65d0536cf819cd",
+    "4": "3b10cc558b96d1e37f314b4174afe2cea6277b120f521f22e973d4bc37103e19",
+    "6": "c83e67d0ccca830b7ccaf85350ac9e9d6a0c64298adfcd90f9a041723c198f8f"
+  },
+  "scenes_path": "config/image-recovery/scenes/2026-10-26.json",
+  "scenes_sha256": "833961fd0023bbd09ad0401979ad32f577cbd900796cac1d4d10a6c3fd48afc0",
+  "actor": "yumens2-byte",
+  "note": "User authorized a non-contact energy stalemate repair; preserve all five successful PNGs and original inputs. Generate only the refused panel; require manual resume.",
+  "preserve_successful_images": true
+}

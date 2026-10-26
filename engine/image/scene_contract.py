@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import unicodedata
 
@@ -94,5 +95,19 @@ def validate_scene_contracts(script: dict) -> dict:
         raise GenerationHold("SCENE_CONTRACT_COVERAGE_REQUIRED")
     for panel in scenes:
         if str(panel["idx"]) in required:
-            validate_panel_contract(panel, contracts[str(panel["idx"])])
+            contract = contracts[str(panel["idx"])]
+            if isinstance(contract, dict) and contract.get("version") == "reuse-only-scene-1":
+                items = (script.get("_reviewed_image_inputs") or {}).get("panels", [])
+                matches = [p for p in items if p.get("idx") == panel["idx"]]
+                if (contract.get("panel_idx") != panel["idx"] or len(matches) != 1
+                        or matches[0].get("reuse_only") is not True
+                        or contract.get("panel_sha256") != text_hash(json.dumps(
+                            panel, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+                        or any(not isinstance(contract.get(k), str)
+                               or not re.fullmatch(r"[0-9a-f]{64}", contract[k])
+                               or contract[k] != matches[0].get(k)
+                               for k in ("fingerprint", "output_hash"))):
+                    raise GenerationHold("PRESERVED_SCENE_CHANGED")
+            else:
+                validate_panel_contract(panel, contract)
     return contracts
