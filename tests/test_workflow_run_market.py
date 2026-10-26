@@ -23,6 +23,18 @@ def test_run_market_workflow_yaml_parses() -> None:
     assert _workflow_yaml()
 
 
+def test_visual_quality_rollout_is_explicit_and_defaults_to_legacy():
+    workflow = yaml.load(_workflow_text(), Loader=yaml.BaseLoader)
+    request = workflow['on']['workflow_dispatch']['inputs']['visual_quality_mode']
+    assert request['options'] == ['auto', 'off', 'shadow', 'enforce']
+    assert request['default'] == 'auto'
+    value = workflow['jobs']['pipeline']['env']['ICG_VISUAL_QUALITY_MODE']
+    assert 'inputs.visual_quality_mode' in value
+    assert 'vars.ICG_VISUAL_QUALITY_MODE' in value
+    assert value.endswith("|| 'off' }}")
+    assert _count_job_env_key(_workflow_text(), 'ICG_VISUAL_QUALITY_MODE') == 1
+
+
 def test_job_env_uses_only_supported_expression_contexts() -> None:
     allowed = {"github", "needs", "strategy", "matrix", "vars", "secrets", "inputs"}
     for job in _workflow_yaml()["jobs"].values():
