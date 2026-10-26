@@ -352,6 +352,7 @@ def generate_panel(
     *,
     guard=None,
     retry_plan: dict | None = None,
+    reuse_only: bool = False,
     sleeper=time.sleep,
 ) -> tuple[Path | None, float]:
     """Generate with durable pre-call reservations; ambiguous outcomes always HOLD.
@@ -389,6 +390,8 @@ def generate_panel(
         except Exception as exc:
             raise GenerationHold("Successful artifact failed PNG validation") from exc
         return output_path, 0.0
+    if reuse_only:
+        raise GenerationHold("Preserved image receipt missing; regeneration forbidden")
     total_cost = 0.0
     def settle(token, *, state, actual_cost, output_hash=None, reason=None):
         from engine.image.provider_outcome import outcome_v3_enabled
@@ -651,6 +654,19 @@ def generate_episode(
             ReviewedRetryPlan.from_bundle(panel["retry_plan"], panel.get("prompt_text", ""),
                                            [Path(p) for p in panel.get("ref_image_paths", [])])
     reviewed_count = sum(bool(p.get("retry_plan")) for p in panels) if enabled else 0
+    # Verify every protected image before any missing panel can spend money.
+    # A missing receipt/file must never fall through to a provider reservation.
+    preserved_results = {}
+    for panel in panels:
+        if panel.get("reuse_only"):
+            if panel.get("retry_plan"):
+                raise GenerationHold("Preserved image cannot have a retry plan")
+            preserved_results[panel["panel_idx"]] = generate_panel(
+                panel_idx=panel["panel_idx"], prompt_text=panel["prompt_text"],
+                ref_paths=panel["ref_image_paths"], output_dir=output_dir,
+                log_path=log_path, reuse_only=True,
+                aspect_ratio=panel.get("aspect_ratio"),
+            )
     logger.info("[gemini] image tasks=%d; reviewed content retry plans=%d; extra retry limit=%d. "
                 "A refused panel always requires review; only verified opt-in v4 outcomes allow independent panels.",
                 len(panels), reviewed_count, limit)
@@ -731,7 +747,9 @@ def generate_episode(
 
         try:
             kwargs = {"retry_plan": panel.get("retry_plan")} if retry_enabled() else {}
-            path, panel_cost = generate_panel(
+            if panel.get("reuse_only"):
+                kwargs["reuse_only"] = True
+            path, panel_cost = preserved_results[idx] if idx in preserved_results else generate_panel(
                 panel_idx=idx, prompt_text=prompt, ref_paths=refs,
                 output_dir=output_dir, log_path=log_path,
                 **({"aspect_ratio": panel["aspect_ratio"]} if "aspect_ratio" in panel else {}), **kwargs,

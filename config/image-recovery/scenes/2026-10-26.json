@@ -1,0 +1,23 @@
+{
+  "version": "selective-image-scenes-1",
+  "panels": {
+    "5": {
+      "action": "Iron Securities Nuna and Debt Titan remain clearly separated on opposite sides of the vault entrance in steady defensive poses. Two equally sized abstract energy fields form a luminous boundary in the empty space between them. Both figures observe the balanced fields; neither advances. The existing crack on her shield remains visible.",
+      "setting": "A fictional vault entrance at night, with soft red warning light and an abstract unlabelled display in the background.",
+      "prompt_text": "A fictional vault entrance at night, with soft red warning light and an abstract unlabelled display in the background.\nIron Securities Nuna and Debt Titan remain clearly separated on opposite sides of the vault entrance in steady defensive poses. Two equally sized abstract energy fields form a luminous boundary in the empty space between them. Both figures observe the balanced fields; neither advances. The existing crack on her shield remains visible.\nOriginal fictional financial superhero comic illustration. All human characters are adults. Medium wide composition showing both complete silhouettes, the gap between them and the energy boundary. Hero at left facing right; villain at right facing left. Equal visual scale and balanced light convey an unresolved stalemate.\nBold precise ink lines, 2D cel-shaded shadows, dark cinematic navy background, desaturated environment and reference-defined character accents.\nPreserve exactly the two provided reference identities. Iron Securities Nuna has long dark hair, full red and gold armor, red cape, polygonal gold shield on LEFT arm, and black rifle in RIGHT hand lowered toward the floor. Her shield retains its existing crack. Debt Titan retains the reference-defined dark volcanic rock body, orange lava fissures, flame crown and exact non-human anatomy.\nThe energy patterns are abstract environmental light, separate from both bodies. The figures remain stationary with a visible open gap. The rifle remains lowered and unfired. Neither side is dominant, defeated or retreating.\nNo physical contact, attacks, weapon discharge, injury, readable text, numbers, logos, extra characters, extra limbs or watermarks. No photorealism or 3D rendering. Preserve reference anatomy and handedness.",
+      "contract": {
+        "visual_mode": "SYMBOLIC_STANDOFF",
+        "interaction": "OBSERVE_ENVIRONMENT",
+        "target_kind": "ENVIRONMENT",
+        "physical_contact": false,
+        "weapon_discharge": false,
+        "injury": "NONE",
+        "required_story_facts": [
+          "unresolved_stalemate",
+          "shield_crack_persists",
+          "vault_signal_flickers"
+        ]
+      }
+    }
+  }
+}

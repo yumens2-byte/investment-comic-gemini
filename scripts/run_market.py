@@ -1856,6 +1856,12 @@ def step_image(
             not in {"TEXT_CARD", "DISCLAIMER"}
         ]
 
+        fixed_inputs = {item["idx"]: item for item in
+                        (script_dict.get("_reviewed_image_inputs") or {}).get("panels", [])}
+        for item in panels_input:
+            if fixed_inputs.get(item["panel_idx"], {}).get("reuse_only") is True:
+                item["reuse_only"] = True
+
         logger_inst.info("STEP_6", f"대본 {len(panel_prompts)}개 / 생성 대상 이미지 {len(panels_input)}개 / "
                          f"조립 전용 카드 {len(panel_prompts) - len(panels_input)}개. "
                          "콘텐츠 거절 재시도는 검토된 패널별 계획이 있을 때만 허용.")

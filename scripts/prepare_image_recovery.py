@@ -23,7 +23,8 @@ from engine.image.scene_contract import (
 from engine.publish.manifest import script_hash
 
 
-def prepare(source: dict, scenes: dict, revision: int, *, actor: str, note: str) -> dict:
+def prepare(source: dict, scenes: dict, revision: int, *, actor: str, note: str,
+            preserved_inputs: dict | None = None) -> dict:
     if (type(revision) is not int or not 2 <= revision <= 100
             or not isinstance(source, dict) or not isinstance(scenes, dict)
             or not actor.strip() or len(note.strip()) < 20
@@ -39,7 +40,8 @@ def prepare(source: dict, scenes: dict, revision: int, *, actor: str, note: str)
     if [p["idx"] for p in panels] != list(range(1, len(panels) + 1)):
         raise GenerationHold("Recovery source indices must be contiguous")
     required = {str(p["idx"]) for p in panels if p.get("panel_type") not in CARD_TYPES}
-    if set(scenes) != required:
+    preserved_inputs = preserved_inputs or {}
+    if set(scenes) & set(preserved_inputs) or set(scenes) | set(preserved_inputs) != required:
         raise GenerationHold("Reviewed scenes must cover every paid panel")
     candidate = copy.deepcopy(source)
     for key in ("_reviewed_image_retry_plans", "_reviewed_image_inputs", "_assembly_manifest"):
@@ -50,6 +52,19 @@ def prepare(source: dict, scenes: dict, revision: int, *, actor: str, note: str)
     for panel in candidate["panels"]:
         idx = str(panel["idx"])
         if idx not in required:
+            continue
+        if idx in preserved_inputs:
+            item = copy.deepcopy(preserved_inputs[idx])
+            if item.get("idx") != panel["idx"] or item.get("reuse_only") is not True:
+                raise GenerationHold("Invalid preserved image input")
+            candidate["_scene_contracts"][idx] = {
+                "version": "reuse-only-scene-1", "panel_idx": panel["idx"],
+                "panel_sha256": text_hash(json.dumps(panel, ensure_ascii=False, sort_keys=True,
+                                                     separators=(",", ":"))),
+                "fingerprint": item["fingerprint"], "output_hash": item["output_hash"],
+                "review_evidence": note,
+            }
+            items.append(item)
             continue
         scene = scenes[idx]
         if not isinstance(scene, dict):
@@ -80,11 +95,11 @@ def prepare(source: dict, scenes: dict, revision: int, *, actor: str, note: str)
         items.append({"idx": panel["idx"], "prompt_text": prompt,
                       "refs": [p.as_posix() for p in refs], "ref_sha256": hashes,
                       "fingerprint": fingerprint})
-    validate_scene_contracts(candidate)
     candidate["_reviewed_image_inputs"] = {
         "version": "reviewed-image-inputs-1", "script_hash": script_hash(candidate),
         "model": "gemini-2.5-flash-image", "aspect_ratio": None, "panels": items,
     }
+    validate_scene_contracts(candidate)
     candidate["_image_recovery_review"] = {"actor": actor, "note": note}
     return candidate
 

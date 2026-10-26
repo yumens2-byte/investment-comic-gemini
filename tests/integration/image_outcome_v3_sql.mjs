@@ -104,6 +104,26 @@ await check('new unknown call blocks reviewed recovery',async()=>{
  const token=await recoveryFixture();await db.query(`insert into icg.image_generation_calls(scope,panel,fingerprint,state,cost)
  values($1,2,$2,'unknown',.1)`,[scope,next]);assert.ok((await register(token)).hold);
 });
+await check('selective revision reuses successful fingerprint and preserves historic calls',async()=>{
+ await fixture();
+ const first=(await reserve(1)).token;
+ await finish(first,'success',.04,null,'f'.repeat(64));
+ const rejected=(await reserve(2)).token;
+ await rpc('image_generation_finish_outcome_v3',[scope,2,fp,rejected,'terminal',.0007752,null,'PROHIBITED_CONTENT',null,1]);
+ const source={...original,panels:[original.panels[0],{...original.panels[0],idx:2}]};
+ const repaired={...source,_generation_revision:2,
+  _scene_contracts:{'1':{version:'reuse-only-scene-1'},'2':{version:'scene-contract-1'}},
+  _reviewed_image_inputs:{version:'reviewed-image-inputs-1',model:'gemini-2.5-flash-image',aspect_ratio:null},
+  panels:[source.panels[0],{...source.panels[1],action:'Observe balanced light fields'}]};
+ await db.exec('reset role');
+ await db.query('insert into icg.episode_assets values($1,1,$2,$3)',['2026-10-20','narrative_done',JSON.stringify(source)]);
+ await db.exec('set role service_role');
+ assert.equal((await register(rejected,repaired,{'1':fp,'2':next},source)).registered,true);
+ assert.equal((await rpc('image_generation_inspect_v2',[scope,1,fp,2])).output_hash,'f'.repeat(64));
+ assert.equal((await rpc('image_generation_reserve_v2',[scope,1,fp,2])).hold,'already generated');
+ assert.equal((await db.query('select count(*)::int as n from icg.image_generation_calls')).rows[0].n,2);
+ assert.equal((await rpc('image_generation_inspect_v2',[scope,2,next,2])).hold,undefined);
+});
 await check('anon and authenticated cannot execute or read new telemetry',async()=>{
  await fixture();const {token}=await reserve();
  for(const role of ['anon','authenticated']){

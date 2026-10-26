@@ -61,7 +61,11 @@ def reviewed_panel_prompts(script: dict, *, performance_specs=None) -> list[Pane
             raise GenerationHold('Malformed reviewed prompt or references')
         if v2 and item.get('scene_sha256') != payload_hash(dynamic[idx].model_dump()):
             raise GenerationHold('Reviewed performance changed')
-        if str(idx) in contracts:
+        if item.get('reuse_only') is not None and item.get('reuse_only') is not True:
+            raise GenerationHold('Invalid reuse-only input')
+        if item.get('reuse_only') is True and contracts.get(str(idx), {}).get('version') != 'reuse-only-scene-1':
+            raise GenerationHold('Reuse-only input requires a preserved scene contract')
+        if str(idx) in contracts and not item.get('reuse_only'):
             if panel.get('action', '') not in prompt or panel.get('setting', '') not in prompt:
                 raise GenerationHold('Reviewed prompt differs from scene contract')
             validate_scene_text(prompt, idx)
