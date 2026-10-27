@@ -26,13 +26,21 @@ DEFAULT_VERSION = "v26.0"
 TIMEOUT = (10, 60)          # connect, read (seconds)
 
 
+def _tagged(error: PublishError, kind: str, status: int | None = None,
+            code: Any = None) -> PublishError:
+    """Attach safe, non-secret metadata so callers can classify without parsing text."""
+    error.kind, error.http_status = kind, status
+    error.provider_code = code if isinstance(code, int) and not isinstance(code, bool) else None
+    return error
+
+
 class FacebookPagePublisher:
     channel = "facebook"
 
     def __init__(self, page_id: str, token: str, *, version: str | None = None,
                  session: Any = None):
         if not page_id or not token:
-            raise PublishError("FACE_PAGE_ID / FACE_PAGE_TOKEN missing")
+            raise _tagged(PublishError("FACE_PAGE_ID / FACE_PAGE_TOKEN missing"), "credentials")
         self.page_id, self._token = page_id, token
         self.version = version or os.environ.get("SIDESTORY_GRAPH_VERSION", DEFAULT_VERSION)
         self._s = session or requests.Session()
@@ -56,10 +64,12 @@ class FacebookPagePublisher:
                                                            "access_token": self._token},
                                     files=files, timeout=TIMEOUT)
         except requests.ConnectTimeout as exc:     # never reached Facebook
-            raise PublishError(self._redact(f"connect timeout: {exc}")) from exc
+            raise _tagged(PublishError(self._redact(f"connect timeout: {exc}")),
+                          "connect_timeout") from exc
         except requests.RequestException as exc:  # may have reached it
-            raise PublishError(self._redact(f"{type(exc).__name__}: {exc}"),
-                               ambiguous=side_effect) from exc
+            kind = "timeout" if isinstance(exc, requests.Timeout) else "transport"
+            raise _tagged(PublishError(self._redact(f"{type(exc).__name__}: {exc}"),
+                                       ambiguous=side_effect), kind) from exc
         try:
             body = resp.json()
         except ValueError:
@@ -70,15 +80,17 @@ class FacebookPagePublisher:
                    f"type={err.get('type')} {err.get('message', '')} "
                    f"fbtrace_id={err.get('fbtrace_id')}")
             # 5xx after a write may still have taken effect.
-            raise PublishError(self._redact(msg), ambiguous=side_effect
-                               and resp.status_code >= 500)
+            raise _tagged(PublishError(self._redact(msg), ambiguous=side_effect
+                                       and resp.status_code >= 500),
+                          "http", resp.status_code, err.get("code"))
         return body
 
     # ── Publisher ───────────────────────────────────────────────────────────
     def check(self) -> dict[str, Any]:
         body = self._call("GET", self.page_id, params={"fields": "id,name"}, side_effect=False)
         if str(body.get("id")) != str(self.page_id):
-            raise PublishError(f"token does not resolve to page {self.page_id}")
+            raise _tagged(PublishError(f"token does not resolve to page {self.page_id}"),
+                          "page_mismatch")
         return {"id": body.get("id"), "name": body.get("name")}
 
     def upload_photo(self, path: Path) -> str:

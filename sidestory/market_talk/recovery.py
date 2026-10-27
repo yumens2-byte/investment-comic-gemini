@@ -12,6 +12,8 @@ from sidestory.market_talk.policy import KST, timestamp
 TERMINAL = {"CONTENT_HOLD", "MODEL_HOLD", "RESULT_PERSISTENCE_HOLD", "RETRY_EXHAUSTED"}
 RETRYABLE_CODES = {
     "DB_API_FAILURE", "PROVIDER_TIMEOUT", "PROVIDER_CONNECTION_FAILURE",
+    # Transient Graph failures; retryable() still limits them to read-only phases.
+    "FACEBOOK_UNAVAILABLE", "FACEBOOK_RATE_LIMITED",
 }
 
 
