@@ -23,7 +23,11 @@ import tempfile
 import time
 from pathlib import Path
 
-from engine.image.generation_guard import GenerationHold, ProductionGenerationGuard
+from engine.image.generation_guard import (
+    GenerationHold,
+    ProductionGenerationGuard,
+    generation_revision,
+)
 from engine.image.retry_policy import (
     CONTENT_REASONS,
     REVIEW_REASONS,
@@ -317,6 +321,8 @@ class ProviderState:
     """Episode-wide provider selection. Once Gemini quota is exhausted the episode
     stays on OpenAI (no repeated Gemini calls) and every OpenAI panel uses one anchor.
     Persisted beside the PNGs so a rerun continues with the same provider and anchor.
+    A record from another generation revision is ignored: recovery revisions start on
+    Gemini again and may archive the old anchor PNG.
     """
 
     def __init__(self, output_dir: Path):
@@ -326,11 +332,13 @@ class ProviderState:
         self.fallback: dict | None = None
         self.style_anchor: Path | None = None
         self._openai = None
+        self.revision = generation_revision()
         if self.path.exists():
             try:
                 data = json.loads(self.path.read_text(encoding="utf-8"))
-                self.panels = dict(data.get("panels") or {})
-                self.fallback = data.get("fallback")
+                if data.get("revision", 1) == self.revision:
+                    self.panels = dict(data.get("panels") or {})
+                    self.fallback = data.get("fallback")
             except (OSError, ValueError, AttributeError) as exc:
                 raise GenerationHold("Image provider map unreadable; reconciliation required") from exc
         if self.fallback:
@@ -366,7 +374,8 @@ class ProviderState:
     def _save(self) -> None:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_suffix(".tmp")
-        temporary.write_text(json.dumps({"version": 1, "fallback": self.fallback,
+        temporary.write_text(json.dumps({"version": 1, "revision": self.revision,
+                                         "fallback": self.fallback,
                                          "panels": self.panels}, ensure_ascii=False, indent=2),
                              encoding="utf-8")
         temporary.replace(self.path)

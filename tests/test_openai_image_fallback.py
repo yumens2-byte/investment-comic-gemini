@@ -327,3 +327,28 @@ def test_quota_settlement_hold_never_calls_openai(env, monkeypatch):
     with pytest.raises(GenerationHold, match="quota settlement not confirmed"):
         run_panel(env, guard)
     assert env.openai.call_count == 0
+
+
+def test_fallback_record_from_other_revision_is_ignored(env, monkeypatch):
+    env.out.mkdir(parents=True)
+    (env.out / "P1.png").write_bytes(png())
+    adapter.ProviderState(env.out).switch(2, "QUOTA_EXHAUSTED")
+    (env.out / "P1.png").unlink()  # revision 2 recovery archives the old anchor
+    monkeypatch.setenv("ICG_GENERATION_REVISION", "2")
+    state = adapter.ProviderState(env.out)
+    assert state.active == "gemini" and state.panels == {}
+
+
+def test_restore_artifact_carries_provider_record(tmp_path):
+    from scripts.restore_generation_artifact import restore
+
+    source = tmp_path / "src" / "2026-10-28" / "panels"
+    source.mkdir(parents=True)
+    (source / "P1.png").write_bytes(png())
+    (source / "image-providers.json").write_text('{"version": 1}')
+    target = tmp_path / "dst"
+    assert restore("2026-10-28", tmp_path / "src", target) == 1
+    assert (target / "2026-10-28" / "panels" / "image-providers.json").read_text() == '{"version": 1}'
+    (target / "2026-10-28" / "panels" / "image-providers.json").write_text("{}")
+    with pytest.raises(ValueError, match="provider record"):
+        restore("2026-10-28", tmp_path / "src", target)
