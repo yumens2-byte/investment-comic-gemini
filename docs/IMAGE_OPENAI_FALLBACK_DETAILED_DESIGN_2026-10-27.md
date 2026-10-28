@@ -181,3 +181,11 @@ ICG_OPENAI_IMAGE_QUALITY: ${{ vars.ICG_OPENAI_IMAGE_QUALITY || 'medium' }}
 2. Gemini 잔액 소진 시 실제 오류 `code/status`
 3. Gemini 429/OpenAI 거절 요청의 과금 여부
 4. 스타일 앵커 고정 자산(`assets/style/gemini_style_anchor.png`) 선정 — 마스터 승인 필요
+
+## 11. 구현 반영 사항 (2026-10-28)
+
+- 공급자 기록: `output/episodes/{date}/panels/image-providers.json` (`fallback`, 패널별 `provider/model/sha256`). 기존 `episode-{run_id}` 아티팩트(`output/episodes/`)에 포함되어 재실행 시 같은 공급자·앵커로 이어서 생성. 앵커 파일이 없거나 해시가 다르면 HOLD.
+- OpenAI 성공 응답에 usage가 없으면 ledger에는 비용 미확인(`None`)으로 정산(DB가 HOLD)하고, 반환 비용은 ledger 예약액 $0.10으로 보수 집계.
+- `generation-summary.json`에 `image_provider_fallback`, `provider_by_panel` 추가(파일 전용, DB run status 키 화이트리스트 불변). `{episode_id}_images.json`에도 동일 정보 기록.
+- 키 점검(preflight 모델 조회)은 이번 범위에서 제외(선택 항목).
+- 테스트: `tests/test_openai_image_fallback.py` 26건, `tests/test_workflow_run_market.py` 1건 추가. 전체 스위트 실패 집합은 변경 전과 동일(환경 기인 기존 실패 104건: 폰트/ffmpeg/테스트 격리).

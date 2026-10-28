@@ -289,6 +289,254 @@ def _terminal_error(exc: Exception) -> bool:
     ))
 
 
+QUOTA_REASON = "QUOTA_EXHAUSTED"
+# Unmeasured OpenAI usage is reported at the ledger's per-call reservation amount.
+_OPENAI_UNMEASURED_COST = 0.10
+PROVIDER_MAP_NAME = "image-providers.json"
+
+
+def _gemini_quota_exhausted(exc: Exception) -> bool:
+    """Structured Gemini quota/billing rejection (google-genai APIError code/status).
+
+    Message-only errors keep the existing terminal HOLD; fallback needs a provider code.
+    """
+    try:
+        code = int(getattr(exc, "code", None))
+    except (TypeError, ValueError):
+        code = None
+    status = str(getattr(exc, "status", "") or "").upper()
+    if code == 429 or status == "RESOURCE_EXHAUSTED":
+        return True
+    if code in {400, 403} and status in {"FAILED_PRECONDITION", "PERMISSION_DENIED"}:
+        message = str(getattr(exc, "message", "") or "").lower()
+        return any(word in message for word in ("billing", "prepay", "credit", "spend", "quota"))
+    return False
+
+
+class ProviderState:
+    """Episode-wide provider selection. Once Gemini quota is exhausted the episode
+    stays on OpenAI (no repeated Gemini calls) and every OpenAI panel uses one anchor.
+    Persisted beside the PNGs so a rerun continues with the same provider and anchor.
+    """
+
+    def __init__(self, output_dir: Path):
+        self.output_dir = Path(output_dir)
+        self.path = self.output_dir / PROVIDER_MAP_NAME
+        self.panels: dict[str, dict] = {}
+        self.fallback: dict | None = None
+        self.style_anchor: Path | None = None
+        self._openai = None
+        if self.path.exists():
+            try:
+                data = json.loads(self.path.read_text(encoding="utf-8"))
+                self.panels = dict(data.get("panels") or {})
+                self.fallback = data.get("fallback")
+            except (OSError, ValueError, AttributeError) as exc:
+                raise GenerationHold("Image provider map unreadable; reconciliation required") from exc
+        if self.fallback:
+            self.style_anchor = self._restore_anchor(self.fallback)
+
+    @property
+    def active(self) -> str:
+        return "openai" if self.fallback else "gemini"
+
+    def _restore_anchor(self, fallback: dict) -> Path | None:
+        name, digest = fallback.get("style_anchor"), fallback.get("style_anchor_sha256")
+        if not name:
+            return None
+        anchor = Path(name)
+        try:
+            actual = hashlib.sha256(anchor.read_bytes()).hexdigest()
+        except OSError as exc:
+            raise GenerationHold(f"OpenAI fallback style anchor missing: {anchor}") from exc
+        if actual != digest:
+            raise GenerationHold("OpenAI fallback style anchor changed")
+        return anchor
+
+    def _choose_anchor(self, panel_idx: int) -> Path | None:
+        from engine.image.openai_client import STYLE_ANCHOR_ASSET
+        for idx in range(panel_idx - 1, 0, -1):
+            candidate = self.output_dir / f"P{idx}.png"
+            # Panels without a record predate the fallback and were made by Gemini.
+            provider = (self.panels.get(str(idx)) or {}).get("provider", "gemini")
+            if candidate.is_file() and provider == "gemini":
+                return candidate
+        return STYLE_ANCHOR_ASSET if STYLE_ANCHOR_ASSET.is_file() else None
+
+    def _save(self) -> None:
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        temporary = self.path.with_suffix(".tmp")
+        temporary.write_text(json.dumps({"version": 1, "fallback": self.fallback,
+                                         "panels": self.panels}, ensure_ascii=False, indent=2),
+                             encoding="utf-8")
+        temporary.replace(self.path)
+
+    def switch(self, panel_idx: int, reason: str) -> None:
+        anchor = self._choose_anchor(panel_idx)
+        self.style_anchor = anchor
+        self.fallback = {
+            "from_panel": panel_idx, "reason": reason,
+            "run_id": os.environ.get("GITHUB_RUN_ID", "local"),
+            "style_anchor": anchor.as_posix() if anchor else None,
+            "style_anchor_sha256": hashlib.sha256(anchor.read_bytes()).hexdigest() if anchor else None,
+        }
+        self._save()
+        logger.warning("[image] IMAGE_PROVIDER_FALLBACK from=P%s reason=%s style_anchor=%s",
+                       panel_idx, reason, anchor)
+
+    def record(self, panel_idx: int, output_path: Path, provider: str, model: str) -> None:
+        self.panels[str(panel_idx)] = {
+            "provider": provider, "model": model,
+            "sha256": hashlib.sha256(Path(output_path).read_bytes()).hexdigest(),
+        }
+        self._save()
+
+    def openai_client(self):
+        if self._openai is None:
+            from engine.image.openai_client import _get_client as get_openai_client
+            self._openai = get_openai_client()
+        return self._openai
+
+
+def _openai_attempt(*, panel_idx: int, prompt_text: str, ref_paths: list[Path], output_path: Path,
+                    log_path: Path, aspect_ratio: str | None, guard, settle,
+                    state: ProviderState, attempt: int) -> tuple[Path | None, float]:
+    """One reserved OpenAI call under the panel's existing ledger identity.
+
+    Returns (path, cost) on success, (None, cost) for a settled invalid image.
+    Every ambiguous or rejected outcome settles first, then HOLDs.
+    """
+    from engine.image import openai_client as oa
+
+    anchor = state.style_anchor
+    prompt = oa.build_prompt(prompt_text, len(ref_paths), anchor is not None)
+    oa.check_inputs(prompt, ref_paths, anchor)
+    model, quality, size = oa.model_name(), oa.quality_name(), oa.size_for(aspect_ratio)
+    client = state.openai_client()
+    token = guard.reserve()
+    started = time.monotonic()
+    record = {
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "run_id": os.environ.get("GITHUB_RUN_ID", "local"),
+        "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT", "1"),
+        "panel": panel_idx, "provider": "openai", "model": model, "quality": quality,
+        "size": size, "attempt": attempt, "ref_images": [str(p) for p in ref_paths],
+        "style_anchor": str(anchor) if anchor else None,
+        "cost_usd": None, "cost_estimated": False,
+    }
+
+    def finish(**kwargs) -> GenerationHold | None:
+        try:
+            settle(token, **kwargs)
+        except GenerationHold as hold:
+            return hold
+        return None
+
+    def log(**fields) -> None:
+        record.update(latency_sec=round(time.monotonic() - started, 2), **fields)
+        try:
+            _write_jsonl_log(log_path, record)
+        except OSError:
+            logger.warning("[openai] local evidence unavailable; panel=%s", panel_idx)
+
+    try:
+        guard.store_attempt_diagnostic(token, "inputs", {
+            "run_id": os.environ.get("GITHUB_RUN_ID", "local"),
+            "provider": "openai", "model": model, "quality": quality, "size": size,
+            "aspect_ratio": aspect_ratio, "prompt_text": prompt,
+            "ref_sha256": [hashlib.sha256(ref.read_bytes()).hexdigest() for ref in ref_paths],
+            "style_anchor_sha256": hashlib.sha256(anchor.read_bytes()).hexdigest() if anchor else None,
+        })
+    except Exception as exc:
+        settle(token, state="failed", actual_cost=0.0)
+        raise GenerationHold("Private image inputs unavailable; provider not called") from exc
+    try:
+        image_bytes, cost = oa.generate_one(client, prompt, ref_paths, anchor, aspect_ratio)
+    except oa.OpenAIQuotaExhausted as exc:
+        hold = finish(state="failed", actual_cost=0.0, reason="OPENAI_QUOTA_EXHAUSTED")
+        log(status="failed", cost_usd=0.0, error=str(exc), result_code="IMAGE_PROVIDERS_EXHAUSTED")
+        raise GenerationHold(f"IMAGE_PROVIDERS_EXHAUSTED; panel={panel_idx}; "
+                             f"gemini and openai quota exhausted{'; ' + str(hold) if hold else ''}") from exc
+    except oa.OpenAITerminal as exc:
+        hold = finish(state="terminal", actual_cost=0.0, reason="OPENAI_TERMINAL")
+        log(status="terminal", cost_usd=0.0, error=str(exc), result_code="PROVIDER_TERMINAL")
+        raise GenerationHold(f"OpenAI fallback rejected; panel={panel_idx}; {exc}"
+                             f"{'; ' + str(hold) if hold else ''}") from exc
+    except oa.OpenAINoImage as exc:
+        hold = finish(state="failed", actual_cost=exc.cost)
+        log(status="failed", cost_usd=exc.cost, error=str(exc), result_code="INVALID_IMAGE")
+        if hold is not None or exc.cost is None:
+            raise GenerationHold(f"OpenAI image usage missing; reconciliation required; panel={panel_idx}") from exc
+        return None, exc.cost
+    except Exception as exc:
+        # Refusals, server errors and timeouts have unconfirmed billing: never retry.
+        refusal = isinstance(exc, oa.OpenAIRefusal)
+        if refusal:
+            _record_provider_refusal(panel_idx, "OPENAI_MODERATION_BLOCKED", None)
+        hold = finish(state="unknown", actual_cost=None,
+                      reason="OPENAI_MODERATION_BLOCKED" if refusal else None)
+        log(status="unknown", error=type(exc).__name__,
+            result_code="CONTENT_REVIEW_REQUIRED" if refusal else "PROVIDER_OUTCOME_UNKNOWN")
+        logger.error("[openai] PROVIDER_OUTCOME_UNCERTAIN panel=%s provider_error_type=%s",
+                     panel_idx, type(exc).__name__)
+        raise GenerationHold(
+            f"Provider outcome requires reconciliation; panel={panel_idx}; provider=openai; "
+            f"provider_error_type={type(exc).__name__}; "
+            f"settlement_error_type={type(hold).__name__ if hold else 'none'}"
+        ) from exc
+
+    try:
+        image_bytes = oa.normalize_to_anchor(image_bytes, anchor)
+        _validate_png(image_bytes)
+    except Exception as exc:
+        hold = finish(state="failed", actual_cost=cost)
+        log(status="failed", cost_usd=cost, error=str(exc), result_code="INVALID_IMAGE")
+        if hold is not None or cost is None:
+            raise GenerationHold("Image usage missing; reconciliation required") from exc
+        return None, cost
+    try:
+        _persist_exclusive(output_path, image_bytes)
+        settle(token, state="success", actual_cost=cost,
+               output_hash=hashlib.sha256(image_bytes).hexdigest())
+    except Exception as exc:
+        log(status="hold", cost_usd=cost, output=str(output_path), error=str(exc))
+        raise GenerationHold("Image persistence/ledger requires reconciliation: " + str(exc)) from exc
+    state.record(panel_idx, output_path, "openai", model)
+    log(status="success", cost_usd=cost, cost_estimated=cost is None,
+        estimated_cost_usd=_OPENAI_UNMEASURED_COST if cost is None else None, output=str(output_path))
+    return output_path, cost if cost is not None else _OPENAI_UNMEASURED_COST
+
+
+def _settle_gemini_quota(exc: Exception, *, token: str, settle, guard, record: dict,
+                         started: float, log_path: Path, panel_idx: int) -> None:
+    """A quota/billing rejection produced no image: settle at zero cost, keep evidence."""
+    try:
+        settle(token, state="failed", actual_cost=0.0, reason=QUOTA_REASON)
+    except GenerationHold as hold:
+        raise GenerationHold(f"Gemini quota settlement not confirmed; panel={panel_idx}; {hold}") from exc
+    evidence = {"run_id": os.environ.get("GITHUB_RUN_ID", "local"),
+                "finish_reason": QUOTA_REASON, "cost_usd": 0.0,
+                "provider_code": str(getattr(exc, "code", "")),
+                "provider_status": str(getattr(exc, "status", "") or ""),
+                "provider_message": str(getattr(exc, "message", "") or "")[:300]}
+    record.update(status="quota_exhausted", cost_usd=0.0, provider="gemini",
+                  result_code=QUOTA_REASON, error=type(exc).__name__,
+                  provider_code=evidence["provider_code"],
+                  provider_status=evidence["provider_status"],
+                  latency_sec=round(time.monotonic() - started, 2))
+    try:
+        _write_jsonl_log(log_path, record)
+    except OSError:
+        logger.warning("[gemini] local evidence unavailable after quota settlement")
+    try:
+        guard.store_attempt_diagnostic(token, "refusal", evidence)
+    except Exception:
+        # Evidence only; the zero-cost settlement is already durable.
+        logger.warning("[gemini] quota diagnostic not stored; panel=%s", panel_idx)
+    logger.warning("[gemini] QUOTA_EXHAUSTED panel=%s code=%s status=%s -> OpenAI fallback",
+                   panel_idx, evidence["provider_code"], evidence["provider_status"])
+
+
 def _validate_png(data: bytes) -> None:
     from PIL import Image
 
@@ -354,12 +602,15 @@ def generate_panel(
     retry_plan: dict | None = None,
     reuse_only: bool = False,
     sleeper=time.sleep,
+    provider_state: ProviderState | None = None,
 ) -> tuple[Path | None, float]:
     """Generate with durable pre-call reservations; ambiguous outcomes always HOLD.
 
     SDK retries are disabled. Only completed, nonterminal no-image/invalid-image
     responses can retry (at most three calls, also constrained by the ledger).
     Explicit guard injection is for offline tests; production uses its DB guard.
+    With provider_state (Run Market only), a structured Gemini quota rejection settles
+    at zero cost and the same panel continues on the OpenAI fallback.
     """
     output_dir = Path(output_dir)
     ref_paths = [Path(ref) for ref in ref_paths]
@@ -384,6 +635,8 @@ def generate_panel(
     variant = guard.select_retry_variant(plan.prompts, f"\n[model={_MODEL};aspect={aspect_ratio}]") if plan else 0
     if plan:
         guard.store_diagnostic("inputs", private_inputs)
+    if plan and provider_state is not None and provider_state.active == "openai":
+        raise GenerationHold("Reviewed retry plan cannot use the OpenAI fallback")
     if guard.reuse(output_path):
         try:
             _validate_png(output_path.read_bytes())
@@ -410,8 +663,20 @@ def generate_panel(
     allowed_calls = min(retries + 1, 3 - used)
     if allowed_calls <= 0:
         raise PanelGenerationFailed("image retry exhausted")
-    client = _get_client()
+    client = None
     for attempt in range(1, allowed_calls + 1):
+        if provider_state is not None and provider_state.active == "openai":
+            path, cost = _openai_attempt(
+                panel_idx=panel_idx, prompt_text=prompt_text, ref_paths=ref_paths,
+                output_path=output_path, log_path=log_path, aspect_ratio=aspect_ratio,
+                guard=guard, settle=settle, state=provider_state, attempt=attempt,
+            )
+            total_cost += cost
+            if path is not None:
+                return path, total_cost
+            continue
+        if client is None:
+            client = _get_client()
         token = guard.reserve()
         started = time.monotonic()
         record = {
@@ -543,6 +808,18 @@ def generate_panel(
                 sleeper(retry_delay(attempt))
             continue
         except Exception as exc:
+            if (provider_state is not None and not plan and _gemini_quota_exhausted(exc)):
+                from engine.image.openai_client import fallback_ready
+                if fallback_ready():
+                    _settle_gemini_quota(exc, token=token, settle=settle, guard=guard,
+                                         record=record, started=started, log_path=log_path,
+                                         panel_idx=panel_idx)
+                    if attempt >= allowed_calls:
+                        raise GenerationHold(
+                            f"Gemini quota exhausted; no panel budget left for OpenAI; panel={panel_idx}"
+                        ) from exc
+                    provider_state.switch(panel_idx, QUOTA_REASON)
+                    continue
             # Even server errors can have ambiguous billing; never automatically retry.
             terminal = _terminal_error(exc)
             record.update(status="terminal" if terminal else "unknown", error=str(exc),
@@ -604,6 +881,8 @@ def generate_panel(
             raise GenerationHold("Image persistence/ledger requires reconciliation: " + str(exc)) from exc
         record.update(status="success", output=str(output_path))
         _write_jsonl_log(log_path, record)
+        if provider_state is not None:
+            provider_state.record(panel_idx, output_path, "gemini", _MODEL)
         return output_path, total_cost
     if enabled:
         raise PanelGenerationFailed("image retry exhausted", total_cost)
@@ -654,6 +933,11 @@ def generate_episode(
             ReviewedRetryPlan.from_bundle(panel["retry_plan"], panel.get("prompt_text", ""),
                                            [Path(p) for p in panel.get("ref_image_paths", [])])
     reviewed_count = sum(bool(p.get("retry_plan")) for p in panels) if enabled else 0
+    from engine.image.openai_client import fallback_enabled, fallback_ready
+    provider_state = ProviderState(output_dir) if fallback_ready() else None
+    if provider_state is None and fallback_enabled():
+        logger.warning("[image] OpenAI fallback enabled but OPENAI_API_KEY missing; "
+                       "Gemini quota exhaustion keeps the existing HOLD")
     # Verify every protected image before any missing panel can spend money.
     # A missing receipt/file must never fall through to a provider reservation.
     preserved_results = {}
@@ -714,6 +998,9 @@ def generate_episode(
                         "result_code": "CONTENT_REVIEW_REQUIRED" if provider_reason in CONTENT_REASONS | REVIEW_REASONS else
                                        "IMAGE_SUCCESS" if complete else "IMAGE_INCOMPLETE",
                         "cost_usd": total_cost, "held_panel": held_panel,
+                        "image_provider_fallback": provider_state.fallback if provider_state else None,
+                        "provider_by_panel": {k: v["provider"] for k, v in provider_state.panels.items()}
+                        if provider_state else {},
                         "held_panels": [p["panel"] for p in summary if p["status"] == "held"],
                         "cost_complete": len(summary) == len(panels) and all(
                             isinstance(p.get("cost_usd"), (int, float)) for p in summary)}), encoding="utf-8",
@@ -749,6 +1036,8 @@ def generate_episode(
             kwargs = {"retry_plan": panel.get("retry_plan")} if retry_enabled() else {}
             if panel.get("reuse_only"):
                 kwargs["reuse_only"] = True
+            if provider_state is not None:
+                kwargs["provider_state"] = provider_state
             path, panel_cost = preserved_results[idx] if idx in preserved_results else generate_panel(
                 panel_idx=idx, prompt_text=prompt, ref_paths=refs,
                 output_dir=output_dir, log_path=log_path,
