@@ -21,6 +21,14 @@ def restore(episode_date: str, source: Path, target: Path) -> int:
                 raise ValueError("conflicting recovery panel")
             shutil.copyfile(panel, destination)
             restored += 1
+        # OpenAI fallback record (provider per panel + style anchor) must follow its PNGs.
+        providers = directory / "image-providers.json"
+        if providers.is_file():
+            destination = target / episode_date / "panels" / providers.name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if destination.exists() and destination.read_bytes() != providers.read_bytes():
+                raise ValueError("conflicting recovery provider record")
+            shutil.copyfile(providers, destination)
     if not restored:
         raise ValueError("no panels for selected episode date")
     return restored

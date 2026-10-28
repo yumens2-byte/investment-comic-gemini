@@ -1933,6 +1933,22 @@ def step_image(
             optional_fields=frozenset({"performance_quality_json"}),
         )
 
+        # OpenAI 최종 폴백 기록 (Gemini 한도 소진 시 패널별 공급자)
+        provider_map = {}
+        provider_map_path = output_dir / "image-providers.json"
+        if provider_map_path.exists():
+            try:
+                provider_map = __import__("json").loads(provider_map_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                logger_inst.info("STEP_6", "image-providers.json 읽기 실패 — 공급자 기록 생략")
+            fallback = provider_map.get("fallback")
+            if fallback:
+                logger_inst.info(
+                    "STEP_6",
+                    f"IMAGE_PROVIDER_FALLBACK from=P{fallback.get('from_panel')} "
+                    f"reason={fallback.get('reason')} style_anchor={fallback.get('style_anchor')}",
+                )
+
         # 이미지 경로 로그 출력
         success_paths = [str(p) for p in panel_paths if p]
         fallback_count = sum(1 for p in panel_paths if not p)
@@ -1948,7 +1964,10 @@ def step_image(
         img_log_path = ep_dir / f"{episode_id}_images.json"
         img_log_path.write_text(
             __import__("json").dumps(
-                {"episode_id": episode_id, "panels": panels_json, "cost_usd": total_cost},
+                {"episode_id": episode_id, "panels": panels_json, "cost_usd": total_cost,
+                 "image_provider_fallback": provider_map.get("fallback"),
+                 "provider_by_panel": {k: v.get("provider") for k, v in
+                                       (provider_map.get("panels") or {}).items()}},
                 ensure_ascii=False,
                 indent=2,
             ),

@@ -217,3 +217,15 @@ def test_stage_input_is_choice_matching_cli_choices() -> None:
     assert stage["type"] == "choice"
     assert [str(o) for o in stage["options"]] == _run_market_stage_choices()
     assert stage["default"] in stage["options"]
+
+
+def test_openai_image_fallback_env_is_explicit_and_rollbackable():
+    env = yaml.load(_workflow_text(), Loader=yaml.BaseLoader)['jobs']['pipeline']['env']
+    assert env['OPENAI_API_KEY'] == '${{ secrets.OPENAI_API_KEY }}'
+    assert env['ICG_IMAGE_OPENAI_FALLBACK_ENABLED'] == (
+        "${{ vars.ICG_IMAGE_OPENAI_FALLBACK_ENABLED || 'true' }}")
+    assert env['ICG_OPENAI_IMAGE_MODEL'].endswith("|| 'gpt-image-2' }}")
+    assert env['ICG_OPENAI_IMAGE_QUALITY'].endswith("|| 'medium' }}")
+    for key in ('OPENAI_API_KEY', 'ICG_IMAGE_OPENAI_FALLBACK_ENABLED',
+                'ICG_OPENAI_IMAGE_MODEL', 'ICG_OPENAI_IMAGE_QUALITY'):
+        assert _count_job_env_key(_workflow_text(), key) == 1
