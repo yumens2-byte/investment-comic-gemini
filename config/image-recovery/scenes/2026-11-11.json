@@ -1,0 +1,23 @@
+{
+  "version": "selective-image-scenes-1",
+  "panels": {
+    "4": {
+      "action": "Gold Bond Muscle stands still at the edge of the observation deck, both gauntlets resting calmly at his sides, helmet turned toward a separate floating projection where an abstract golden line slopes gently below a faint guide line",
+      "setting": "A fictional rooftop observation deck at dusk, soft amber city haze below and a separate unlabelled holographic projection floating in open air beyond the deck",
+      "prompt_text": "A fictional rooftop observation deck at dusk, soft amber city haze below and a separate unlabelled holographic projection floating in open air beyond the deck.\nGold Bond Muscle stands still at the edge of the observation deck, both gauntlets resting calmly at his sides, helmet turned toward a separate floating projection where an abstract golden line slopes gently below a faint guide line.\nOriginal fictional financial superhero comic illustration. All human characters are adults. Medium close-up composition showing the upper body and the separate projection. Hero at left facing right toward the projection. Quiet, reflective mood of a single figure weighing an uncertain market.\nBold precise ink lines, 2D cel-shaded shadows, dark cinematic navy background, desaturated environment and reference-defined gold accents.\nPreserve exactly the provided reference identity. Gold Bond Muscle is a heavily built warrior in complete gold full plate armor with the face fully hidden by a gold helmet, carrying the reference-defined large rectangular gold shield at his side.\nThe projection is abstract environmental light, separate from the figure. The figure remains stationary and composed.\nNo physical contact, attacks, weapons in use, injury, readable text, numbers, logos, extra characters, extra limbs or watermarks. No photorealism or 3D rendering. Preserve reference anatomy and handedness.",
+      "contract": {
+        "visual_mode": "OBSERVATION",
+        "interaction": "OBSERVE_SEPARATE_DISPLAY",
+        "target_kind": "DISPLAY",
+        "physical_contact": false,
+        "weapon_discharge": false,
+        "injury": "NONE",
+        "required_story_facts": [
+          "btc_line_dips_below_projection",
+          "hero_confronts_own_doubt",
+          "rooftop_observation_deck"
+        ]
+      }
+    }
+  }
+}

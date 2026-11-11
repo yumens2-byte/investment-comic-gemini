@@ -1,0 +1,26 @@
+{
+  "version": "reviewed-image-recovery-2",
+  "episode_date": "2026-11-11",
+  "episode_id": "ICG-2026-11-11-001",
+  "episode_no": 1,
+  "source_revision": 1,
+  "target_revision": 2,
+  "source_artifact_run_id": "42909510836",
+  "source_script_sha256": "2e486dcc2b6b538b944b0abbbf2cc1d84604f128744879a1dcd4fcb9d8482c1d",
+  "public_script_sha256": "57d1692a06a52e25c24c3b7ad807a36157178d26370da9b3c55ac697c9e80d1f",
+  "terminal_token": "f0bb4ce7-45a6-4403-b357-78d119229b4a",
+  "terminal_reason": "PROHIBITED_CONTENT",
+  "terminal_cost_usd": 0.0005541,
+  "success_hashes": {
+    "1": "53476769e2792b5d505bbc86013d245aca8287f3478ce22135b743e46d818200",
+    "2": "e9a9605088c2df43068a00292a1712463bab0179d1b00944c7ea412861a96f99",
+    "3": "5e3d57ff3eccfed1610bdf12335ecb3228fee24c9e6bd85c100c4a59ac1f0262",
+    "5": "bdcbcba66b4be326c871b6a6d6c1ed8096434444306c6e61e625157cb159e4d5",
+    "6": "c2387743b846c70d1401ed54331d24481c6117cd3494d3360eafb43deca08022"
+  },
+  "scenes_path": "config/image-recovery/scenes/2026-11-11.json",
+  "scenes_sha256": "7309addb4f3302efcc152c17dd214f42b515a64d991f774b777b4c809b19ed5a",
+  "actor": "yumens2-byte",
+  "note": "User authorized a non-contact calm observation repair for panel 4 after PROHIBITED_CONTENT; preserve all five successful PNGs and original inputs. Generate only the refused panel; require manual resume.",
+  "preserve_successful_images": true
+}
